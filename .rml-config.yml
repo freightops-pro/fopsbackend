@@ -1,0 +1,69 @@
+# Recurse ML Configuration
+# This file configures RML analysis for FreightOps Pro Backend
+
+version: 1
+
+# Paths to analyze
+include:
+  - "app/**/*.py"
+  - "alembic/**/*.py"
+
+# Paths to exclude
+exclude:
+  - "tests/**"
+  - "**/__pycache__/**"
+  - "**/node_modules/**"
+  - "venv/**"
+  - ".venv/**"
+
+# Analysis settings
+analysis:
+  # Run all available checks
+  security: true
+  performance: true
+  code_quality: true
+  best_practices: true
+  
+  # Severity levels to report
+  min_severity: low
+  
+  # Maximum issues to report (0 = unlimited)
+  max_issues: 0
+
+# Multi-tenant specific checks
+custom_rules:
+  - name: "multi-tenant-isolation"
+    pattern: "db.query\\(.*\\)\\.filter\\((?!.*companyId).*\\)\\.(?:all|first|one)\\(\\)"
+    severity: critical
+    message: "Query missing company_id filter - potential data leakage"
+  
+  - name: "bare-exception"
+    pattern: "except:\\s*$"
+    severity: high
+    message: "Bare except clause - catch specific exceptions"
+  
+  - name: "sql-injection"
+    pattern: "f['\"].*SELECT.*{.*}.*['\"]"
+    severity: critical
+    message: "Potential SQL injection via f-string"
+
+# Output format
+output:
+  format: "github-actions"
+  include_suggestions: true
+  include_examples: true
+  group_by_severity: true
+
+# Performance thresholds
+performance:
+  max_function_lines: 50
+  max_cyclomatic_complexity: 10
+  max_parameters: 5
+  max_nesting_depth: 3
+
+# Report settings
+report:
+  title: "FreightOps Pro Backend - Code Quality Report"
+  save_to_file: true
+  file_path: ".rml-report.json"
+

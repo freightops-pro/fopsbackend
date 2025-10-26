@@ -1,0 +1,434 @@
+# FreightOps Pro Backend - Comprehensive Code Quality Rules
+# Recurse ML Methodology - Beyond Security
+
+## 🎯 Code Quality Analysis Categories
+
+### 1. PERFORMANCE OPTIMIZATION
+
+#### Database Performance
+- ❌ REJECT: N+1 query patterns
+- ❌ REJECT: Missing eager loading (joinedload)
+- ❌ REJECT: SELECT * queries
+- ❌ REJECT: Missing pagination on list endpoints
+- ❌ REJECT: No query result caching
+- ✅ REQUIRE: Use joinedload() for relationships
+- ✅ REQUIRE: Pagination on all list endpoints
+- ✅ REQUIRE: Redis caching for frequently accessed data
+- ✅ REQUIRE: Query optimization with .options()
+
+Example:
+```python
+# ❌ BAD - N+1 query
+loads = db.query(SimpleLoad).filter(...).all()
+for load in loads:
+    driver = load.driver  # Separate query for each!
+
+# ✅ GOOD - Eager loading
+from sqlalchemy.orm import joinedload
+loads = db.query(SimpleLoad)\
+    .options(joinedload(SimpleLoad.driver))\
+    .filter(...).all()
+```
+
+#### Async/Await Performance
+- ❌ REJECT: Blocking I/O in async functions
+- ❌ REJECT: Not using async database sessions
+- ❌ REJECT: Sequential async calls that could be parallel
+- ✅ REQUIRE: Use asyncio.gather() for parallel operations
+- ✅ REQUIRE: Async database operations
+- ✅ REQUIRE: Non-blocking external API calls
+
+#### API Response Performance
+- ❌ REJECT: Returning entire objects without field selection
+- ❌ REJECT: No response compression
+- ❌ REJECT: Heavy computations in request handlers
+- ✅ REQUIRE: Background tasks for heavy operations
+- ✅ REQUIRE: Response compression for large payloads
+- ✅ REQUIRE: Field selection (only return needed fields)
+
+### 2. CODE COMPLEXITY
+
+#### Cyclomatic Complexity
+- ❌ REJECT: Functions with >10 branches
+- ❌ REJECT: Nested if statements >3 levels deep
+- ❌ REJECT: Functions longer than 50 lines
+- ✅ REQUIRE: Extract complex logic into helper functions
+- ✅ REQUIRE: Use early returns to reduce nesting
+- ✅ REQUIRE: Break large functions into smaller ones
+
+#### Cognitive Complexity
+- ❌ REJECT: Difficult to understand logic
+- ❌ REJECT: Magic numbers without explanation
+- ❌ REJECT: Complex boolean expressions
+- ✅ REQUIRE: Self-documenting code
+- ✅ REQUIRE: Named constants for magic values
+- ✅ REQUIRE: Extract complex conditions into named variables
+
+### 3. CODE DUPLICATION
+
+#### DRY Principle
+- ❌ REJECT: Copy-pasted code blocks
+- ❌ REJECT: Similar endpoint patterns not abstracted
+- ❌ REJECT: Repeated validation logic
+- ✅ REQUIRE: Reusable utility functions
+- ✅ REQUIRE: Shared validation decorators
+- ✅ REQUIRE: Base classes for common patterns
+
+Example:
+```python
+# ❌ BAD - Duplicated code
+@router.get("/endpoint1")
+def endpoint1():
+    company_id = token.get("companyId") or token.get("companyid")
+    if not company_id:
+        raise HTTPException(400, "Missing company")
+    # ... rest
+
+@router.get("/endpoint2")
+def endpoint2():
+    company_id = token.get("companyId") or token.get("companyid")
+    if not company_id:
+        raise HTTPException(400, "Missing company")
+    # ... rest
+
+# ✅ GOOD - Use helper
+from app.utils.tenant_helpers import get_company_id_from_token
+
+@router.get("/endpoint1")
+def endpoint1(token: dict = Depends(verify_token)):
+    company_id = get_company_id_from_token(token)
+    # ... rest
+```
+
+### 4. ARCHITECTURE & DESIGN
+
+#### Separation of Concerns
+- ❌ REJECT: Business logic in route handlers
+- ❌ REJECT: Database queries in route handlers
+- ❌ REJECT: External API calls in route handlers
+- ✅ REQUIRE: Business logic in service layer
+- ✅ REQUIRE: Repository pattern for database access
+- ✅ REQUIRE: Adapter pattern for external services
+
+#### Dependency Management
+- ❌ REJECT: Circular imports
+- ❌ REJECT: Import * statements
+- ❌ REJECT: Importing from __init__ before defining
+- ✅ REQUIRE: Clean import hierarchy
+- ✅ REQUIRE: Explicit imports
+- ✅ REQUIRE: Dependency injection
+
+### 5. ERROR HANDLING EXCELLENCE
+
+#### Exception Hierarchy
+- ❌ REJECT: Generic Exception raises
+- ❌ REJECT: Catching BaseException
+- ❌ REJECT: Empty except blocks
+- ✅ REQUIRE: Custom exception classes
+- ✅ REQUIRE: Specific exception catching
+- ✅ REQUIRE: Meaningful error messages
+
+#### Error Recovery
+- ❌ REJECT: Fail on first error (no retry)
+- ❌ REJECT: No fallback values
+- ❌ REJECT: Cascade failures
+- ✅ REQUIRE: Retry logic with backoff
+- ✅ REQUIRE: Circuit breaker pattern
+- ✅ REQUIRE: Graceful degradation
+
+### 6. TESTING QUALITY
+
+#### Test Coverage
+- ❌ REJECT: No tests for business logic
+- ❌ REJECT: Tests that don't actually test
+- ❌ REJECT: Skipped tests without reason
+- ✅ REQUIRE: >80% code coverage
+- ✅ REQUIRE: Tests for edge cases
+- ✅ REQUIRE: Integration tests for workflows
+
+#### Test Quality
+- ❌ REJECT: Tests with multiple assertions
+- ❌ REJECT: Tests that test implementation, not behavior
+- ❌ REJECT: Slow tests without @pytest.mark.slow
+- ✅ REQUIRE: One logical assertion per test
+- ✅ REQUIRE: Behavior-driven tests
+- ✅ REQUIRE: Fast unit tests (<100ms)
+
+### 7. DOCUMENTATION QUALITY
+
+#### Code Documentation
+- ❌ REJECT: No docstrings on public functions
+- ❌ REJECT: Outdated comments
+- ❌ REJECT: TODO comments without tickets
+- ✅ REQUIRE: Docstrings with Args, Returns, Raises
+- ✅ REQUIRE: Type hints on all functions
+- ✅ REQUIRE: Example usage in docstrings
+
+#### API Documentation
+- ❌ REJECT: Undocumented endpoints
+- ❌ REJECT: Missing request/response examples
+- ❌ REJECT: No error code documentation
+- ✅ REQUIRE: OpenAPI/Swagger docs complete
+- ✅ REQUIRE: Example requests/responses
+- ✅ REQUIRE: All error codes documented
+
+### 8. DEPENDENCY MANAGEMENT
+
+#### Package Usage
+- ❌ REJECT: Unused imports
+- ❌ REJECT: Deprecated package usage
+- ❌ REJECT: Packages with known vulnerabilities
+- ✅ REQUIRE: Remove unused dependencies
+- ✅ REQUIRE: Update to latest stable versions
+- ✅ REQUIRE: Security audit on dependencies
+
+#### Import Optimization
+- ❌ REJECT: Importing entire modules unnecessarily
+- ❌ REJECT: Circular dependencies
+- ❌ REJECT: Inconsistent import ordering
+- ✅ REQUIRE: Import only what you need
+- ✅ REQUIRE: Clean dependency graph
+- ✅ REQUIRE: Consistent import organization
+
+### 9. CODE SMELLS
+
+#### Common Anti-Patterns
+- ❌ REJECT: God objects/classes
+- ❌ REJECT: Long parameter lists (>5 params)
+- ❌ REJECT: Boolean parameters (use enums)
+- ❌ REJECT: Mutable default arguments
+- ✅ REQUIRE: Single Responsibility Principle
+- ✅ REQUIRE: Parameter objects for >3 params
+- ✅ REQUIRE: Enums for options
+- ✅ REQUIRE: Immutable defaults
+
+Example:
+```python
+# ❌ BAD - Mutable default argument
+def add_item(item, items=[]):
+    items.append(item)
+    return items
+
+# ✅ GOOD - Immutable default
+def add_item(item, items=None):
+    if items is None:
+        items = []
+    items.append(item)
+    return items
+```
+
+#### Dead Code
+- ❌ REJECT: Commented-out code
+- ❌ REJECT: Unreachable code
+- ❌ REJECT: Unused functions/variables
+- ✅ REQUIRE: Remove dead code
+- ✅ REQUIRE: Clean up before commit
+- ✅ REQUIRE: Use git history, not comments
+
+### 10. CONFIGURATION MANAGEMENT
+
+#### Environment Variables
+- ❌ REJECT: Hardcoded configuration values
+- ❌ REJECT: Missing environment variable validation
+- ❌ REJECT: No default values for non-sensitive config
+- ✅ REQUIRE: All config from environment
+- ✅ REQUIRE: Pydantic Settings for validation
+- ✅ REQUIRE: Sensible defaults where appropriate
+
+#### Feature Flags
+- ❌ REJECT: Hardcoded feature toggles
+- ❌ REJECT: No rollback mechanism
+- ❌ REJECT: Features deployed all-or-nothing
+- ✅ REQUIRE: Database-driven feature flags
+- ✅ REQUIRE: Gradual rollout capability
+- ✅ REQUIRE: A/B testing support
+
+### 11. LOGGING & MONITORING
+
+#### Log Quality
+- ❌ REJECT: print() statements
+- ❌ REJECT: Logging sensitive data (passwords, tokens)
+- ❌ REJECT: No correlation IDs for request tracing
+- ✅ REQUIRE: Structured logging
+- ✅ REQUIRE: Log levels (DEBUG, INFO, WARNING, ERROR)
+- ✅ REQUIRE: Correlation IDs for distributed tracing
+
+#### Metrics & Observability
+- ❌ REJECT: No performance metrics
+- ❌ REJECT: No error rate tracking
+- ❌ REJECT: No business metrics
+- ✅ REQUIRE: Response time metrics
+- ✅ REQUIRE: Error rate monitoring
+- ✅ REQUIRE: Business KPI tracking
+
+### 12. API DESIGN
+
+#### REST Principles
+- ❌ REJECT: Verbs in endpoint URLs
+- ❌ REJECT: Inconsistent naming
+- ❌ REJECT: No versioning
+- ✅ REQUIRE: Noun-based resource URLs
+- ✅ REQUIRE: Consistent naming patterns
+- ✅ REQUIRE: API versioning (/api/v1/)
+
+#### Response Consistency
+- ❌ REJECT: Inconsistent response formats
+- ❌ REJECT: No standard error format
+- ❌ REJECT: Mixing camelCase and snake_case
+- ✅ REQUIRE: Consistent response structure
+- ✅ REQUIRE: RFC 7807 problem details
+- ✅ REQUIRE: snake_case for Python APIs
+
+### 13. SCALABILITY
+
+#### Horizontal Scaling
+- ❌ REJECT: In-memory session storage
+- ❌ REJECT: File-based uploads without cloud storage
+- ❌ REJECT: Stateful request handling
+- ✅ REQUIRE: Redis for session storage
+- ✅ REQUIRE: S3/Cloud storage for files
+- ✅ REQUIRE: Stateless API design
+
+#### Database Scalability
+- ❌ REJECT: No connection pooling
+- ❌ REJECT: Long-running transactions
+- ❌ REJECT: Table scans on large tables
+- ✅ REQUIRE: Connection pool configuration
+- ✅ REQUIRE: Short transactions
+- ✅ REQUIRE: Proper indexes on large tables
+
+### 14. MAINTAINABILITY
+
+#### Code Readability
+- ❌ REJECT: Single-letter variable names (except i, j, k in loops)
+- ❌ REJECT: Unclear function names
+- ❌ REJECT: Complex nested comprehensions
+- ✅ REQUIRE: Descriptive variable names
+- ✅ REQUIRE: Self-documenting function names
+- ✅ REQUIRE: Readable code over clever code
+
+#### Code Organization
+- ❌ REJECT: Multiple concepts in one file
+- ❌ REJECT: Files >500 lines
+- ❌ REJECT: Mixing sync and async code
+- ✅ REQUIRE: One concept per file
+- ✅ REQUIRE: Split large files
+- ✅ REQUIRE: Separate sync/async modules
+
+### 15. RELIABILITY
+
+#### Fault Tolerance
+- ❌ REJECT: No timeout on external calls
+- ❌ REJECT: No retry logic
+- ❌ REJECT: Cascading failures
+- ✅ REQUIRE: Timeouts on all external calls
+- ✅ REQUIRE: Exponential backoff retries
+- ✅ REQUIRE: Circuit breakers
+
+#### Data Integrity
+- ❌ REJECT: No database constraints
+- ❌ REJECT: Race conditions
+- ❌ REJECT: No idempotency
+- ✅ REQUIRE: Foreign key constraints
+- ✅ REQUIRE: Optimistic locking where needed
+- ✅ REQUIRE: Idempotent operations
+
+## 🔍 Analysis Priorities
+
+When reviewing code, check in this order:
+
+1. **CRITICAL**: Security vulnerabilities
+2. **HIGH**: Data integrity issues
+3. **HIGH**: Performance bottlenecks
+4. **MEDIUM**: Code complexity
+5. **MEDIUM**: Missing tests
+6. **LOW**: Code style
+7. **LOW**: Documentation gaps
+
+## 📊 Metrics to Track
+
+### Code Quality Metrics
+- Cyclomatic complexity per function
+- Lines of code per file
+- Number of dependencies per module
+- Test coverage percentage
+- Documentation coverage
+
+### Performance Metrics
+- Average query execution time
+- API endpoint response times
+- Database connection pool usage
+- Cache hit rates
+- Error rates
+
+### Maintainability Metrics
+- Code duplication percentage
+- Technical debt ratio
+- Comment-to-code ratio
+- Average function length
+- Module coupling
+
+## 💡 AI Assistant Instructions for Comprehensive Review
+
+When performing full codebase review:
+
+1. **Security First**: Check all security rules from main .cursorrules
+2. **Performance Analysis**: Identify slow queries, missing indexes
+3. **Architecture Review**: Verify separation of concerns
+4. **Code Quality**: Check complexity, duplication, readability
+5. **Testing**: Assess test coverage and quality
+6. **Documentation**: Verify completeness
+7. **Dependencies**: Check for issues
+8. **Scalability**: Identify bottlenecks
+
+## 🎯 Review Checklist for Each Module
+
+- [ ] Security vulnerabilities addressed
+- [ ] Multi-tenant isolation enforced
+- [ ] N+1 queries eliminated
+- [ ] Proper error handling
+- [ ] Transaction management
+- [ ] Input validation
+- [ ] Response models defined
+- [ ] Logging implemented
+- [ ] Tests written (>80% coverage)
+- [ ] Documentation complete
+- [ ] Performance optimized
+- [ ] Code complexity managed
+- [ ] No code duplication
+- [ ] Type hints complete
+- [ ] Async properly used
+
+## 🚀 Continuous Improvement
+
+Track improvements over time:
+- Security issues: Target 0
+- Test coverage: Target >80%
+- Performance: Target p95 <500ms
+- Code complexity: Target <10 per function
+- Documentation: Target 100% public APIs
+
+## 📝 Report Format for Comprehensive Review
+
+For each module reviewed, provide:
+
+1. **Security Score**: 0-100
+2. **Performance Score**: 0-100
+3. **Code Quality Score**: 0-100
+4. **Test Coverage**: Percentage
+5. **Critical Issues**: Count
+6. **High Priority Issues**: Count
+7. **Medium Priority Issues**: Count
+8. **Low Priority Issues**: Count
+9. **Estimated Fix Time**: Hours
+10. **Priority Ranking**: 1-10
+
+## 🔧 Auto-Fix Recommendations
+
+AI should suggest automated fixes for:
+- Import organization
+- Type hint additions
+- Docstring templates
+- Common refactoring patterns
+- Performance optimizations
+
