@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: freightops_db
+      POSTGRES_USER: freightops_user
+      POSTGRES_PASSWORD: freightops_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freightops_user -d freightops_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://freightops_user:freightops_password@db:5432/freightops_db
+      SECRET_KEY: your-development-secret-key-change-in-production
+      ENVIRONMENT: development
+      DEBUG: True
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+    command: >
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 10 &&
+        echo 'Running migrations...' &&
+        alembic upgrade head &&
+        echo 'Creating initial HQ admin...' &&
+        python create_hq_admin.py &&
+        echo 'Starting server...' &&
+        python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+volumes:
+  postgres_data:

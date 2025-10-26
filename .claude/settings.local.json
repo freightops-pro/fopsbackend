@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/rcarb/Downloads/FOPS/frontend/**)",
+      "Bash(cat:*)",
+      "Read(//c/Users/rcarb/Downloads/FOPS/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
