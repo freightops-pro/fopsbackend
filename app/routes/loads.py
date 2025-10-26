@@ -365,15 +365,25 @@ async def create_load_with_legs(
     db: Session = Depends(get_db),
     token: dict = Depends(verify_token)
 ):
-    """Create load with automatic multi-leg generation"""
+    """
+    Create load with automatic multi-leg generation.
+    
+    Args:
+        payload: Load creation data with stops and legs
+        
+    Returns:
+        Complete load with stops and legs
+        
+    Raises:
+        400: Missing required fields or company context
+        500: Database or service error
+    """
     try:
-        company_id = token.get("companyId") or token.get("companyid")
-        if not company_id:
-            raise HTTPException(status_code=400, detail="Missing company context")
+        company_id = get_company_id_from_token(token)
         
         # 1. Create load
         load_id = str(uuid4())
-        load_number = f"LD-{str(uuid4())[:8].upper()}"
+        load_number = f"LD-{str(uuid4())[:LOAD_NUMBER_PREFIX_LENGTH].upper()}"
         
         # Calculate total rate
         accessorial_total = sum(a.amount for a in payload.accessorials)
@@ -817,38 +827,62 @@ def get_load_billing(load_id: str, db: Session = Depends(get_db), token: dict = 
 
 @router.post("/load-billing/{load_id}")
 def create_load_billing(load_id: str, billing_data: dict, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
-    """Create billing information for a load"""
-    company_id = token.get("companyId") or token.get("companyid")
-    if not company_id:
-        raise HTTPException(status_code=400, detail="Missing company context")
+    """
+    Create billing information for a load.
     
-    # Check if load exists
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not load:
-        raise HTTPException(status_code=404, detail="Load not found")
-    
-    # Check if billing already exists
-    existing_billing = db.query(LoadBilling).filter(LoadBilling.load_id == load_id).first()
-    if existing_billing:
-        raise HTTPException(status_code=400, detail="Billing already exists for this load")
-    
-    billing = LoadBilling(
-        id=uuid4(),
-        load_id=load_id,
-        company_id=company_id,
-        base_rate=billing_data.get("baseRate", load.rate or 0),
-        rate_type=billing_data.get("rateType", "flat"),
-        billing_status=billing_data.get("billingStatus", "pending"),
-        customer_name=billing_data.get("customerName", load.customerName),
-        total_amount=billing_data.get("totalAmount", load.rate or 0),
-        created_by=token.get("userId"),
-    )
-    
-    db.add(billing)
-    db.commit()
-    db.refresh(billing)
-    
-    return {"id": str(billing.id), "success": True}
+    Args:
+        load_id: The load ID
+        billing_data: Billing information
+        
+    Returns:
+        Created billing ID
+        
+    Raises:
+        404: Load not found or unauthorized
+        400: Billing already exists
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        user_id = get_user_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Check if billing already exists
+        existing_billing = db.query(LoadBilling).filter(
+            LoadBilling.load_id == load_id,
+            LoadBilling.company_id == company_id
+        ).first()
+        
+        if existing_billing:
+            raise HTTPException(status_code=400, detail="Billing already exists for this load")
+        
+        billing = LoadBilling(
+            id=uuid4(),
+            load_id=load_id,
+            company_id=company_id,
+            base_rate=billing_data.get("baseRate", load.rate or 0),
+            rate_type=billing_data.get("rateType", "flat"),
+            billing_status=billing_data.get("billingStatus", "pending"),
+            customer_name=billing_data.get("customerName", load.customerName),
+            total_amount=billing_data.get("totalAmount", load.rate or 0),
+            created_by=user_id,
+        )
+        
+        db.add(billing)
+        db.commit()
+        db.refresh(billing)
+        
+        logger.info(f"Billing {billing.id} created for load {load_id} by company {company_id}")
+        return {"id": str(billing.id), "success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to create billing for load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create billing")
 
 
 @router.put("/load-billing/{billing_id}")
@@ -962,54 +996,77 @@ def get_load_accessorials(
 
 @router.post("/load-accessorials/{load_id}")
 def create_load_accessorial(load_id: str, accessorial_data: dict, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
-    """Create an accessorial charge for a load"""
-    company_id = token.get("companyId") or token.get("companyid")
-    if not company_id:
-        raise HTTPException(status_code=400, detail="Missing company context")
+    """
+    Create an accessorial charge for a load.
     
-    # Check if load exists
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not load:
-        raise HTTPException(status_code=404, detail="Load not found")
-    
-    # Get or create billing record
-    billing = db.query(LoadBilling).filter(LoadBilling.load_id == load_id).first()
-    if not billing:
-        # Create default billing
-        billing = LoadBilling(
+    Args:
+        load_id: The load ID
+        accessorial_data: Accessorial charge data
+        
+    Returns:
+        Created accessorial ID
+        
+    Raises:
+        404: Load not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        user_id = get_user_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Get or create billing record
+        billing = db.query(LoadBilling).filter(
+            LoadBilling.load_id == load_id,
+            LoadBilling.company_id == company_id
+        ).first()
+        
+        if not billing:
+            # Create default billing
+            billing = LoadBilling(
+                id=uuid4(),
+                load_id=load_id,
+                company_id=company_id,
+                base_rate=load.rate or 0,
+                billing_status="pending",
+                customer_name=load.customerName,
+                total_amount=load.rate or 0,
+                created_by=user_id,
+            )
+            db.add(billing)
+            db.commit()
+            db.refresh(billing)
+        
+        accessorial = LoadAccessorial(
             id=uuid4(),
             load_id=load_id,
+            billing_id=billing.id,
             company_id=company_id,
-            base_rate=load.rate or 0,
-            billing_status="pending",
-            customer_name=load.customerName,
-            total_amount=load.rate or 0,
-            created_by=token.get("userId"),
+            type=accessorial_data.get("type", "detention"),
+            description=accessorial_data.get("description", ""),
+            amount=accessorial_data.get("amount", 0),
+            quantity=accessorial_data.get("quantity", 1),
+            rate=accessorial_data.get("rate", 0),
+            is_billable=accessorial_data.get("isBillable", True),
+            notes=accessorial_data.get("notes"),
+            created_by=user_id,
         )
-        db.add(billing)
+        
+        db.add(accessorial)
         db.commit()
-        db.refresh(billing)
-    
-    accessorial = LoadAccessorial(
-        id=uuid4(),
-        load_id=load_id,
-        billing_id=billing.id,
-        company_id=company_id,
-        type=accessorial_data.get("type", "detention"),
-        description=accessorial_data.get("description", ""),
-        amount=accessorial_data.get("amount", 0),
-        quantity=accessorial_data.get("quantity", 1),
-        rate=accessorial_data.get("rate", 0),
-        is_billable=accessorial_data.get("isBillable", True),
-        notes=accessorial_data.get("notes"),
-        created_by=token.get("userId"),
-    )
-    
-    db.add(accessorial)
-    db.commit()
-    db.refresh(accessorial)
-    
-    return {"id": str(accessorial.id), "success": True}
+        db.refresh(accessorial)
+        
+        logger.info(f"Accessorial {accessorial.id} created for load {load_id} by company {company_id}")
+        return {"id": str(accessorial.id), "success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to create accessorial for load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create accessorial charge")
 
 
 # OCR Processing Endpoints
@@ -1053,9 +1110,10 @@ async def extract_from_rate_confirmation(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"OCR processing failed for rate confirmation: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": str(e), "detail": f"OCR processing failed: {str(e)}"}
+            detail="OCR processing failed. Please try again or contact support."
         )
 
 
@@ -1067,7 +1125,17 @@ async def extract_from_bol(
     _: dict = Depends(verify_token)
 ):
     """
-    Extract load data from uploaded Bill of Lading using OCR
+    Extract load data from uploaded Bill of Lading using OCR.
+    
+    Args:
+        bol: Bill of Lading file (image or PDF)
+        
+    Returns:
+        Extracted load data from OCR
+        
+    Raises:
+        400: Invalid file type
+        500: OCR processing error
     """
     try:
         # Validate file type
@@ -1099,8 +1167,9 @@ async def extract_from_bol(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"BOL OCR processing failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": str(e), "detail": f"BOL OCR processing failed: {str(e)}"}
+            detail="BOL OCR processing failed. Please try again or contact support."
         )
 

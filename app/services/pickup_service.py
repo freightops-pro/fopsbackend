@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional, Dict, Any
+import logging
+
 from app.models.simple_load import SimpleLoad
 from app.schema.pickupSchema import (
     PickupNavigationRequest,
@@ -11,10 +13,25 @@ from app.schema.pickupSchema import (
     DepartureRequest
 )
 
+logger = logging.getLogger(__name__)
 
-def get_pickup_status(db: Session, load_id: str) -> Optional[Dict[str, Any]]:
-    """Get current pickup status for a load"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+
+def get_pickup_status(db: Session, load_id: str, company_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get current pickup status for a load.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Pickup status dict or None if not found
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         return None
     
@@ -37,10 +54,14 @@ def get_pickup_status(db: Session, load_id: str) -> Optional[Dict[str, Any]]:
 def start_pickup_navigation(
     db: Session, 
     load_id: str, 
-    navigation_data: PickupNavigationRequest
+    navigation_data: PickupNavigationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Start navigation to pickup location"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Start navigation to pickup location."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -68,10 +89,14 @@ def start_pickup_navigation(
 def mark_pickup_arrival(
     db: Session, 
     load_id: str, 
-    arrival_data: PickupArrivalRequest
+    arrival_data: PickupArrivalRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Mark arrival at pickup location"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Mark arrival at pickup location."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -105,10 +130,14 @@ def mark_pickup_arrival(
 def confirm_trailer(
     db: Session, 
     load_id: str, 
-    trailer_data: TrailerConfirmationRequest
+    trailer_data: TrailerConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Confirm trailer for pickup"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Confirm trailer for pickup."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -137,10 +166,14 @@ def confirm_trailer(
 def confirm_container(
     db: Session, 
     load_id: str, 
-    container_data: ContainerConfirmationRequest
+    container_data: ContainerConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Confirm container for pickup"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Confirm container for pickup."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -169,10 +202,14 @@ def confirm_container(
 def confirm_pickup(
     db: Session, 
     load_id: str, 
-    pickup_data: PickupConfirmationRequest
+    pickup_data: PickupConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Confirm final pickup completion"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Confirm final pickup completion."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -187,6 +224,8 @@ def confirm_pickup(
     db.commit()
     db.refresh(load)
     
+    logger.info(f"Pickup confirmed for load {load_id}")
+    
     return {
         "success": True,
         "message": "Pickup confirmed successfully",
@@ -198,10 +237,14 @@ def confirm_pickup(
 def mark_departure(
     db: Session, 
     load_id: str, 
-    departure_data: DepartureRequest
+    departure_data: DepartureRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Mark departure from pickup location"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Mark departure from pickup location."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -215,9 +258,12 @@ def mark_departure(
     db.commit()
     db.refresh(load)
     
+    logger.info(f"Departure marked for load {load_id}")
+    
     return {
         "success": True,
         "message": "Departure confirmed successfully",
         "newStatus": "departed",
         "timestamp": load.departureTime
     }
+

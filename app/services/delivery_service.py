@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional, Dict, Any
+import logging
+
 from app.models.simple_load import SimpleLoad
 from app.schema.deliverySchema import (
     DeliveryArrivalRequest,
@@ -9,10 +11,25 @@ from app.schema.deliverySchema import (
     DeliveryConfirmationRequest
 )
 
+logger = logging.getLogger(__name__)
 
-def get_delivery_status(db: Session, load_id: str) -> Optional[Dict[str, Any]]:
-    """Get current delivery status for a load"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+
+def get_delivery_status(db: Session, load_id: str, company_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get current delivery status for a load.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Delivery status dict or None if not found
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         return None
     
@@ -32,10 +49,14 @@ def get_delivery_status(db: Session, load_id: str) -> Optional[Dict[str, Any]]:
 def update_delivery_arrival(
     db: Session, 
     load_id: str, 
-    arrival_data: DeliveryArrivalRequest
+    arrival_data: DeliveryArrivalRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Update delivery status to arrived"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Update delivery status to arrived."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -71,10 +92,14 @@ def update_delivery_arrival(
 def update_delivery_docking(
     db: Session, 
     load_id: str, 
-    docking_data: DeliveryDockingRequest
+    docking_data: DeliveryDockingRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Update delivery status to docked"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Update delivery status to docked."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -100,10 +125,14 @@ def update_delivery_docking(
 def update_delivery_unloading_start(
     db: Session, 
     load_id: str, 
-    unloading_data: DeliveryUnloadingRequest
+    unloading_data: DeliveryUnloadingRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Update delivery status to unloading started"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Update delivery status to unloading started."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -129,10 +158,14 @@ def update_delivery_unloading_start(
 def update_delivery_unloading_complete(
     db: Session, 
     load_id: str, 
-    unloading_data: DeliveryUnloadingRequest
+    unloading_data: DeliveryUnloadingRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Update delivery status to unloading completed"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Update delivery status to unloading completed."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -158,10 +191,14 @@ def update_delivery_unloading_complete(
 def confirm_delivery(
     db: Session, 
     load_id: str, 
-    confirmation_data: DeliveryConfirmationRequest
+    confirmation_data: DeliveryConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Confirm final delivery"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """Confirm final delivery."""
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -180,6 +217,8 @@ def confirm_delivery(
     
     db.commit()
     db.refresh(load)
+    
+    logger.info(f"Delivery confirmed for load {load_id}")
     
     return {
         "success": True,

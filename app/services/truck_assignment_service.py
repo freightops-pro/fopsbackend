@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import logging
+
 from app.models.simple_load import SimpleLoad
 from app.schema.truckAssignmentSchema import (
     TruckAssignmentRequest,
@@ -10,10 +12,25 @@ from app.schema.truckAssignmentSchema import (
     AvailableTruck
 )
 
+logger = logging.getLogger(__name__)
 
-def get_truck_assignment_status(db: Session, load_id: str) -> Optional[Dict[str, Any]]:
-    """Get current truck assignment status for a load"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+
+def get_truck_assignment_status(db: Session, load_id: str, company_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get current truck assignment status for a load.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Truck assignment status dict or None if not found
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         return None
     
@@ -78,10 +95,28 @@ def get_available_trucks(db: Session, company_id: str) -> List[AvailableTruck]:
 def assign_truck(
     db: Session, 
     load_id: str, 
-    assignment_data: TruckAssignmentRequest
+    assignment_data: TruckAssignmentRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Assign truck to load"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """
+    Assign truck to load.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        assignment_data: Truck assignment details
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Assignment result
+        
+    Raises:
+        ValueError: Load not found or invalid status
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -95,6 +130,8 @@ def assign_truck(
     db.commit()
     db.refresh(load)
     
+    logger.info(f"Truck {assignment_data.truckId} assigned to load {load_id}")
+    
     return {
         "success": True,
         "message": "Truck assigned successfully",
@@ -106,10 +143,28 @@ def assign_truck(
 def confirm_driver(
     db: Session, 
     load_id: str, 
-    confirmation_data: DriverConfirmationRequest
+    confirmation_data: DriverConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Confirm driver is driving the assigned truck"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """
+    Confirm driver is driving the assigned truck.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        confirmation_data: Driver confirmation details
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Confirmation result
+        
+    Raises:
+        ValueError: Load not found or invalid status
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -136,10 +191,28 @@ def confirm_driver(
 def setup_trailer(
     db: Session, 
     load_id: str, 
-    trailer_data: TrailerSetupRequest
+    trailer_data: TrailerSetupRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Set up trailer information"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """
+    Set up trailer information.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        trailer_data: Trailer setup details
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Setup result
+        
+    Raises:
+        ValueError: Load not found or invalid status
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -170,10 +243,28 @@ def setup_trailer(
 def confirm_truck(
     db: Session, 
     load_id: str, 
-    confirmation_data: TruckConfirmationRequest
+    confirmation_data: TruckConfirmationRequest,
+    company_id: str
 ) -> Dict[str, Any]:
-    """Final truck confirmation"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+    """
+    Final truck confirmation.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        confirmation_data: Truck confirmation details
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        Confirmation result
+        
+    Raises:
+        ValueError: Load not found or invalid status
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         raise ValueError("Load not found")
     
@@ -189,6 +280,8 @@ def confirm_truck(
     db.commit()
     db.refresh(load)
     
+    logger.info(f"Truck confirmed for load {load_id}")
+    
     return {
         "success": True,
         "message": "Truck confirmation completed",
@@ -197,9 +290,22 @@ def confirm_truck(
     }
 
 
-def is_truck_assignment_complete(db: Session, load_id: str) -> bool:
-    """Check if truck assignment is complete and pickup can start"""
-    load = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
+def is_truck_assignment_complete(db: Session, load_id: str, company_id: str) -> bool:
+    """
+    Check if truck assignment is complete and pickup can start.
+    
+    Args:
+        db: Database session
+        load_id: The load ID
+        company_id: Company ID for multi-tenant isolation
+        
+    Returns:
+        True if truck assignment is complete
+    """
+    load = db.query(SimpleLoad).filter(
+        SimpleLoad.id == load_id,
+        SimpleLoad.companyId == company_id
+    ).first()
     if not load:
         return False
     
