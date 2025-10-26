@@ -125,18 +125,27 @@ jobs:
         curl -fsSL install.recurse.ml | sh
         echo "$HOME/.rml/bin" >> $GITHUB_PATH
     
-    - name: Run Recurse ML Analysis
+    - name: Check RML Version
       run: |
-        rml --format github-actions
+        rml --version || rml --help
       continue-on-error: true
     
-    - name: Upload RML Report
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: rml-report
-        path: .rml-report.json
-        retention-days: 30
+    - name: Run Recurse ML Analysis
+      run: |
+        # Run RML on all Python files
+        rml app/**/*.py || true
+        # Or run on entire directory
+        rml app/ || true
+      continue-on-error: true
+    
+    - name: Generate RML Report
+      run: |
+        # Create a simple report if RML output exists
+        if [ -f .rml-output.txt ]; then
+          echo "RML analysis completed"
+          cat .rml-output.txt
+        fi
+      continue-on-error: true
 
   docker:
     name: Docker Build
