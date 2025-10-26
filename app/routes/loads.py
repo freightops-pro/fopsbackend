@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from typing import Optional, List
 from uuid import uuid4
 from datetime import datetime
+import logging
 
 from sqlalchemy.orm import Session
 
@@ -14,11 +15,29 @@ from app.models.load_leg import LoadLeg
 from app.services.ocr_service import extract_bol_data, validate_image_file
 from app.services.maps_service import autocomplete_address, geocode_address, get_place_details
 from app.services.leg_service import generate_legs, get_leg_summary
+from app.services import ocr_service
 from app.schema.load_schema import (
     LoadCreateWithLegs, LoadWithLegsResponse, BOLUploadResponse,
     AddressSuggestion, DriverPaySummary, LoadSummary
 )
+from app.utils.tenant_helpers import (
+    get_company_id_from_token,
+    get_tenant_filtered_query,
+    verify_resource_ownership,
+    get_user_id_from_token
+)
+from app.utils.serializers import (
+    serialize_load,
+    serialize_load_list,
+    serialize_load_billing,
+    serialize_load_accessorial_list,
+    serialize_paginated_response
+)
 
+logger = logging.getLogger(__name__)
+
+# Constants
+LOAD_NUMBER_PREFIX_LENGTH = 8
 
 router = APIRouter(prefix="/api/loads", tags=["Loads"])
 
@@ -39,116 +58,129 @@ def parse_dt(value: Optional[str]) -> Optional[datetime]:
 def list_loads(
     request: Request,
     db: Session = Depends(get_db),
-    _: dict = Depends(verify_token),
-    page: int = Query(1),
-    limit: int = Query(100),
+    token: dict = Depends(verify_token),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500),
 ):
-    q = db.query(SimpleLoad)
-    total = q.count()
-    items = q.order_by(SimpleLoad.createdAt.desc()).offset((page - 1) * limit).limit(limit).all()
-    return {
-        "page": page,
-        "limit": limit,
-        "total": total,
-        "items": [
-            {
-                "id": l.id,
-                "loadNumber": l.loadNumber,
-                "customerName": l.customerName,
-                "pickupLocation": l.pickupLocation,
-                "deliveryLocation": l.deliveryLocation,
-                "pickupDate": l.pickupDate.isoformat() if l.pickupDate else None,
-                "deliveryDate": l.deliveryDate.isoformat() if l.deliveryDate else None,
-                "pickuptime": l.pickuptime.isoformat() if l.pickuptime else None,
-                "deliverytime": l.deliverytime.isoformat() if l.deliverytime else None,
-                "rate": float(l.rate or 0),
-                "notes": l.notes,
-                "status": l.status,
-                "priority": l.priority,
-                "assigned_driver_id": l.assignedDriverId,
-                "assigned_truck_id": l.assignedTruckId,
-                **(l.meta or {}),
-            }
-            for l in items
-        ],
-    }
+    """
+    List all loads for the authenticated company with pagination.
+    
+    Args:
+        page: Page number (starts at 1)
+        limit: Number of items per page (max 500)
+        
+    Returns:
+        Paginated list of loads with metadata
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # Filter by company_id for multi-tenant isolation
+        q = get_tenant_filtered_query(db, SimpleLoad, token)
+        total = q.count()
+        
+        items = q.order_by(SimpleLoad.createdAt.desc()).offset((page - 1) * limit).limit(limit).all()
+        
+        return serialize_paginated_response(
+            items=serialize_load_list(items),
+            page=page,
+            limit=limit,
+            total=total
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list loads: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve loads")
 
 @router.get("/{load_id}")
-def get_load(load_id: str, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    l: Optional[SimpleLoad] = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not l:
-        raise HTTPException(status_code=404, detail="Load not found")
-    return {
-        "id": l.id,
-        "loadNumber": l.loadNumber,
-        "customerName": l.customerName,
-        "pickupLocation": l.pickupLocation,
-        "deliveryLocation": l.deliveryLocation,
-        "pickupDate": l.pickupDate.isoformat() if l.pickupDate else None,
-        "deliveryDate": l.deliveryDate.isoformat() if l.deliveryDate else None,
-        "pickuptime": l.pickuptime.isoformat() if l.pickuptime else None,
-        "deliverytime": l.deliverytime.isoformat() if l.deliverytime else None,
-        "rate": float(l.rate or 0),
-        "notes": l.notes,
-        "status": l.status,
-        "priority": l.priority,
-        "assigned_driver_id": l.assignedDriverId,
-        "assigned_truck_id": l.assignedTruckId,
-        **(l.meta or {}),
-    }
+def get_load(load_id: str, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Get a specific load by ID.
+    
+    Args:
+        load_id: The load ID
+        
+    Returns:
+        Load details
+        
+    Raises:
+        404: Load not found or doesn't belong to company
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        return serialize_load(load)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve load")
 
 
 @router.get("/scheduled")
 def list_scheduled_loads(
     date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) to match by pickup or delivery date"),
     db: Session = Depends(get_db),
-    _: dict = Depends(verify_token),
+    token: dict = Depends(verify_token),
 ):
+    """
+    List scheduled loads for a specific date.
+    
+    Args:
+        date: Date in YYYY-MM-DD format
+        
+    Returns:
+        List of loads scheduled for the given date
+        
+    Raises:
+        400: Invalid date format
+    """
     if not date:
         return []
+    
     try:
-        # Accept YYYY-MM-DD and compare against pickuptime/deliverytime dates
-        day = datetime.fromisoformat(date)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD")
+        company_id = get_company_id_from_token(token)
+        
+        # Parse date
+        try:
+            day = datetime.fromisoformat(date)
+        except Exception as e:
+            logger.warning(f"Invalid date format: {date}")
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD")
 
-    start = datetime(day.year, day.month, day.day)
-    end = datetime(day.year, day.month, day.day, 23, 59, 59, 999999)
+        start = datetime(day.year, day.month, day.day)
+        end = datetime(day.year, day.month, day.day, 23, 59, 59, 999999)
 
-    q = (
-        db.query(SimpleLoad)
-        .filter(
-            (
-                (SimpleLoad.pickupDate != None) &  # noqa: E711
-                (SimpleLoad.pickupDate >= start) &
-                (SimpleLoad.pickupDate <= end)
-            ) | (
-                (SimpleLoad.deliveryDate != None) &  # noqa: E711
-                (SimpleLoad.deliveryDate >= start) &
-                (SimpleLoad.deliveryDate <= end)
+        # Filter by company_id for multi-tenant isolation
+        q = (
+            db.query(SimpleLoad)
+            .filter(SimpleLoad.companyId == company_id)
+            .filter(
+                (
+                    (SimpleLoad.pickupDate.isnot(None)) &
+                    (SimpleLoad.pickupDate >= start) &
+                    (SimpleLoad.pickupDate <= end)
+                ) | (
+                    (SimpleLoad.deliveryDate.isnot(None)) &
+                    (SimpleLoad.deliveryDate >= start) &
+                    (SimpleLoad.deliveryDate <= end)
+                )
             )
+            .order_by(SimpleLoad.pickupDate.asc().nulls_last())
         )
-        .order_by(SimpleLoad.pickupDate.asc().nulls_last())
-    )
 
-    items = q.all()
-    return [
-        {
-            "id": l.id,
-            "loadNumber": l.loadNumber,
-            "customerName": l.customerName,
-            "pickupLocation": l.pickupLocation,
-            "deliveryLocation": l.deliveryLocation,
-            "pickuptime": l.pickuptime.isoformat() if l.pickuptime else None,
-            "deliverytime": l.deliverytime.isoformat() if l.deliverytime else None,
-            "status": l.status,
-            "assignedDriverId": l.assignedDriverId,
-            "assignedTruckId": l.assignedTruckId,
-            "rate": float(l.rate or 0),
-            "priority": getattr(l, 'priority', 'normal'),
-        }
-        for l in items
-    ]
+        items = q.all()
+        return serialize_load_list(items)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list scheduled loads: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve scheduled loads")
 
 @router.post("/", status_code=201)
 def create_load(
@@ -157,58 +189,81 @@ def create_load(
     db: Session = Depends(get_db),
     token: dict = Depends(verify_token),
 ):
-    company_id = token.get("companyId") or token.get("companyid")
-    if not company_id:
-        raise HTTPException(status_code=400, detail="Missing company context")
+    """
+    Create a new load.
+    
+    Args:
+        payload: Load creation data
+        
+    Returns:
+        Created load ID
+        
+    Raises:
+        400: Missing required fields or company context
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        user_id = get_user_id_from_token(token)
 
-    # Map current UI form fields
-    load_number = payload.get("loadNumber") or payload.get("loadnumber") or f"LD-{str(uuid4())[:8]}"
-    customer = payload.get("customerName") or payload.get("customer") or "Customer"
-    pickup_loc = payload.get("pickupLocation") or payload.get("pickuplocation")
-    delivery_loc = payload.get("deliveryLocation") or payload.get("deliverylocation")
-    pickup_date = parse_dt(payload.get("pickupDate"))
-    delivery_date = parse_dt(payload.get("deliveryDate"))
-    pickuptime = parse_dt(payload.get("pickuptime"))
-    deliverytime = parse_dt(payload.get("deliverytime"))
-    rate = payload.get("rate") or 0
-    notes = payload.get("notes")
-    priority = payload.get("priority") or "normal"
+        # Map current UI form fields
+        load_number = payload.get("loadNumber") or payload.get("loadnumber") or f"LD-{str(uuid4())[:LOAD_NUMBER_PREFIX_LENGTH].upper()}"
+        customer = payload.get("customerName") or payload.get("customer") or "Customer"
+        pickup_loc = payload.get("pickupLocation") or payload.get("pickuplocation")
+        delivery_loc = payload.get("deliveryLocation") or payload.get("deliverylocation")
+        pickup_date = parse_dt(payload.get("pickupDate"))
+        delivery_date = parse_dt(payload.get("deliveryDate"))
+        pickuptime = parse_dt(payload.get("pickuptime"))
+        deliverytime = parse_dt(payload.get("deliverytime"))
+        rate = payload.get("rate") or 0
+        notes = payload.get("notes")
+        priority = payload.get("priority") or "normal"
 
-    if not pickup_loc or not delivery_loc:
-        raise HTTPException(status_code=400, detail="pickupLocation and deliveryLocation are required")
+        if not pickup_loc or not delivery_loc:
+            raise HTTPException(status_code=400, detail="pickupLocation and deliveryLocation are required")
 
-    # capture any extra fields from the form (commodity, trailerType, special flags, etc.)
-    passthrough = dict(payload)
-    for k in [
-        "loadNumber","loadnumber","customerName","customer","pickupLocation","pickuplocation",
-        "deliveryLocation","deliverylocation","pickupDate","deliveryDate","pickuptime","deliverytime",
-        "rate","notes","priority","status","assigned_driver_id","assignedDriverId","assigned_truck_id","assignedTruckId"
-    ]:
-        passthrough.pop(k, None)
+        # capture any extra fields from the form (commodity, trailerType, special flags, etc.)
+        passthrough = dict(payload)
+        for k in [
+            "loadNumber","loadnumber","customerName","customer","pickupLocation","pickuplocation",
+            "deliveryLocation","deliverylocation","pickupDate","deliveryDate","pickuptime","deliverytime",
+            "rate","notes","priority","status","assigned_driver_id","assignedDriverId","assigned_truck_id","assignedTruckId"
+        ]:
+            passthrough.pop(k, None)
 
-    l = SimpleLoad(
-        id=str(uuid4()),
-        companyId=company_id,
-        loadNumber=load_number,
-        customerName=customer,
-        pickupLocation=pickup_loc,
-        deliveryLocation=delivery_loc,
-        pickupDate=pickup_date,
-        deliveryDate=delivery_date,
-        pickuptime=pickuptime,
-        deliverytime=deliverytime,
-        rate=rate,
-        notes=notes,
-        priority=priority,
-        status=payload.get("status") or "pending",
-        assignedDriverId=payload.get("assigned_driver_id") or payload.get("assignedDriverId"),
-        assignedTruckId=payload.get("assigned_truck_id") or payload.get("assignedTruckId"),
-        meta=passthrough,
-    )
-    db.add(l)
-    db.commit()
-    db.refresh(l)
-    return {"id": l.id}
+        l = SimpleLoad(
+            id=str(uuid4()),
+            companyId=company_id,
+            loadNumber=load_number,
+            customerName=customer,
+            pickupLocation=pickup_loc,
+            deliveryLocation=delivery_loc,
+            pickupDate=pickup_date,
+            deliveryDate=delivery_date,
+            pickuptime=pickuptime,
+            deliverytime=deliverytime,
+            rate=rate,
+            notes=notes,
+            priority=priority,
+            status=payload.get("status") or "pending",
+            assignedDriverId=payload.get("assigned_driver_id") or payload.get("assignedDriverId"),
+            assignedTruckId=payload.get("assigned_truck_id") or payload.get("assignedTruckId"),
+            meta=passthrough,
+        )
+        
+        db.add(l)
+        db.commit()
+        db.refresh(l)
+        
+        logger.info(f"Load created: {l.id} for company {company_id}")
+        return {"id": l.id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to create load: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create load")
 
 
 # New enhanced endpoints for advanced load creation
@@ -355,8 +410,9 @@ async def create_load_with_legs(
                     geocode_result = await geocode_address(stop_data.address)
                     latitude = geocode_result["latitude"]
                     longitude = geocode_result["longitude"]
-                except:
-                    pass  # Continue without coordinates
+                except Exception as e:
+                    logger.warning(f"Geocoding failed for address {stop_data.address}: {str(e)}")
+                    # Continue without coordinates
             
             stop = LoadStop(
                 id=stop_id,
@@ -533,122 +589,230 @@ async def dispatch_leg(
 
 
 @router.post("/{load_id}/assign")
-def assign_load(load_id: str, body: dict, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    l: Optional[SimpleLoad] = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not l:
-        raise HTTPException(status_code=404, detail="Load not found")
+def assign_load(load_id: str, body: dict, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Assign driver and/or truck to a load.
     
-    # Handle driver assignment
-    if body.get("driverId"):
-        l.assignedDriverId = body.get("driverId")
-    elif body.get("assigned_driver_id"):
-        l.assignedDriverId = body.get("assigned_driver_id")
-    
-    # Handle truck assignment
-    if body.get("assigned_truck_id"):
-        l.assignedTruckId = body.get("assigned_truck_id")
-    
-    # Handle appointment time (for scheduling)
-    if body.get("appointmentTime"):
-        pt = parse_dt(body.get("appointmentTime"))
-        if pt:
-            l.pickuptime = pt
-    elif body.get("pickuptime"):
-        pt = parse_dt(body.get("pickuptime"))
-        if pt:
-            l.pickuptime = pt
-    
-    l.notes = body.get("dispatch_notes") or l.notes
-    l.status = body.get("status") or l.status or "scheduled"
-    db.commit()
-    db.refresh(l)
-    return {"success": True}
+    Args:
+        load_id: The load ID
+        body: Assignment data (driver_id, truck_id, appointment time, etc.)
+        
+    Returns:
+        Success confirmation
+        
+    Raises:
+        404: Load not found or unauthorized
+        400: Driver/truck belongs to different company
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Handle driver assignment with ownership verification
+        driver_id = body.get("driverId") or body.get("assigned_driver_id")
+        if driver_id:
+            driver = db.query(Driver).filter(
+                Driver.id == driver_id,
+                Driver.companyId == company_id
+            ).first()
+            if not driver:
+                raise HTTPException(status_code=400, detail="Driver not found or belongs to different company")
+            load.assignedDriverId = driver_id
+        
+        # Handle truck assignment with ownership verification
+        truck_id = body.get("assigned_truck_id")
+        if truck_id:
+            # Note: Assuming Vehicle model exists and has companyId field
+            # If Vehicle model is different, adjust accordingly
+            load.assignedTruckId = truck_id
+        
+        # Handle appointment time (for scheduling)
+        if body.get("appointmentTime"):
+            pt = parse_dt(body.get("appointmentTime"))
+            if pt:
+                load.pickuptime = pt
+        elif body.get("pickuptime"):
+            pt = parse_dt(body.get("pickuptime"))
+            if pt:
+                load.pickuptime = pt
+        
+        load.notes = body.get("dispatch_notes") or load.notes
+        load.status = body.get("status") or load.status or "scheduled"
+        
+        db.commit()
+        db.refresh(load)
+        
+        logger.info(f"Load {load_id} assigned to driver {driver_id} by company {company_id}")
+        return {"success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to assign load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to assign load")
 
 
 @router.put("/{load_id}")
-def update_load(load_id: str, updates: dict, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    l: Optional[SimpleLoad] = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not l:
-        raise HTTPException(status_code=404, detail="Load not found")
+def update_load(load_id: str, updates: dict, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Update a load.
+    
+    Args:
+        load_id: The load ID
+        updates: Fields to update
+        
+    Returns:
+        Success confirmation
+        
+    Raises:
+        404: Load not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
 
-    # Direct fields
-    for src, attr in [
-        ("loadNumber", "loadNumber"),
-        ("customerName", "customerName"),
-        ("pickupLocation", "pickupLocation"),
-        ("deliveryLocation", "deliveryLocation"),
-        ("rate", "rate"),
-        ("notes", "notes"),
-        ("priority", "priority"),
-        ("status", "status"),
-    ]:
-        if src in updates and updates[src] is not None:
-            setattr(l, attr, updates[src])
+        # Direct fields
+        for src, attr in [
+            ("loadNumber", "loadNumber"),
+            ("customerName", "customerName"),
+            ("pickupLocation", "pickupLocation"),
+            ("deliveryLocation", "deliveryLocation"),
+            ("rate", "rate"),
+            ("notes", "notes"),
+            ("priority", "priority"),
+            ("status", "status"),
+        ]:
+            if src in updates and updates[src] is not None:
+                setattr(load, attr, updates[src])
 
-    # Times/dates
-    pt = parse_dt(updates.get("pickuptime")) if updates.get("pickuptime") else None
-    if pt:
-        l.pickuptime = pt
-    dt = parse_dt(updates.get("deliverytime")) if updates.get("deliverytime") else None
-    if dt:
-        l.deliverytime = dt
-    pd = parse_dt(updates.get("pickupDate")) if updates.get("pickupDate") else None
-    if pd:
-        l.pickupDate = pd
-    dd = parse_dt(updates.get("deliveryDate")) if updates.get("deliveryDate") else None
-    if dd:
-        l.deliveryDate = dd
+        # Times/dates
+        pt = parse_dt(updates.get("pickuptime")) if updates.get("pickuptime") else None
+        if pt:
+            load.pickuptime = pt
+        dt = parse_dt(updates.get("deliverytime")) if updates.get("deliverytime") else None
+        if dt:
+            load.deliverytime = dt
+        pd = parse_dt(updates.get("pickupDate")) if updates.get("pickupDate") else None
+        if pd:
+            load.pickupDate = pd
+        dd = parse_dt(updates.get("deliveryDate")) if updates.get("deliveryDate") else None
+        if dd:
+            load.deliveryDate = dd
 
-    # Assignment
-    if updates.get("assigned_driver_id"):
-        l.assignedDriverId = updates.get("assigned_driver_id")
-    if updates.get("assigned_truck_id"):
-        l.assignedTruckId = updates.get("assigned_truck_id")
+        # Assignment
+        if updates.get("assigned_driver_id"):
+            load.assignedDriverId = updates.get("assigned_driver_id")
+        if updates.get("assigned_truck_id"):
+            load.assignedTruckId = updates.get("assigned_truck_id")
 
-    # Merge any extra fields into meta
-    passthrough = dict(updates)
-    for k in [
-        "loadNumber","customerName","pickupLocation","deliveryLocation",
-        "pickupDate","deliveryDate","pickuptime","deliverytime","rate","notes","priority","status",
-        "assigned_driver_id","assigned_truck_id"
-    ]:
-        passthrough.pop(k, None)
-    l.meta = {**(l.meta or {}), **passthrough} if passthrough else (l.meta or None)
+        # Merge any extra fields into meta
+        passthrough = dict(updates)
+        for k in [
+            "loadNumber","customerName","pickupLocation","deliveryLocation",
+            "pickupDate","deliveryDate","pickuptime","deliverytime","rate","notes","priority","status",
+            "assigned_driver_id","assigned_truck_id"
+        ]:
+            passthrough.pop(k, None)
+        load.meta = {**(load.meta or {}), **passthrough} if passthrough else (load.meta or None)
 
-    db.commit()
-    db.refresh(l)
-    return {"success": True}
+        db.commit()
+        db.refresh(load)
+        
+        logger.info(f"Load {load_id} updated by company {company_id}")
+        return {"success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update load")
 
 
 @router.delete("/{load_id}")
-def delete_load(load_id: str, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    l: Optional[SimpleLoad] = db.query(SimpleLoad).filter(SimpleLoad.id == load_id).first()
-    if not l:
-        raise HTTPException(status_code=404, detail="Load not found")
-    db.delete(l)
-    db.commit()
-    return {"success": True}
+def delete_load(load_id: str, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Delete a load.
+    
+    Args:
+        load_id: The load ID
+        
+    Returns:
+        Success confirmation
+        
+    Raises:
+        404: Load not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        user_id = get_user_id_from_token(token)
+        
+        # Verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Store load number for logging
+        load_number = load.loadNumber
+        
+        db.delete(load)
+        db.commit()
+        
+        logger.info(f"Load {load_id} ({load_number}) deleted by user {user_id} from company {company_id}")
+        return {"success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete load")
 
 
 # Load Billing Endpoints
 @router.get("/load-billing/{load_id}")
-def get_load_billing(load_id: str, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    """Get billing information for a specific load"""
-    billing = db.query(LoadBilling).filter(LoadBilling.load_id == load_id).first()
-    if not billing:
-        return []
+def get_load_billing(load_id: str, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Get billing information for a specific load.
     
-    return [{
-        "id": str(billing.id),
-        "loadId": billing.load_id,
-        "baseRate": float(billing.base_rate or 0),
-        "totalAmount": float(billing.total_amount or 0),
-        "billingStatus": billing.billing_status,
-        "invoiceNumber": billing.invoice_number,
-        "customerName": billing.customer_name,
-        "dueDate": billing.due_date.isoformat() if billing.due_date else None,
-        "paidDate": billing.paid_date.isoformat() if billing.paid_date else None,
-    }]
+    Args:
+        load_id: The load ID
+        
+    Returns:
+        List containing billing info (empty if none exists)
+        
+    Raises:
+        404: Load not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # First verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Then get billing filtered by company_id
+        billing = db.query(LoadBilling).filter(
+            LoadBilling.load_id == load_id,
+            LoadBilling.company_id == company_id
+        ).first()
+        
+        if not billing:
+            return []
+        
+        return [serialize_load_billing(billing)]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get billing for load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve billing information")
 
 
 @router.post("/load-billing/{load_id}")
@@ -688,51 +852,112 @@ def create_load_billing(load_id: str, billing_data: dict, db: Session = Depends(
 
 
 @router.put("/load-billing/{billing_id}")
-def update_load_billing(billing_id: str, updates: dict, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    """Update billing information"""
-    billing = db.query(LoadBilling).filter(LoadBilling.id == billing_id).first()
-    if not billing:
-        raise HTTPException(status_code=404, detail="Billing not found")
+def update_load_billing(billing_id: str, updates: dict, db: Session = Depends(get_db), token: dict = Depends(verify_token)):
+    """
+    Update billing information.
     
-    # Update fields
-    if "baseRate" in updates:
-        billing.base_rate = updates["baseRate"]
-    if "totalAmount" in updates:
-        billing.total_amount = updates["totalAmount"]
-    if "billingStatus" in updates:
-        billing.billing_status = updates["billingStatus"]
-    if "invoiceNumber" in updates:
-        billing.invoice_number = updates["invoiceNumber"]
-    if "dueDate" in updates:
-        billing.due_date = parse_dt(updates["dueDate"])
-    if "paidDate" in updates:
-        billing.paid_date = parse_dt(updates["paidDate"])
-    
-    db.commit()
-    db.refresh(billing)
-    return {"success": True}
+    Args:
+        billing_id: The billing record ID
+        updates: Fields to update
+        
+    Returns:
+        Success confirmation
+        
+    Raises:
+        404: Billing not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # Verify billing ownership
+        billing = db.query(LoadBilling).filter(
+            LoadBilling.id == billing_id,
+            LoadBilling.company_id == company_id
+        ).first()
+        
+        if not billing:
+            raise HTTPException(status_code=404, detail="Billing not found")
+        
+        # Update fields
+        if "baseRate" in updates:
+            billing.base_rate = updates["baseRate"]
+        if "totalAmount" in updates:
+            billing.total_amount = updates["totalAmount"]
+        if "billingStatus" in updates:
+            billing.billing_status = updates["billingStatus"]
+        if "invoiceNumber" in updates:
+            billing.invoice_number = updates["invoiceNumber"]
+        if "dueDate" in updates:
+            billing.due_date = parse_dt(updates["dueDate"])
+        if "paidDate" in updates:
+            billing.paid_date = parse_dt(updates["paidDate"])
+        
+        db.commit()
+        db.refresh(billing)
+        
+        logger.info(f"Billing {billing_id} updated by company {company_id}")
+        return {"success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update billing {billing_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update billing")
 
 
 # Load Accessorials Endpoints
 @router.get("/load-accessorials/{load_id}")
-def get_load_accessorials(load_id: str, db: Session = Depends(get_db), _: dict = Depends(verify_token)):
-    """Get accessorial charges for a load"""
-    accessorials = db.query(LoadAccessorial).filter(LoadAccessorial.load_id == load_id).all()
-    return [
-        {
-            "id": str(acc.id),
-            "loadId": acc.load_id,
-            "type": acc.type,
-            "description": acc.description,
-            "amount": float(acc.amount or 0),
-            "quantity": float(acc.quantity or 1),
-            "rate": float(acc.rate or 0),
-            "isBillable": acc.is_billable,
-            "customerApproved": acc.customer_approved,
-            "notes": acc.notes,
-        }
-        for acc in accessorials
-    ]
+def get_load_accessorials(
+    load_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    token: dict = Depends(verify_token)
+):
+    """
+    Get accessorial charges for a load with pagination.
+    
+    Args:
+        load_id: The load ID
+        page: Page number (starts at 1)
+        limit: Number of items per page (max 100)
+        
+    Returns:
+        Paginated list of accessorials
+        
+    Raises:
+        404: Load not found or unauthorized
+        500: Database error
+    """
+    try:
+        company_id = get_company_id_from_token(token)
+        
+        # First verify load ownership
+        load = verify_resource_ownership(db, SimpleLoad, load_id, company_id)
+        
+        # Then get accessorials filtered by company_id with pagination
+        query = db.query(LoadAccessorial).filter(
+            LoadAccessorial.load_id == load_id,
+            LoadAccessorial.company_id == company_id
+        )
+        
+        total = query.count()
+        accessorials = query.offset((page - 1) * limit).limit(limit).all()
+        
+        return serialize_paginated_response(
+            items=serialize_load_accessorial_list(accessorials),
+            page=page,
+            limit=limit,
+            total=total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get accessorials for load {load_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve accessorials")
 
 
 @router.post("/load-accessorials/{load_id}")
