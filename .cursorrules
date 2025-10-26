@@ -185,3 +185,200 @@ If ANY critical rule is violated:
 Remember: This is a PRODUCTION system handling real business data. 
 Security and data integrity are NOT negotiable.
 
+---
+
+# 🎯 COMPREHENSIVE CODE QUALITY RULES
+# Extended Recurse ML Methodology - Full Codebase Analysis
+
+## 1. PERFORMANCE OPTIMIZATION
+
+### Database Performance
+- ❌ REJECT: N+1 query patterns (use joinedload)
+- ❌ REJECT: Missing pagination on list endpoints
+- ❌ REJECT: No query result caching for frequently accessed data
+- ✅ REQUIRE: Eager loading with joinedload() for relationships
+- ✅ REQUIRE: Redis caching for static/frequent data
+- ✅ REQUIRE: Connection pooling properly configured
+
+### Async/Await Performance
+- ❌ REJECT: Blocking I/O in async functions
+- ❌ REJECT: Sequential async calls that could be parallel
+- ✅ REQUIRE: Use asyncio.gather() for parallel operations
+- ✅ REQUIRE: Non-blocking external API calls
+
+## 2. CODE COMPLEXITY
+
+### Function Complexity
+- ❌ REJECT: Functions >50 lines
+- ❌ REJECT: Cyclomatic complexity >10
+- ❌ REJECT: Nested if statements >3 levels deep
+- ✅ REQUIRE: Extract complex logic into helper functions
+- ✅ REQUIRE: Use early returns to reduce nesting
+
+### Code Smells
+- ❌ REJECT: God objects/classes
+- ❌ REJECT: Long parameter lists (>5 params)
+- ❌ REJECT: Mutable default arguments
+- ❌ REJECT: Boolean parameters (use enums instead)
+- ✅ REQUIRE: Single Responsibility Principle
+- ✅ REQUIRE: Parameter objects for >3 params
+
+## 3. CODE DUPLICATION (DRY)
+
+- ❌ REJECT: Copy-pasted code blocks
+- ❌ REJECT: Similar endpoint patterns not abstracted
+- ❌ REJECT: Repeated validation logic
+- ✅ REQUIRE: Reusable utility functions (like tenant_helpers.py)
+- ✅ REQUIRE: Shared validation decorators
+- ✅ REQUIRE: Extract common patterns
+
+## 4. ARCHITECTURE & DESIGN
+
+### Separation of Concerns
+- ❌ REJECT: Business logic in route handlers
+- ❌ REJECT: Database queries directly in route handlers
+- ❌ REJECT: External API calls in route handlers
+- ✅ REQUIRE: Business logic in service layer
+- ✅ REQUIRE: Database access through service layer
+- ✅ REQUIRE: Adapter pattern for external services
+
+### Imports
+- ❌ REJECT: Circular imports
+- ❌ REJECT: Import * statements
+- ❌ REJECT: Unused imports
+- ✅ REQUIRE: Clean import hierarchy
+- ✅ REQUIRE: Explicit imports only
+
+## 5. TESTING EXCELLENCE
+
+### Coverage
+- ❌ REJECT: No tests for business logic
+- ❌ REJECT: <80% test coverage
+- ✅ REQUIRE: Tests for all business logic
+- ✅ REQUIRE: Integration tests for workflows
+- ✅ REQUIRE: Edge case testing
+
+### Quality
+- ❌ REJECT: Tests with multiple unrelated assertions
+- ❌ REJECT: Slow tests without @pytest.mark.slow
+- ✅ REQUIRE: One logical assertion per test
+- ✅ REQUIRE: Fast unit tests (<100ms)
+
+## 6. DOCUMENTATION
+
+### Code Documentation
+- ❌ REJECT: No docstrings on public functions
+- ❌ REJECT: Outdated/misleading comments
+- ❌ REJECT: TODO without ticket reference
+- ✅ REQUIRE: Docstrings with Args, Returns, Raises
+- ✅ REQUIRE: Example usage in complex functions
+
+### API Documentation
+- ✅ REQUIRE: All endpoints documented in Swagger
+- ✅ REQUIRE: Request/response examples
+- ✅ REQUIRE: Error codes documented
+
+## 7. LOGGING & MONITORING
+
+### Logging
+- ❌ REJECT: print() statements
+- ❌ REJECT: Logging sensitive data
+- ❌ REJECT: No correlation IDs
+- ✅ REQUIRE: Structured logging with proper levels
+- ✅ REQUIRE: Correlation IDs for tracing
+- ✅ REQUIRE: Log business events for audit
+
+### Monitoring
+- ✅ REQUIRE: Response time metrics
+- ✅ REQUIRE: Error rate tracking
+- ✅ REQUIRE: Business KPI metrics
+
+## 8. SCALABILITY
+
+### Horizontal Scaling
+- ❌ REJECT: In-memory session storage
+- ❌ REJECT: File uploads to local disk
+- ❌ REJECT: Stateful request handling
+- ✅ REQUIRE: Redis for sessions
+- ✅ REQUIRE: Cloud storage (S3) for files
+- ✅ REQUIRE: Stateless API design
+
+### Database Scalability
+- ❌ REJECT: No connection pooling
+- ❌ REJECT: Long-running transactions
+- ❌ REJECT: Table scans on large tables
+- ✅ REQUIRE: Proper connection pool config
+- ✅ REQUIRE: Short transactions
+- ✅ REQUIRE: Indexes on all filtered/joined columns
+
+## 9. RELIABILITY
+
+### Fault Tolerance
+- ❌ REJECT: No timeout on external calls
+- ❌ REJECT: No retry logic
+- ✅ REQUIRE: Timeouts on all external API calls
+- ✅ REQUIRE: Exponential backoff retries
+- ✅ REQUIRE: Circuit breakers for failing services
+
+### Data Integrity
+- ❌ REJECT: No database constraints
+- ❌ REJECT: Race conditions possible
+- ✅ REQUIRE: Foreign key constraints
+- ✅ REQUIRE: Optimistic locking where needed
+- ✅ REQUIRE: Idempotent operations
+
+## 📊 Code Quality Metrics
+
+Track these metrics:
+- Cyclomatic complexity: Target <10 per function
+- Lines per file: Target <500
+- Test coverage: Target >80%
+- Documentation coverage: Target 100% public APIs
+- API response time: Target p95 <500ms
+
+## 🎯 Comprehensive Review Checklist
+
+For each module:
+- [ ] Security: No vulnerabilities
+- [ ] Multi-tenancy: All queries filtered
+- [ ] Performance: No N+1 queries, proper indexes
+- [ ] Error handling: Proper try/except with rollback
+- [ ] Validation: Pydantic models for input/output
+- [ ] Logging: Structured logging in place
+- [ ] Tests: >80% coverage
+- [ ] Documentation: All functions documented
+- [ ] Complexity: All functions <50 lines, complexity <10
+- [ ] Duplication: No copy-pasted code
+- [ ] Architecture: Proper separation of concerns
+- [ ] Async: Properly used where needed
+- [ ] Dependencies: No circular imports, all used
+- [ ] Configuration: All from environment variables
+- [ ] Scalability: Stateless, horizontally scalable
+
+## 💡 AI Review Instructions
+
+When reviewing ANY code (not just dispatch):
+
+**Level 1 - CRITICAL (Stop if found):**
+1. Security vulnerabilities
+2. Multi-tenant data leakage
+3. Authentication bypasses
+4. SQL injection risks
+
+**Level 2 - HIGH (Fix before deploy):**
+5. Performance bottlenecks (N+1 queries)
+6. Data integrity issues
+7. Missing error handling
+8. Transaction management issues
+
+**Level 3 - MEDIUM (Fix in sprint):**
+9. Code complexity issues
+10. Missing tests
+11. Poor documentation
+12. Code duplication
+
+**Level 4 - LOW (Technical debt):**
+13. Code style inconsistencies
+14. Minor performance improvements
+15. Documentation enhancements
+
