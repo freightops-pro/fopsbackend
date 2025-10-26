@@ -1,0 +1,187 @@
+# FreightOps Pro Backend - Cursor AI Rules
+# Powered by Recurse ML methodology for bug detection and code quality
+
+## 🎯 Project Context
+This is a production-ready FastAPI backend for a multi-tenant SaaS transportation management system.
+Critical focus: Security, multi-tenancy, data integrity, and performance.
+
+## 🔍 Critical Bug Detection Rules
+
+### Multi-Tenancy Data Isolation (CRITICAL)
+ALWAYS check for company_id filtering in database queries:
+- ❌ REJECT: Any query without .filter(Model.company_id == company_id)
+- ❌ REJECT: Direct access to data without tenant verification
+- ✅ REQUIRE: Every database query MUST filter by company_id
+- ✅ REQUIRE: Verify user belongs to company before any write operation
+
+Example violations to catch:
+```python
+# BAD - No company_id filter
+vehicles = db.query(Vehicle).all()
+
+# GOOD - Proper tenant isolation
+vehicles = db.query(Vehicle).filter(Vehicle.company_id == company_id).all()
+```
+
+### SQL Injection Prevention
+- ❌ REJECT: Raw SQL queries using string formatting or concatenation
+- ❌ REJECT: f-strings in SQL queries
+- ✅ REQUIRE: Use SQLAlchemy ORM or parameterized queries only
+- ✅ REQUIRE: Pydantic validation for all inputs
+
+### Authentication & Authorization
+- ❌ REJECT: Endpoints without Depends(get_current_user)
+- ❌ REJECT: Plaintext password storage
+- ❌ REJECT: JWT secrets in code
+- ✅ REQUIRE: All protected endpoints use dependency injection
+- ✅ REQUIRE: Bcrypt for password hashing
+- ✅ REQUIRE: Environment variables for secrets
+
+### Error Handling
+- ❌ REJECT: Bare except clauses (except:)
+- ❌ REJECT: Returning stack traces to clients
+- ❌ REJECT: Logging sensitive data (passwords, tokens, PII)
+- ✅ REQUIRE: Specific exception handling
+- ✅ REQUIRE: User-friendly error messages
+- ✅ REQUIRE: Detailed logging (without sensitive data)
+
+### Database Operations
+- ❌ REJECT: Missing db.commit() after inserts/updates
+- ❌ REJECT: Queries without error handling
+- ❌ REJECT: N+1 query patterns
+- ✅ REQUIRE: Use joinedload() for relationships
+- ✅ REQUIRE: Transaction management with try/except
+- ✅ REQUIRE: Database indexes on frequently queried fields
+
+### Input Validation
+- ❌ REJECT: Accepting user input without Pydantic validation
+- ❌ REJECT: Missing field validators
+- ❌ REJECT: Trusting client-side validation alone
+- ✅ REQUIRE: Pydantic BaseModel for all request bodies
+- ✅ REQUIRE: Type hints on all functions
+- ✅ REQUIRE: Field validators for complex validation
+
+### API Design
+- ❌ REJECT: Endpoints without response models
+- ❌ REJECT: Missing status codes
+- ❌ REJECT: Returning Model objects directly (use schemas)
+- ✅ REQUIRE: response_model on all endpoints
+- ✅ REQUIRE: Proper HTTP status codes
+- ✅ REQUIRE: Pydantic schemas for responses
+
+### Async/Await Patterns
+- ❌ REJECT: Mixing async and sync incorrectly
+- ❌ REJECT: Blocking operations in async functions
+- ❌ REJECT: Missing await on async calls
+- ✅ REQUIRE: Use async def for I/O operations
+- ✅ REQUIRE: Await all async function calls
+- ✅ REQUIRE: Use async database sessions
+
+### Environment & Configuration
+- ❌ REJECT: Hardcoded credentials
+- ❌ REJECT: Hardcoded URLs or endpoints
+- ❌ REJECT: Missing .env file validation
+- ✅ REQUIRE: Environment variables for all config
+- ✅ REQUIRE: Pydantic Settings for configuration
+- ✅ REQUIRE: Validate required env vars on startup
+
+### Rate Limiting & Security
+- ❌ REJECT: Unlimited API requests
+- ❌ REJECT: No CORS configuration
+- ❌ REJECT: Exposing internal errors to clients
+- ✅ REQUIRE: Rate limiting on auth endpoints
+- ✅ REQUIRE: Proper CORS settings
+- ✅ REQUIRE: Security headers middleware
+
+## 🏗️ Code Quality Standards
+
+### Function Design
+- Maximum function length: 50 lines
+- Maximum cyclomatic complexity: 10
+- Require docstrings for public functions
+- Use type hints for all parameters and returns
+
+### Naming Conventions
+- snake_case for functions and variables
+- PascalCase for classes
+- UPPER_CASE for constants
+- Descriptive names (no single letters except loop counters)
+
+### Import Organization
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+- Use absolute imports
+- One import per line
+
+### Testing Requirements
+- Write tests for all business logic
+- Test multi-tenant isolation
+- Test authentication flows
+- Mock external services (Stripe, Gusto, etc.)
+
+## 🚨 Performance Rules
+
+- Use pagination for list endpoints (limit/offset)
+- Implement caching for frequently accessed data
+- Use select_related/joinedload to prevent N+1 queries
+- Monitor query counts per request
+- Use background tasks for heavy operations
+
+## 📝 Documentation Rules
+
+- All routes must have docstrings with:
+  - Description
+  - Parameters
+  - Returns
+  - Raises
+  - Example usage
+- Update README.md when adding new features
+- Document environment variables in env.example
+
+## 🔄 Migration Rules
+
+- Never modify existing migrations
+- Always run "alembic revision --autogenerate"
+- Test migrations on development database first
+- Include rollback instructions
+
+## 🎯 Before Committing
+
+Run these checks:
+1. pytest tests/ (all tests pass)
+2. flake8 app/ (no linting errors)
+3. black app/ (code formatted)
+4. mypy app/ (type checking)
+5. No print() statements in code
+6. No commented-out code
+7. .env not committed
+
+## 🚀 Deployment Checks
+
+- DATABASE_URL configured
+- SECRET_KEY is strong and unique
+- All migrations applied
+- Environment variables validated
+- Health check endpoint responds
+- HTTPS enforced in production
+- Debug mode disabled
+
+## 💡 AI Assistant Instructions
+
+When reviewing or writing code:
+1. FIRST check multi-tenant isolation
+2. THEN validate security (auth, input validation)
+3. THEN check error handling
+4. THEN optimize performance
+5. FINALLY ensure code quality
+
+If ANY critical rule is violated:
+- ⛔ STOP and alert immediately
+- 🔍 Explain the security/data risk
+- 💡 Provide the correct pattern
+- ✅ Wait for confirmation before proceeding
+
+Remember: This is a PRODUCTION system handling real business data. 
+Security and data integrity are NOT negotiable.
+
