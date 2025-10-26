@@ -132,10 +132,10 @@ jobs:
     
     - name: Run Recurse ML Analysis
       run: |
-        # Run RML on all Python files
-        rml app/**/*.py || true
-        # Or run on entire directory
-        rml app/ || true
+        # Force full codebase analysis (not just changes)
+        rml --all app/ || rml app/ || true
+        # Also analyze services and models
+        rml --all app/routes/ app/services/ app/models/ || true
       continue-on-error: true
     
     - name: Generate RML Report
