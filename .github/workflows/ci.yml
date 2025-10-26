@@ -111,6 +111,33 @@ jobs:
       run: bandit -r app/ -f json -o bandit-report.json
       continue-on-error: true
 
+  recurse-ml:
+    name: Recurse ML Bug Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for better analysis
+    
+    - name: Install Recurse ML
+      run: |
+        curl -fsSL install.recurse.ml | sh
+        echo "$HOME/.rml/bin" >> $GITHUB_PATH
+    
+    - name: Run Recurse ML Analysis
+      run: |
+        rml --format github-actions
+      continue-on-error: true
+    
+    - name: Upload RML Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: rml-report
+        path: .rml-report.json
+        retention-days: 30
+
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
