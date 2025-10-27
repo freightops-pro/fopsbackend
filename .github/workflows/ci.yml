@@ -130,22 +130,39 @@ jobs:
         rml --version || rml --help
       continue-on-error: true
     
-    - name: Run Recurse ML Analysis
+    - name: Run Recurse ML Analysis  
       run: |
-        # Force full codebase analysis (not just changes)
-        rml --all app/ || rml app/ || true
-        # Also analyze services and models
-        rml --all app/routes/ app/services/ app/models/ || true
+        echo "================================"
+        echo "🔍 RECURSE ML FULL CODEBASE SCAN"
+        echo "================================"
+        
+        # Capture RML output
+        rml --all app/ 2>&1 | tee rml-output.txt || true
+        
+        # If --all doesn't work, try without it
+        if [ ! -s rml-output.txt ]; then
+          echo "Trying without --all flag..."
+          rml app/ 2>&1 | tee rml-output.txt || true
+        fi
+        
+        # Show output
+        echo ""
+        echo "================================"
+        echo "📊 RML ANALYSIS RESULTS"
+        echo "================================"
+        cat rml-output.txt || echo "No RML output captured"
+        
+        # Save as artifact
+        cp rml-output.txt rml-report.txt || true
       continue-on-error: true
     
-    - name: Generate RML Report
-      run: |
-        # Create a simple report if RML output exists
-        if [ -f .rml-output.txt ]; then
-          echo "RML analysis completed"
-          cat .rml-output.txt
-        fi
-      continue-on-error: true
+    - name: Upload RML Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: rml-analysis-report
+        path: rml-report.txt
+        retention-days: 30
 
   docker:
     name: Docker Build
