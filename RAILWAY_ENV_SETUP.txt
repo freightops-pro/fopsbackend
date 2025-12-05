@@ -1,0 +1,111 @@
+=============================================================================
+RAILWAY ENVIRONMENT VARIABLES - Ready to Copy & Paste
+=============================================================================
+Copy ALL of these variables and paste into:
+Railway Dashboard → Your Backend Service → Variables Tab → Raw Editor
+=============================================================================
+
+# === DATABASE (NEON POSTGRESQL) - REPLACE WITH YOUR NEON CREDENTIALS ===
+DATABASE_URL=postgresql://YOUR_NEON_USER:YOUR_NEON_PASSWORD@YOUR_NEON_HOST/neondb?sslmode=require
+DB_POOL_SIZE=20
+DB_MAX_OVERFLOW=40
+DB_SSL_MODE=require
+
+# === SECURITY KEYS (GENERATED - DO NOT SHARE) ===
+JWT_SECRET_KEY=b5ba476aba879c2799de0b1ceae0af099a32db89678d5b62a19e4678e5b3b0ce
+ENCRYPTION_KEY=j3di2Sv9T04cwBQ+NR0Wg67C0j73zVM45IwrU+BytUg=
+SSN_ENCRYPTION_KEY=1hDintW0To6z/ZTy5QRDPfG/mtYOtXjPtQo3A9aVZCk=
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# === URLs (REPLACE AFTER DEPLOYMENT) ===
+FRONTEND_URL=https://YOUR_FRONTEND_NAME.railway.app
+BACKEND_URL=https://YOUR_BACKEND_NAME.railway.app
+CORS_ORIGINS=https://YOUR_FRONTEND_NAME.railway.app
+
+# === ENVIRONMENT ===
+ENVIRONMENT=production
+DEBUG=False
+LOG_LEVEL=INFO
+PYTHONUNBUFFERED=1
+PYTHON_VERSION=3.11.9
+
+=============================================================================
+STEP-BY-STEP SETUP INSTRUCTIONS:
+=============================================================================
+
+1. GET YOUR NEON DATABASE URL:
+   - Go to: https://console.neon.tech
+   - Create a new project (or use existing)
+   - Go to your project → Connection Details
+   - Copy the connection string that looks like:
+     postgresql://username:password@host.region.neon.tech/dbname?sslmode=require
+   - Replace the DATABASE_URL line above with your actual Neon URL
+
+2. ADD VARIABLES TO RAILWAY:
+   Backend:
+   - Go to Railway → Your Backend Service
+   - Click "Variables" tab
+   - Click "Raw Editor"
+   - Paste ALL the variables above (with your Neon URL)
+   - Click "Update Variables"
+
+   Frontend:
+   - Go to Railway → Your Frontend Service
+   - Click "Variables" tab
+   - Add these variables:
+     VITE_API_BASE_URL=https://YOUR_BACKEND_NAME.railway.app
+     VITE_ENVIRONMENT=production
+     NODE_ENV=production
+
+3. UPDATE URLs AFTER DEPLOYMENT:
+   - After Railway deploys both services, you'll get URLs like:
+     - Backend: https://fopsbackend-production-abc123.railway.app
+     - Frontend: https://fopsfrontend-production-xyz456.railway.app
+
+   - Go back to Backend Variables and update:
+     FRONTEND_URL=https://fopsfrontend-production-xyz456.railway.app
+     BACKEND_URL=https://fopsbackend-production-abc123.railway.app
+     CORS_ORIGINS=https://fopsfrontend-production-xyz456.railway.app
+
+   - Go to Frontend Variables and update:
+     VITE_API_BASE_URL=https://fopsbackend-production-abc123.railway.app
+
+4. TRIGGER REDEPLOY:
+   - Backend: Click "Deploy" → "Trigger Deploy"
+   - Frontend: Click "Deploy" → "Trigger Deploy"
+
+=============================================================================
+NEON DATABASE SETUP (if you haven't created one):
+=============================================================================
+
+1. Go to https://neon.tech and sign up/login
+2. Click "Create Project"
+3. Choose a name (e.g., "freightops")
+4. Select region closest to your Railway deployment
+5. Click "Create Project"
+6. In the project dashboard, click "Connection Details"
+7. Copy the "Connection string"
+8. That's your DATABASE_URL!
+
+=============================================================================
+VERIFICATION:
+=============================================================================
+
+After setup, verify your deployment:
+
+Backend Health Check:
+https://YOUR_BACKEND_NAME.railway.app/
+
+Should return: {"status": "ok", "environment": "production"}
+
+Backend API Docs:
+https://YOUR_BACKEND_NAME.railway.app/api/docs
+
+Frontend:
+https://YOUR_FRONTEND_NAME.railway.app/
+
+Should show your landing page
+
+=============================================================================

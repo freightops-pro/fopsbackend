@@ -1,0 +1,272 @@
+=============================================================================
+COMPLETE RAILWAY ENVIRONMENT SETUP - Frontend AND Backend
+=============================================================================
+This file contains ALL environment variables for both services
+=============================================================================
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║                    BACKEND ENVIRONMENT VARIABLES                        ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+Copy these to: Railway → Backend Service → Variables → Raw Editor
+
+# === DATABASE (NEON POSTGRESQL) - REQUIRED ===
+# IMPORTANT: Use postgresql+psycopg:// for async driver (NOT postgresql://)
+DATABASE_URL=postgresql+psycopg://YOUR_NEON_USER:YOUR_NEON_PASSWORD@YOUR_NEON_HOST.neon.tech/neondb?sslmode=require
+DB_POOL_SIZE=20
+DB_MAX_OVERFLOW=40
+DB_SSL_MODE=require
+
+# === SECURITY KEYS (GENERATED - KEEP SECRET) ===
+JWT_SECRET_KEY=b5ba476aba879c2799de0b1ceae0af099a32db89678d5b62a19e4678e5b3b0ce
+ENCRYPTION_KEY=j3di2Sv9T04cwBQ+NR0Wg67C0j73zVM45IwrU+BytUg=
+SSN_ENCRYPTION_KEY=1hDintW0To6z/ZTy5QRDPfG/mtYOtXjPtQo3A9aVZCk=
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# === URLs (UPDATE AFTER FIRST DEPLOYMENT) ===
+FRONTEND_URL=https://YOUR_FRONTEND_NAME.railway.app
+BACKEND_URL=https://YOUR_BACKEND_NAME.railway.app
+CORS_ORIGINS=https://YOUR_FRONTEND_NAME.railway.app
+
+# === ENVIRONMENT ===
+ENVIRONMENT=production
+DEBUG=False
+LOG_LEVEL=INFO
+PYTHONUNBUFFERED=1
+PYTHON_VERSION=3.11.9
+
+# === OPTIONAL (Can add later) ===
+# REDIS_URL=redis://default:password@host:port
+# SENDGRID_API_KEY=your-key
+# FROM_EMAIL=noreply@yourcompany.com
+# AWS_ACCESS_KEY_ID=your-key
+# AWS_SECRET_ACCESS_KEY=your-secret
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║                   FRONTEND ENVIRONMENT VARIABLES                        ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+Copy these to: Railway → Frontend Service → Variables → Raw Editor
+
+# === API CONNECTION (UPDATE AFTER BACKEND DEPLOYS) ===
+VITE_API_BASE_URL=https://YOUR_BACKEND_NAME.railway.app
+VITE_WEBSOCKET_URL=wss://YOUR_BACKEND_NAME.railway.app/ws
+
+# === APPLICATION URLS ===
+VITE_APP_URL=https://YOUR_FRONTEND_NAME.railway.app
+
+# === ENVIRONMENT ===
+VITE_ENVIRONMENT=production
+NODE_ENV=production
+
+# === AUTHENTICATION ===
+VITE_JWT_REFRESH_INTERVAL=1500000
+VITE_SESSION_TIMEOUT=1800000
+
+# === FEATURE FLAGS ===
+VITE_ENABLE_BANKING_MODULE=false
+VITE_ENABLE_ELD_INTEGRATION=false
+VITE_ENABLE_FUEL_CARDS=false
+VITE_ENABLE_QUICKBOOKS=false
+VITE_ENABLE_ANALYTICS=true
+
+# === OPTIONAL (Add when you have the services) ===
+# VITE_GOOGLE_MAPS_API_KEY=your-key
+# VITE_MAPBOX_ACCESS_TOKEN=your-token
+# VITE_STRIPE_PUBLISHABLE_KEY=pk_live_your-key
+# VITE_SENTRY_DSN=https://your-dsn@sentry.io/project
+# VITE_GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX
+
+=============================================================================
+📋 STEP-BY-STEP SETUP GUIDE
+=============================================================================
+
+STEP 1: CREATE NEON DATABASE
+─────────────────────────────────────────────────────────────────────────
+1. Go to: https://neon.tech
+2. Sign up or log in
+3. Click "Create Project"
+4. Name it: freightops-production
+5. Select region: Choose closest to your Railway deployment (e.g., US East)
+6. Click "Create Project"
+
+7. After creation, click "Connection Details" or "Connect"
+8. Copy the "Connection string" - it looks like:
+   postgresql://alex:AbC123xyz@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require
+
+9. This is your DATABASE_URL!
+
+
+STEP 2: SETUP BACKEND ON RAILWAY
+─────────────────────────────────────────────────────────────────────────
+1. Go to: https://railway.app/dashboard
+2. Find your Backend service (fopsbackend)
+3. Click on the service
+4. Click "Variables" tab
+5. Click "Raw Editor" button
+6. Delete everything in there
+7. Copy ALL the BACKEND variables from above
+8. Replace "DATABASE_URL=" with your actual Neon connection string
+9. Leave FRONTEND_URL and BACKEND_URL as-is for now (we'll update after deploy)
+10. Click "Update Variables"
+
+
+STEP 3: SETUP FRONTEND ON RAILWAY
+─────────────────────────────────────────────────────────────────────────
+1. In Railway dashboard, find your Frontend service (fopsfrontend)
+2. Click on the service
+3. Click "Variables" tab
+4. Click "Raw Editor" button
+5. Copy ALL the FRONTEND variables from above
+6. Leave VITE_API_BASE_URL and VITE_APP_URL as-is for now
+7. Click "Update Variables"
+
+
+STEP 4: INITIAL DEPLOYMENT
+─────────────────────────────────────────────────────────────────────────
+1. Both services should auto-deploy after variables are set
+2. Wait for deployments to complete (5-10 minutes)
+3. Click on each service to see the deployment logs
+4. Look for "Build succeeded" and "Deployment successful"
+
+
+STEP 5: GET YOUR RAILWAY URLS
+─────────────────────────────────────────────────────────────────────────
+After deployment completes:
+
+Backend:
+1. Click your Backend service
+2. Click "Settings" tab
+3. Look for "Domains" section
+4. You'll see a URL like: fopsbackend-production-abc123.railway.app
+5. Copy this URL
+
+Frontend:
+1. Click your Frontend service
+2. Click "Settings" tab
+3. Look for "Domains" section
+4. You'll see a URL like: fopsfrontend-production-xyz456.railway.app
+5. Copy this URL
+
+
+STEP 6: UPDATE URLS IN BOTH SERVICES
+─────────────────────────────────────────────────────────────────────────
+Backend Variables (UPDATE THESE):
+1. Go to Backend → Variables → Raw Editor
+2. Find these lines and update with your actual URLs:
+
+   FRONTEND_URL=https://fopsfrontend-production-xyz456.railway.app
+   BACKEND_URL=https://fopsbackend-production-abc123.railway.app
+   CORS_ORIGINS=https://fopsfrontend-production-xyz456.railway.app
+
+3. Click "Update Variables"
+
+Frontend Variables (UPDATE THESE):
+1. Go to Frontend → Variables → Raw Editor
+2. Find these lines and update:
+
+   VITE_API_BASE_URL=https://fopsbackend-production-abc123.railway.app
+   VITE_WEBSOCKET_URL=wss://fopsbackend-production-abc123.railway.app/ws
+   VITE_APP_URL=https://fopsfrontend-production-xyz456.railway.app
+
+3. Click "Update Variables"
+
+
+STEP 7: TRIGGER REDEPLOY
+─────────────────────────────────────────────────────────────────────────
+Both services need to redeploy with the updated URLs:
+
+1. Go to Backend service
+2. Click the "..." menu (top right)
+3. Click "Redeploy"
+
+4. Go to Frontend service
+5. Click the "..." menu (top right)
+6. Click "Redeploy"
+
+7. Wait for both to finish deploying
+
+
+STEP 8: VERIFY EVERYTHING WORKS
+─────────────────────────────────────────────────────────────────────────
+Backend Health Check:
+1. Open in browser: https://YOUR_BACKEND_URL/
+2. Should see: {"status":"ok","environment":"production"}
+
+Backend API Documentation:
+1. Open in browser: https://YOUR_BACKEND_URL/api/docs
+2. Should see interactive API documentation (Swagger UI)
+
+Frontend:
+1. Open in browser: https://YOUR_FRONTEND_URL/
+2. Should see your landing page with dark mode toggle
+3. Try navigating to /features, /pricing, /about, /contact
+
+
+=============================================================================
+🔧 TROUBLESHOOTING
+=============================================================================
+
+BACKEND WON'T START:
+─────────────────────────────────────────────────────────────────────────
+1. Check deployment logs: Backend service → "Deployments" → Latest deployment
+2. Common issues:
+   - Database connection failed → Check DATABASE_URL is correct
+   - Missing environment variable → Check all required vars are set
+   - Build failed → Check the build logs for specific errors
+
+FRONTEND WON'T START:
+─────────────────────────────────────────────────────────────────────────
+1. Check deployment logs: Frontend service → "Deployments" → Latest deployment
+2. Common issues:
+   - Build failed → Usually TypeScript errors, check logs
+   - Blank page → Check browser console (F12) for errors
+   - Can't connect to backend → Check VITE_API_BASE_URL is correct
+
+CORS ERRORS:
+─────────────────────────────────────────────────────────────────────────
+If you see "blocked by CORS policy" in browser console:
+1. Check CORS_ORIGINS in backend matches your frontend URL EXACTLY
+2. Make sure frontend URL doesn't have trailing slash
+3. Redeploy backend after fixing
+
+
+=============================================================================
+📝 QUICK REFERENCE
+=============================================================================
+
+Your Neon Database:
+https://console.neon.tech
+
+Your Railway Dashboard:
+https://railway.app/dashboard
+
+Backend Service URLs:
+- Main: https://YOUR_BACKEND_URL/
+- Health: https://YOUR_BACKEND_URL/health/status
+- API Docs: https://YOUR_BACKEND_URL/api/docs
+
+Frontend Service URLs:
+- Main: https://YOUR_FRONTEND_URL/
+- Login: https://YOUR_FRONTEND_URL/login
+- Features: https://YOUR_FRONTEND_URL/features
+
+GitHub Repositories:
+- Backend: https://github.com/freightops-pro/fopsbackend.git
+- Frontend: https://github.com/freightops-pro/fopsfrontend.git
+
+
+=============================================================================
+🎉 YOU'RE DONE!
+=============================================================================
+
+Your FreightOps application should now be fully deployed and running on Railway!
+
+Next steps:
+- Test the login functionality
+- Set up custom domains (optional)
+- Add integration API keys as needed (Stripe, SendGrid, etc.)
+- Monitor application logs in Railway dashboard
+

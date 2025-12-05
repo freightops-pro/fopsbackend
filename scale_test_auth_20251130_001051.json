@@ -1,0 +1,22 @@
+{
+  "crashed": true,
+  "crash_reason": "Real failure rate exceeded 30% (31.8%)",
+  "rounds": [
+    {
+      "round": 1,
+      "concurrent_users": 10,
+      "trucks": 50,
+      "loads": 100,
+      "total_requests": 7930,
+      "successful": 1867,
+      "failed": 6063,
+      "auth_failures": 3543,
+      "success_rate": "23.5%",
+      "avg_response_ms": "2.7",
+      "max_response_ms": "12.2",
+      "rps": "262.8",
+      "cpu": "6.9%",
+      "memory": "26.0%"
+    }
+  ]
+}

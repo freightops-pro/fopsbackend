@@ -1,0 +1,70 @@
+{
+  "crashed": true,
+  "crash_reason": "Connection failures exceeded 50%",
+  "rounds": [
+    {
+      "round": 1,
+      "concurrent_users": 100,
+      "trucks": 5000,
+      "loads": 10000,
+      "total_requests": 7681,
+      "successful": 5089,
+      "failed": 2592,
+      "auth_failures": 0,
+      "success_rate": "66.3%",
+      "avg_response_ms": "560.7",
+      "max_response_ms": "3592.4",
+      "rps": "162.7",
+      "cpu": "6.0%",
+      "memory": "25.5%"
+    },
+    {
+      "round": 2,
+      "concurrent_users": 200,
+      "trucks": 10000,
+      "loads": 20000,
+      "total_requests": 7955,
+      "successful": 5217,
+      "failed": 2738,
+      "auth_failures": 0,
+      "success_rate": "65.6%",
+      "avg_response_ms": "1127.9",
+      "max_response_ms": "8031.8",
+      "rps": "164.9",
+      "cpu": "2.3%",
+      "memory": "25.6%"
+    },
+    {
+      "round": 3,
+      "concurrent_users": 400,
+      "trucks": 20000,
+      "loads": 40000,
+      "total_requests": 8304,
+      "successful": 5526,
+      "failed": 2778,
+      "auth_failures": 0,
+      "success_rate": "66.5%",
+      "avg_response_ms": "2263.3",
+      "max_response_ms": "10402.4",
+      "rps": "162.2",
+      "cpu": "2.4%",
+      "memory": "24.3%"
+    },
+    {
+      "round": 4,
+      "concurrent_users": 800,
+      "trucks": 40000,
+      "loads": 80000,
+      "total_requests": 806,
+      "successful": 136,
+      "failed": 670,
+      "auth_failures": 0,
+      "success_rate": "16.9%",
+      "avg_response_ms": "6465.8",
+      "max_response_ms": "7694.0",
+      "rps": "99.9",
+      "cpu": "1.7%",
+      "memory": "24.3%"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+═══════════════════════════════════════════════════════════════
+RAILWAY DEPLOYMENT SETUP - FASTAPI BACKEND
+═══════════════════════════════════════════════════════════════
+
+BACKEND STRUCTURE:
+------------------
+✅ Correct Backend: c:\Users\rcarb\Downloads\FOPS\fopsbackend
+✅ FastAPI App: app/main.py
+✅ Module Path: app.main:app
+❌ DO NOT use backend_v2 (removed from frontend directory)
+
+═══════════════════════════════════════════════════════════════
+STEP 1: ADD BUILD-TIME ENVIRONMENT VARIABLE
+═══════════════════════════════════════════════════════════════
+
+Go to Railway Dashboard → Backend Service → Variables → Add Variable:
+
+NIXPACKS_POETRY_VERSION=1.8.5
+
+⚠️  CRITICAL: This must be set BEFORE deploying, or the build will fail.
+
+This tells Nixpacks which version of Poetry to install during the build process.
+
+═══════════════════════════════════════════════════════════════
+BUILD PROCESS (Automatic via Nixpacks):
+═══════════════════════════════════════════════════════════════
+
+1. Detect Python 3.11.9 from runtime.txt
+2. Install Poetry 1.8.5 (using NIXPACKS_POETRY_VERSION)
+3. Run: poetry install --only main --no-interaction --no-ansi
+4. Start: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+
+═══════════════════════════════════════════════════════════════
+STEP 2: ADD RUNTIME ENVIRONMENT VARIABLES
+═══════════════════════════════════════════════════════════════
+
+After the build succeeds, add all runtime environment variables from:
+→ RAILWAY_ENV_COMPLETE_SETUP.txt
+
+Most critical variables:
+- DATABASE_URL (Neon PostgreSQL connection string)
+  ⚠️  MUST use postgresql+psycopg:// NOT postgresql://
+  Example: postgresql+psycopg://user:pass@host/db?sslmode=require
+- JWT_SECRET_KEY
+- ENCRYPTION_KEY
+- SSN_ENCRYPTION_KEY
+
+Without these, the app will fail to start.
+
+═══════════════════════════════════════════════════════════════
+LOCAL DEVELOPMENT COMMANDS:
+═══════════════════════════════════════════════════════════════
+
+# Install dependencies
+poetry install
+
+# Run backend (development mode with auto-reload)
+poetry run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+# Run backend (production mode)
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+
+═══════════════════════════════════════════════════════════════
