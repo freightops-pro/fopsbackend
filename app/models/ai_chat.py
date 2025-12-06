@@ -78,7 +78,7 @@ class AIMessage(Base):
 
     # Context and metadata
     context_snapshot = Column(JSON, nullable=True)  # Snapshot of relevant context at message time
-    metadata = Column(JSON, nullable=True)  # Additional metadata
+    message_metadata = Column(JSON, nullable=True)  # Additional metadata
 
     # Confidence and quality
     confidence_score = Column(Integer, nullable=True)  # 0-100

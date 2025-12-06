@@ -150,7 +150,7 @@ def upgrade() -> None:
         sa.Column('tool_calls', postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column('tool_results', postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column('context_snapshot', postgresql.JSON(astext_type=sa.Text()), nullable=True),
-        sa.Column('metadata', postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column('message_metadata', postgresql.JSON(astext_type=sa.Text()), nullable=True),
         sa.Column('confidence_score', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
