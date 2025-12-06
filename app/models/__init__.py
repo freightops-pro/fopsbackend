@@ -10,6 +10,7 @@ from app.models.accounting import Customer, Invoice, LedgerEntry, Settlement  # 
 from app.models.banking import BankingAccount, BankingCard, BankingCustomer, BankingTransaction  # noqa: F401
 from app.models.collaboration import Channel, Message, Presence  # noqa: F401
 from app.models.document import DocumentProcessingJob  # noqa: F401
+from app.models.ai_usage import AIUsageLog, AIUsageQuota  # noqa: F401
 from app.models.equipment import (  # noqa: F401
     Equipment,
     EquipmentMaintenanceEvent,

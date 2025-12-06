@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     sms_twilio_from_number: Optional[str] = None
     slack_webhook_url: Optional[str] = None
 
+    # AI OCR Configuration
+    enable_ai_ocr: bool = True
+    ai_ocr_provider: str = "gemini"  # gemini, claude, or openai
+    google_ai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+
     # Cloudflare R2 Storage Configuration
     r2_account_id: Optional[str] = None
     r2_access_key_id: Optional[str] = None

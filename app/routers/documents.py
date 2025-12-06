@@ -17,12 +17,22 @@ async def _company_id(current_user=Depends(deps.get_current_user)) -> str:
     return current_user.company_id
 
 
+async def _user(current_user=Depends(deps.get_current_user)):
+    return current_user
+
+
 @router.post("/ocr", response_model=DocumentProcessingJobResponse)
 async def process_document(
     file: UploadFile = File(...),
     load_id: str | None = Form(default=None),
     company_id: str = Depends(_company_id),
+    current_user = Depends(_user),
     service: DocumentProcessingService = Depends(_service),
 ) -> DocumentProcessingJobResponse:
-    return await service.process_document(company_id=company_id, file=file, load_id=load_id)
+    return await service.process_document(
+        company_id=company_id,
+        file=file,
+        load_id=load_id,
+        user_id=current_user.id,
+    )
 
