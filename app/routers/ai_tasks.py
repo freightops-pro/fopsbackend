@@ -12,6 +12,8 @@ from app.api import deps
 from app.core.db import get_db
 from app.models.ai_task import AITask
 from app.services.annie_ai import AnnieAI
+from app.services.atlas_ai import AtlasAI
+from app.services.alex_ai import AlexAI
 
 
 router = APIRouter()
@@ -92,11 +94,25 @@ async def create_ai_task(
             user_id=current_user.id
         )
 
-    # TODO: Implement Atlas and Alex agents
     elif request.agent_type == "atlas":
-        raise HTTPException(status_code=501, detail="Atlas AI not yet implemented")
+        agent = AtlasAI(db)
+        await agent.register_tools()
+
+        success, error = await agent.execute_task(
+            task=task,
+            company_id=current_user.company_id,
+            user_id=current_user.id
+        )
+
     elif request.agent_type == "alex":
-        raise HTTPException(status_code=501, detail="Alex AI not yet implemented")
+        agent = AlexAI(db)
+        await agent.register_tools()
+
+        success, error = await agent.execute_task(
+            task=task,
+            company_id=current_user.company_id,
+            user_id=current_user.id
+        )
 
     # Refresh task to get updated status
     await db.refresh(task)
