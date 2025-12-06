@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import List, Optional
 
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -9,16 +10,28 @@ class Settings(BaseSettings):
     project_name: str = "FreightOps API v2"
     environment: str = "development"
 
-    backend_cors_origins: List[str] = [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
-        "http://localhost:4173",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:4173"
-    ]
+    backend_cors_origins: List[str] = Field(
+        default=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://localhost:3000",
+            "http://localhost:4173",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:4173"
+        ],
+        validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
+    )
+
+    @field_validator("backend_cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from environment variable (comma-separated string or list)."""
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
     database_url: str  # Required - no default, must be set in .env
 
     jwt_secret_key: str = "change-me"
