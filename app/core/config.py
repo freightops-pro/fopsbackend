@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v):
         """Parse CORS_ORIGINS from environment variable (comma-separated string or list)."""
         if isinstance(v, str):
+            # Handle empty string - return None to use default
+            if not v.strip():
+                return None
             # Split by comma and strip whitespace
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
