@@ -4,6 +4,7 @@ from app.routers import (
     accounting,
     admin,
     ai_usage,
+    ai_tasks,
     automation,
     auth,
     banking,
@@ -41,6 +42,7 @@ api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"]
 api_router.include_router(loads.router, prefix="/dispatch/loads", tags=["Dispatch"])  # Mount loads under dispatch
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(ai_usage.router, prefix="/ai", tags=["AI Usage"])
+api_router.include_router(ai_tasks.router, prefix="/ai", tags=["AI Agents"])
 api_router.include_router(drivers.router, prefix="/drivers", tags=["Drivers"])
 api_router.include_router(fuel.router, prefix="/fuel", tags=["Fuel"])
 api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting"])

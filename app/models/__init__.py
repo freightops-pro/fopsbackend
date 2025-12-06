@@ -11,6 +11,8 @@ from app.models.banking import BankingAccount, BankingCard, BankingCustomer, Ban
 from app.models.collaboration import Channel, Message, Presence  # noqa: F401
 from app.models.document import DocumentProcessingJob  # noqa: F401
 from app.models.ai_usage import AIUsageLog, AIUsageQuota  # noqa: F401
+from app.models.ai_chat import AIConversation, AIMessage, AIContext  # noqa: F401
+from app.models.ai_task import AITask, AIToolExecution, AILearning  # noqa: F401
 from app.models.equipment import (  # noqa: F401
     Equipment,
     EquipmentMaintenanceEvent,
