@@ -33,15 +33,33 @@ class AITool:
 
     def to_gemini_function(self):
         """Convert to Gemini function calling format."""
+        # Map type strings to Gemini Type enums
+        type_map = {
+            "string": genai.protos.Type.STRING,
+            "number": genai.protos.Type.NUMBER,
+            "integer": genai.protos.Type.INTEGER,
+            "boolean": genai.protos.Type.BOOLEAN,
+            "array": genai.protos.Type.ARRAY,
+            "object": genai.protos.Type.OBJECT,
+        }
+
+        # Convert parameter definitions to Gemini schema
+        properties = {}
+        for k, v in self.parameters.items():
+            param_type = v.get("type", "string")
+            gemini_type = type_map.get(param_type, genai.protos.Type.STRING)
+
+            properties[k] = genai.protos.Schema(
+                type=gemini_type,
+                description=v.get("description", "")
+            )
+
         return genai.protos.FunctionDeclaration(
             name=self.name,
             description=self.description,
             parameters=genai.protos.Schema(
                 type=genai.protos.Type.OBJECT,
-                properties={
-                    k: genai.protos.Schema(**v)
-                    for k, v in self.parameters.items()
-                },
+                properties=properties,
                 required=list(self.parameters.keys())
             )
         )
