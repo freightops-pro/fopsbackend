@@ -12,17 +12,25 @@ from app.models.base import Base
 
 settings = get_settings()
 
-# Create engine with connection pool settings and timeout to prevent hanging
+def get_async_database_url(url: str) -> str:
+    """Convert database URL to async-compatible format using psycopg driver."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
+
+database_url = get_async_database_url(settings.database_url)
+
 connect_args = {}
-if "postgresql" in settings.database_url or "postgres" in settings.database_url:
-    # For PostgreSQL, use psycopg connection parameters
+if "postgresql" in database_url or "postgres" in database_url:
     connect_args = {
-        "connect_timeout": 10,  # 10 second connection timeout
+        "connect_timeout": 10,
     }
 
-print(f"[DB] Creating database engine with URL: {settings.database_url.split('@')[0]}@***")  # Hide password
+print(f"[DB] Creating database engine with URL: {database_url.split('@')[0]}@***")
 engine: AsyncEngine = create_async_engine(
-    settings.database_url,
+    database_url,
     future=True,
     echo=settings.debug,
     pool_pre_ping=True,  # Verify connections before using
@@ -61,12 +69,14 @@ async def test_database_connection() -> bool:
     import asyncio
     from sqlalchemy import text
     print("[DB] Testing database connection...")
+    
+    async def _test_connection():
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            result.fetchone()
+    
     try:
-        # Test connection with timeout
-        async with asyncio.timeout(10.0):  # 10 second timeout
-            async with engine.connect() as conn:
-                result = await conn.execute(text("SELECT 1"))
-                result.fetchone()  # fetchone() is not async, returns Row directly
+        await asyncio.wait_for(_test_connection(), timeout=10.0)
         print("[DB] Database connection test successful")
         return True
     except asyncio.TimeoutError:
