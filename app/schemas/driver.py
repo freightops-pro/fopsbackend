@@ -4,6 +4,20 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, EmailStr
 
 
+# Phone carrier options for email-to-SMS notifications
+PhoneCarrier = Literal[
+    "verizon",
+    "att",
+    "tmobile",
+    "sprint",
+    "us_cellular",
+    "boost",
+    "cricket",
+    "metro_pcs",
+    "other"
+]
+
+
 class DriverIncidentCreate(BaseModel):
     occurred_at: datetime
     incident_type: str
@@ -25,6 +39,7 @@ class DriverResponse(BaseModel):
     last_name: str
     email: Optional[str]
     phone: Optional[str]
+    phone_carrier: Optional[PhoneCarrier] = None
     cdl_expiration: Optional[date]
     medical_card_expiration: Optional[date]
 
@@ -173,6 +188,7 @@ class DriverProfileUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     phone: Optional[str] = None  # Accept both phone and phone_number from frontend
+    phone_carrier: Optional[PhoneCarrier] = None  # For email-to-SMS notifications
     home_address: Optional[str] = None
     status: Optional[Literal["ACTIVE", "INACTIVE", "SUSPENDED", "ONBOARDING"]] = None
 

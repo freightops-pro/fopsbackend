@@ -357,15 +357,70 @@ manage pickup/delivery workflows, and handle check calls autonomously."""
         notification_type: str = "email",
         **kwargs
     ) -> Dict[str, Any]:
-        """Send notification to recipient."""
-        # In production, this would integrate with email/SMS services
-        return {
-            "status": "sent",
-            "recipient_type": recipient_type,
-            "recipient_id": recipient_id,
-            "notification_type": notification_type,
-            "message_preview": message[:50] + "..." if len(message) > 50 else message,
-        }
+        """
+        Send notification to recipient via email and/or SMS.
+
+        For drivers, automatically sends both email and SMS if carrier info is available.
+        """
+        try:
+            if recipient_type == "driver":
+                # Import here to avoid circular dependencies
+                from app.services.sms import send_driver_notification
+
+                # Send both email and SMS to driver
+                result = await send_driver_notification(
+                    driver_id=recipient_id,
+                    message=message,
+                    db=self.db.sync_session,  # Get sync session for SQLAlchemy queries
+                    email_subject="FreightOps - Load Assignment"
+                )
+
+                return {
+                    "status": "sent",
+                    "recipient_type": recipient_type,
+                    "recipient_id": recipient_id,
+                    "driver_name": result.get("driver_name"),
+                    "email_sent": result.get("email_sent", False),
+                    "sms_sent": result.get("sms_sent", False),
+                    "message_preview": message[:50] + "..." if len(message) > 50 else message,
+                }
+
+            elif recipient_type == "customer":
+                # For customers, send email only
+                from app.services.notifications import EmailSender
+
+                email_sender = EmailSender()
+                result = await email_sender.send(
+                    recipient=recipient_id,  # Assume recipient_id is email for customers
+                    subject="FreightOps - Load Update",
+                    body=message
+                )
+
+                return {
+                    "status": "sent" if result.success else "failed",
+                    "recipient_type": recipient_type,
+                    "recipient_id": recipient_id,
+                    "email_sent": result.success,
+                    "detail": result.detail,
+                    "message_preview": message[:50] + "..." if len(message) > 50 else message,
+                }
+
+            else:
+                # Generic notification
+                return {
+                    "status": "not_implemented",
+                    "recipient_type": recipient_type,
+                    "recipient_id": recipient_id,
+                    "message": "Notification type not yet implemented",
+                }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "recipient_type": recipient_type,
+                "recipient_id": recipient_id,
+                "error": str(e)
+            }
 
     async def _get_load_details(
         self,

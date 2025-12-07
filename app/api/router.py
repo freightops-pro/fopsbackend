@@ -7,10 +7,12 @@ from app.routers import (
     ai_tasks,
     automation,
     auth,
+    background_checks,
     banking,
     company,
     collaboration,
     dashboard,
+    dqf,
     documents,
     dispatch,
     drivers,
@@ -22,6 +24,7 @@ from app.routers import (
     hr,
     integrations,
     loads,
+    onboarding,
     payroll,
     ports,
     reporting,
@@ -63,4 +66,9 @@ api_router.include_router(admin.router, prefix="/admin", tags=["HQ Admin"])
 api_router.include_router(hq.router, prefix="/hq", tags=["HQ Portal"])
 api_router.include_router(tenant.router, prefix="/tenant", tags=["Tenant"])
 api_router.include_router(websocket.router, tags=["WebSocket"])
+
+# Onboarding & DQF System
+api_router.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
+api_router.include_router(background_checks.router, prefix="/background-checks", tags=["Background Checks"])
+api_router.include_router(dqf.router, prefix="/dqf", tags=["DQF"])
 

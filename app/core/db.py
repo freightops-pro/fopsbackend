@@ -1,5 +1,8 @@
 from collections.abc import AsyncGenerator
+from typing import Generator
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -38,10 +41,35 @@ AsyncSessionFactory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Synchronous engine for services that need sync operations
+sync_database_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+sync_engine = create_engine(
+    sync_database_url,
+    echo=settings.debug,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_timeout=10,
+    max_overflow=10,
+)
+
+SyncSessionFactory = sessionmaker(
+    bind=sync_engine,
+    expire_on_commit=False,
+)
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionFactory() as session:
         yield session
+
+
+def get_db_sync() -> Generator[Session, None, None]:
+    """Get synchronous database session for services that don't support async."""
+    session = SyncSessionFactory()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 async def init_database() -> None:

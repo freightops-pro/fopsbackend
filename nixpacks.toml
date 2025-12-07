@@ -1,0 +1,8 @@
+﻿[phases.setup]
+aptPkgs = ['poppler-utils', 'libpq-dev', 'postgresql-client']
+
+[phases.install]
+cmds = ['poetry config virtualenvs.in-project true', 'poetry install --only main']
+
+[start]
+cmd = 'gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:\ --timeout 120 --access-logfile - --error-logfile -'

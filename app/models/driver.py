@@ -14,6 +14,7 @@ class Driver(Base):
     last_name = Column(String, nullable=False)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    phone_carrier = Column(String, nullable=True)
 
     cdl_number = Column(String, nullable=True)
     cdl_expiration = Column(Date, nullable=True)
