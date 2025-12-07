@@ -1,0 +1,62 @@
+modules = ["python-3.10", "bash"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+ENVIRONMENT = "development"
+DEBUG = "True"
+JWT_SECRET_KEY = "bb07adf6f88edfdb7045946242eb46c1be99130ed8bed45468a327f802050636"
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = "720"
+BACKEND_CORS_ORIGINS = "[\"http://localhost:5000\",\"http://localhost:5173\",\"http://127.0.0.1:5000\",\"http://127.0.0.1:5173\",\"https://db7e0eb9-64ca-42bf-a38e-308d1939a0a6-00-1ypzgujr18xir.janeway.replit.dev\"]"
+AUTOMATION_INTERVAL_MINUTES = "30"
+ENABLE_AI_OCR = "false"
+AI_OCR_PROVIDER = "gemini"
+PORT_TRACKING_CACHE_TTL_SECONDS = "300"
+PORT_API_RATE_LIMIT_PER_MINUTE = "60"
+PORT_TRACKING_CLEANUP_INTERVAL_HOURS = "24"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Backend API"
+
+[[workflows.workflow]]
+name = "Backend API"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 39803
+externalPort = 3000
+
+[[ports]]
+localPort = 44667
+externalPort = 3001
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:5000", "--timeout", "120", "--access-logfile", "-", "--error-logfile"]
