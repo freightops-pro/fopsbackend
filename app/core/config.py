@@ -1,16 +1,21 @@
 from functools import lru_cache
-from typing import List, Optional
+from typing import List, Optional, Union
 
-from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+
     debug: bool = True
     project_name: str = "FreightOps API v2"
     environment: str = "development"
 
-    backend_cors_origins: List[str] = Field(
+    backend_cors_origins: Union[str, List[str]] = Field(
         default=[
             "http://localhost:5173",
             "http://localhost:5174",
@@ -24,17 +29,27 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
     )
 
-    @field_validator("backend_cors_origins", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def parse_cors_origins(cls, v):
+    def parse_cors_origins(cls, values):
         """Parse CORS_ORIGINS from environment variable (comma-separated string or list)."""
-        if isinstance(v, str):
-            # Handle empty string - return None to use default
-            if not v.strip():
-                return None
-            # Split by comma and strip whitespace
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
+        cors_key = None
+        for key in ["backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins"]:
+            if key in values:
+                cors_key = key
+                break
+
+        if cors_key and isinstance(values[cors_key], str):
+            cors_value = values[cors_key].strip()
+            # Handle empty string - remove key to use default
+            if not cors_value:
+                del values[cors_key]
+            else:
+                # Split by comma and strip whitespace
+                values[cors_key] = [origin.strip() for origin in cors_value.split(",") if origin.strip()]
+
+        return values
+
     database_url: str  # Required - no default, must be set in .env
 
     jwt_secret_key: str = "change-me"
@@ -106,10 +121,6 @@ class Settings(BaseSettings):
         if self.api_base_url:
             return self.api_base_url
         return f"{self.base_url}/api"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache(maxsize=1)
