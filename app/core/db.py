@@ -15,9 +15,15 @@ settings = get_settings()
 def get_async_database_url(url: str) -> str:
     """Convert database URL to async-compatible format using psycopg driver."""
     if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     elif url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg://", 1)
+        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+    
+    if "channel_binding=" in url:
+        import re
+        url = re.sub(r'[&?]channel_binding=[^&]*', '', url)
+        url = url.replace('?&', '?').rstrip('?')
+    
     return url
 
 database_url = get_async_database_url(settings.database_url)
