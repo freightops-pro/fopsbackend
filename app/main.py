@@ -150,51 +150,65 @@ async def seed_ports():
         print(f"Seeded {len(ports_data)} ports")
 
 
+db_initialized = False
+db_error: str | None = None
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    global db_initialized, db_error
     print("[LIFESPAN] Starting application initialization...")
     import asyncio
     from app.core.db import test_database_connection, init_database
     
-    # Step 1: Test database connection (required - must succeed)
-    print("[LIFESPAN] Testing database connection...")
-    db_connected = await test_database_connection()
-    if not db_connected:
-        print("[LIFESPAN] ERROR: Database connection failed. Server cannot start.")
-        print("[LIFESPAN] Please check your DATABASE_URL in .env file")
-        raise RuntimeError("Database connection failed - cannot start server")
-    print("[LIFESPAN] Database connection successful")
+    async def initialize_database():
+        """Initialize database in background - non-blocking for health checks."""
+        global db_initialized, db_error
+        try:
+            # Step 1: Test database connection
+            print("[LIFESPAN] Testing database connection...")
+            db_connected = await test_database_connection()
+            if not db_connected:
+                db_error = "Database connection failed"
+                print(f"[LIFESPAN] ERROR: {db_error}")
+                return
+            print("[LIFESPAN] Database connection successful")
+            
+            # Step 2: Initialize database tables
+            print("[LIFESPAN] Initializing database tables...")
+            await asyncio.wait_for(init_database(), timeout=30.0)
+            print("[LIFESPAN] Database tables initialized successfully")
+            
+            # Step 3: Seed ports (optional - can fail)
+            try:
+                print("[LIFESPAN] Seeding ports...")
+                await asyncio.wait_for(seed_ports(), timeout=10.0)
+                print("[LIFESPAN] Ports seeded successfully")
+            except asyncio.TimeoutError:
+                print("[LIFESPAN] WARNING: Port seeding timed out after 10s - continuing anyway")
+            except Exception as e:
+                print(f"[LIFESPAN] WARNING: Error seeding ports: {e} - continuing anyway")
+            
+            db_initialized = True
+            print("[LIFESPAN] Database initialization complete")
+            
+        except asyncio.TimeoutError:
+            db_error = "Database initialization timed out after 30s"
+            print(f"[LIFESPAN] ERROR: {db_error}")
+        except Exception as e:
+            db_error = str(e)
+            print(f"[LIFESPAN] ERROR initializing database: {e}")
     
-    # Step 2: Initialize database tables (required - must succeed)
-    try:
-        print("[LIFESPAN] Initializing database tables...")
-        await asyncio.wait_for(init_database(), timeout=30.0)
-        print("[LIFESPAN] Database tables initialized successfully")
-    except asyncio.TimeoutError:
-        print("[LIFESPAN] ERROR: Database initialization timed out after 30s")
-        raise
-    except Exception as e:
-        print(f"[LIFESPAN] ERROR initializing database: {e}")
-        raise
+    # Start database initialization in background - DON'T BLOCK STARTUP
+    # This allows health checks to respond while DB is still connecting
+    asyncio.create_task(initialize_database())
     
-    # Step 3: Seed ports (optional - can fail)
-    try:
-        print("[LIFESPAN] Seeding ports...")
-        await asyncio.wait_for(seed_ports(), timeout=10.0)
-        print("[LIFESPAN] Ports seeded successfully")
-    except asyncio.TimeoutError:
-        print("[LIFESPAN] WARNING: Port seeding timed out after 10s - continuing anyway")
-    except Exception as e:
-        print(f"[LIFESPAN] WARNING: Error seeding ports: {e} - continuing anyway")
-    
-    # Step 4: Start scheduler (required)
+    # Step 4: Start scheduler (can work without DB initially)
     try:
         print("[LIFESPAN] Starting scheduler...")
         start_scheduler()
         print("[LIFESPAN] Scheduler started")
     except Exception as e:
-        print(f"[LIFESPAN] ERROR starting scheduler: {e}")
-        raise
+        print(f"[LIFESPAN] WARNING: Error starting scheduler: {e}")
 
     # Step 5: Register WebSocket event handlers
     try:
@@ -205,8 +219,18 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         print(f"[LIFESPAN] WARNING: Error registering WebSocket handlers: {e}")
 
-    # Step 6: Run initial automation cycle (optional - run in background)
+    # Step 6: Run initial automation cycle (optional - run in background after DB ready)
     async def run_automation_background():
+        # Wait for database to be ready before running automation
+        for _ in range(60):  # Wait up to 60 seconds
+            if db_initialized:
+                break
+            await asyncio.sleep(1)
+        
+        if not db_initialized:
+            print("[LIFESPAN] WARNING: Database not ready, skipping automation cycle")
+            return
+            
         try:
             print("[LIFESPAN] Running initial automation cycle...")
             await asyncio.wait_for(run_automation_cycle(), timeout=60.0)
@@ -251,7 +275,23 @@ async def root() -> dict[str, str]:
     return {"status": "ok", "environment": settings.environment}
 
 @app.get("/health", tags=["Health"])
-async def health_check() -> dict[str, str]:
-    """Simple health check endpoint that doesn't require database."""
-    return {"status": "ok", "service": "FreightOps API"}
+async def health_check() -> dict:
+    """Health check endpoint - responds immediately, reports database status."""
+    return {
+        "status": "ok",
+        "service": "FreightOps API",
+        "database_ready": db_initialized,
+        "database_error": db_error
+    }
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check() -> dict:
+    """Readiness check - only returns ok when database is ready."""
+    from fastapi import HTTPException
+    if not db_initialized:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "database_ready": False, "error": db_error}
+        )
+    return {"status": "ready", "database_ready": True}
 
