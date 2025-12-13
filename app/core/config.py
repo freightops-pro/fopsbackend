@@ -123,16 +123,53 @@ class Settings(BaseSettings):
         return f"{self.base_url}/api"
 
     # Stripe Configuration for Billing
-    stripe_secret_key: Optional[str] = None  # Stripe secret key (set in .env)
-    stripe_publishable_key: Optional[str] = None  # Stripe publishable key
-    stripe_webhook_secret: Optional[str] = None  # Stripe webhook signing secret
-    stripe_product_id: Optional[str] = None  # Stripe product ID for base subscription
-    stripe_addon_products: dict = Field(
+    # Test mode keys (for development/staging)
+    stripe_test_secret_key: Optional[str] = None
+    stripe_test_publishable_key: Optional[str] = None
+    stripe_test_webhook_secret: Optional[str] = None
+    stripe_test_product_id: Optional[str] = None
+    stripe_test_addon_products: dict = Field(
         default={
-            "port_integration": None,  # Stripe product ID for Port Integration add-on
-            "check_payroll": None,  # Stripe product ID for Check Payroll add-on
+            "port_integration": None,
+            "check_payroll": None,
         }
     )
+
+    # Live mode keys (for production)
+    stripe_live_secret_key: Optional[str] = None
+    stripe_live_publishable_key: Optional[str] = None
+    stripe_live_webhook_secret: Optional[str] = None
+    stripe_live_product_id: Optional[str] = None
+    stripe_live_addon_products: dict = Field(
+        default={
+            "port_integration": None,
+            "check_payroll": None,
+        }
+    )
+
+    # Switch between test and live mode
+    # Set to True for production, False for development/staging
+    stripe_use_live_mode: bool = False
+
+    def get_stripe_secret_key(self) -> Optional[str]:
+        """Get the appropriate Stripe secret key based on mode"""
+        return self.stripe_live_secret_key if self.stripe_use_live_mode else self.stripe_test_secret_key
+
+    def get_stripe_publishable_key(self) -> Optional[str]:
+        """Get the appropriate Stripe publishable key based on mode"""
+        return self.stripe_live_publishable_key if self.stripe_use_live_mode else self.stripe_test_publishable_key
+
+    def get_stripe_webhook_secret(self) -> Optional[str]:
+        """Get the appropriate Stripe webhook secret based on mode"""
+        return self.stripe_live_webhook_secret if self.stripe_use_live_mode else self.stripe_test_webhook_secret
+
+    def get_stripe_product_id(self) -> Optional[str]:
+        """Get the appropriate Stripe product ID based on mode"""
+        return self.stripe_live_product_id if self.stripe_use_live_mode else self.stripe_test_product_id
+
+    def get_stripe_addon_products(self) -> dict:
+        """Get the appropriate Stripe addon product IDs based on mode"""
+        return self.stripe_live_addon_products if self.stripe_use_live_mode else self.stripe_test_addon_products
 
 
 @lru_cache(maxsize=1)

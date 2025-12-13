@@ -24,8 +24,8 @@ from app.schemas import billing as schemas
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Initialize Stripe
-stripe.api_key = settings.stripe_secret_key
+# Initialize Stripe with appropriate key based on mode (test/live)
+stripe.api_key = settings.get_stripe_secret_key()
 
 
 class BillingService:

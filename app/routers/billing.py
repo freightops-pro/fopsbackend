@@ -224,7 +224,7 @@ async def stripe_webhook(
     try:
         # Verify webhook signature
         event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.stripe_webhook_secret
+            payload, sig_header, settings.get_stripe_webhook_secret()
         )
     except ValueError as e:
         logger.error(f"Invalid webhook payload: {e}")
