@@ -122,6 +122,18 @@ class Settings(BaseSettings):
             return self.api_base_url
         return f"{self.base_url}/api"
 
+    # Stripe Configuration for Billing
+    stripe_secret_key: Optional[str] = None  # Stripe secret key (set in .env)
+    stripe_publishable_key: Optional[str] = None  # Stripe publishable key
+    stripe_webhook_secret: Optional[str] = None  # Stripe webhook signing secret
+    stripe_product_id: Optional[str] = None  # Stripe product ID for base subscription
+    stripe_addon_products: dict = Field(
+        default={
+            "port_integration": None,  # Stripe product ID for Port Integration add-on
+            "check_payroll": None,  # Stripe product ID for Check Payroll add-on
+        }
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

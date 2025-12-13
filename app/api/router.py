@@ -9,6 +9,7 @@ from app.routers import (
     auth,
     background_checks,
     banking,
+    billing,
     company,
     collaboration,
     dashboard,
@@ -50,6 +51,7 @@ api_router.include_router(drivers.router, prefix="/drivers", tags=["Drivers"])
 api_router.include_router(fuel.router, prefix="/fuel", tags=["Fuel"])
 api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting"])
 api_router.include_router(banking.router, prefix="/banking", tags=["Banking"])
+api_router.include_router(billing.router, tags=["Billing"])
 api_router.include_router(collaboration.router, prefix="/collaboration", tags=["Collaboration"])
 api_router.include_router(reporting.router, prefix="/reporting", tags=["Reporting"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])

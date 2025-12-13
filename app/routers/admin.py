@@ -18,6 +18,8 @@ from app.schemas.integration import (
     IntegrationHealthItem,
     IntegrationTypeHealth,
 )
+from app.schemas import billing as billing_schemas
+from app.services.billing import BillingService
 
 router = APIRouter()
 
@@ -229,3 +231,188 @@ async def reset_integration_failures(
     await db.commit()
 
     return {"success": True, "message": "Failure count reset successfully"}
+
+
+# ==================== HQ Billing Management ====================
+
+
+@router.get("/billing/all-subscriptions")
+async def get_all_subscriptions(
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    status: Optional[str] = Query(None, description="Filter by subscription status"),
+    subscription_type: Optional[str] = Query(None, description="Filter by type (self_serve or contract)"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """
+    HQ Admin: Get all tenant subscriptions with billing data
+    """
+    from app.models.billing import Subscription
+
+    query = select(Subscription).options(joinedload(Subscription.company), joinedload(Subscription.add_ons))
+
+    if status:
+        query = query.where(Subscription.status == status)
+    if subscription_type:
+        query = query.where(Subscription.subscription_type == subscription_type)
+
+    query = query.order_by(Subscription.created_at.desc()).limit(limit).offset(offset)
+
+    result = await db.execute(query)
+    subscriptions = result.scalars().unique().all()
+
+    # Get total count
+    count_query = select(func.count(Subscription.id))
+    if status:
+        count_query = count_query.where(Subscription.status == status)
+    if subscription_type:
+        count_query = count_query.where(Subscription.subscription_type == subscription_type)
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+
+    # Calculate revenue metrics
+    total_mrr = sum(float(sub.total_monthly_cost) for sub in subscriptions if sub.status == "active")
+    trialing_count = sum(1 for sub in subscriptions if sub.status == "trialing")
+    active_count = sum(1 for sub in subscriptions if sub.status == "active")
+    unpaid_count = sum(1 for sub in subscriptions if sub.status == "unpaid")
+
+    return {
+        "subscriptions": [
+            {
+                "id": sub.id,
+                "company_id": sub.company_id,
+                "company_name": sub.company.name if sub.company else None,
+                "status": sub.status,
+                "subscription_type": sub.subscription_type,
+                "billing_cycle": sub.billing_cycle,
+                "truck_count": sub.truck_count,
+                "total_monthly_cost": float(sub.total_monthly_cost),
+                "trial_ends_at": sub.trial_ends_at,
+                "trial_days_remaining": sub.trial_days_remaining,
+                "active_addons": [
+                    {"service": addon.service, "name": addon.name, "cost": float(addon.monthly_cost)}
+                    for addon in sub.add_ons
+                    if addon.status == "active"
+                ],
+                "stripe_customer_id": sub.stripe_customer_id,
+                "created_at": sub.created_at,
+            }
+            for sub in subscriptions
+        ],
+        "total": total,
+        "metrics": {
+            "total_mrr": total_mrr,
+            "trialing_count": trialing_count,
+            "active_count": active_count,
+            "unpaid_count": unpaid_count,
+        },
+    }
+
+
+@router.get("/billing/company/{company_id}", response_model=billing_schemas.BillingData)
+async def get_company_billing(
+    company_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+) -> billing_schemas.BillingData:
+    """
+    HQ Admin: Get billing data for a specific company
+    """
+    service = BillingService(db)
+    return await service.get_billing_data(company_id)
+
+
+@router.patch("/billing/company/{company_id}/subscription-type")
+async def update_company_subscription_type(
+    company_id: str,
+    subscription_type: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+) -> dict:
+    """
+    HQ Admin: Change subscription type between self_serve and contract
+    """
+    from app.models.billing import Subscription
+
+    result = await db.execute(select(Subscription).where(Subscription.company_id == company_id))
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        return {"success": False, "message": "Subscription not found"}
+
+    if subscription_type not in ["self_serve", "contract"]:
+        return {"success": False, "message": "Invalid subscription type"}
+
+    subscription.subscription_type = subscription_type
+    subscription.updated_at = datetime.utcnow()
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"Subscription type updated to {subscription_type}",
+        "subscription": {
+            "id": subscription.id,
+            "company_id": subscription.company_id,
+            "subscription_type": subscription.subscription_type,
+        },
+    }
+
+
+@router.post("/billing/company/{company_id}/pause")
+async def pause_company_subscription(
+    company_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+) -> dict:
+    """
+    HQ Admin: Pause a company's subscription (for non-payment, abuse, etc.)
+    """
+    from app.models.billing import Subscription
+
+    result = await db.execute(select(Subscription).where(Subscription.company_id == company_id))
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        return {"success": False, "message": "Subscription not found"}
+
+    subscription.status = "paused"
+    subscription.updated_at = datetime.utcnow()
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Subscription paused successfully",
+        "subscription_id": subscription.id,
+    }
+
+
+@router.post("/billing/company/{company_id}/unpause")
+async def unpause_company_subscription(
+    company_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+) -> dict:
+    """
+    HQ Admin: Unpause a company's subscription
+    """
+    from app.models.billing import Subscription
+
+    result = await db.execute(select(Subscription).where(Subscription.company_id == company_id))
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        return {"success": False, "message": "Subscription not found"}
+
+    subscription.status = "active"
+    subscription.updated_at = datetime.utcnow()
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Subscription unpaused successfully",
+        "subscription_id": subscription.id,
+    }

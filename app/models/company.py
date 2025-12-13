@@ -23,4 +23,5 @@ class Company(Base):
     automationRules = relationship("AutomationRule", back_populates="company", cascade="all, delete-orphan")
     integrations = relationship("CompanyIntegration", back_populates="company", cascade="all, delete-orphan")
     workers = relationship("Worker", back_populates="company", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="company", uselist=False, cascade="all, delete-orphan")
 
