@@ -1,6 +1,7 @@
 """
 Billing router for tenant subscription management
 """
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
@@ -200,3 +201,195 @@ async def reactivate_subscription(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reactivate subscription",
         )
+
+
+@router.post("/webhook")
+async def stripe_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stripe webhook endpoint for handling subscription lifecycle events
+    This endpoint is called by Stripe when subscription events occur
+    """
+    from app.models.billing import StripeWebhookEvent
+
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
+    if not sig_header:
+        logger.error("Missing Stripe signature header")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing signature")
+
+    try:
+        # Verify webhook signature
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, settings.stripe_webhook_secret
+        )
+    except ValueError as e:
+        logger.error(f"Invalid webhook payload: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid webhook signature: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+
+    # Log webhook event
+    webhook_event = StripeWebhookEvent(
+        id=str(event.id),
+        event_type=event.type,
+        event_data=event.data.object,
+        processed_at=None,
+    )
+    db.add(webhook_event)
+
+    try:
+        # Handle different event types
+        if event.type == "customer.subscription.updated":
+            await _handle_subscription_updated(db, event.data.object)
+        elif event.type == "customer.subscription.deleted":
+            await _handle_subscription_deleted(db, event.data.object)
+        elif event.type == "invoice.payment_succeeded":
+            await _handle_payment_succeeded(db, event.data.object)
+        elif event.type == "invoice.payment_failed":
+            await _handle_payment_failed(db, event.data.object)
+        elif event.type == "customer.subscription.trial_will_end":
+            await _handle_trial_will_end(db, event.data.object)
+
+        # Mark webhook as processed
+        webhook_event.processed_at = datetime.utcnow()
+        await db.commit()
+
+        return {"status": "success", "event_type": event.type}
+
+    except Exception as e:
+        logger.error(f"Error processing webhook {event.type}: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing webhook: {str(e)}"
+        )
+
+
+# Webhook event handlers
+async def _handle_subscription_updated(db: AsyncSession, subscription_data: dict):
+    """Handle subscription.updated webhook"""
+    from app.models.billing import Subscription
+    from sqlalchemy import select
+
+    stripe_sub_id = subscription_data.get("id")
+    result = await db.execute(
+        select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
+    )
+    subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        logger.warning(f"Subscription not found for Stripe ID: {stripe_sub_id}")
+        return
+
+    # Update subscription status
+    status_mapping = {
+        "active": "active",
+        "past_due": "past_due",
+        "canceled": "canceled",
+        "unpaid": "unpaid",
+        "trialing": "trialing",
+    }
+    subscription.status = status_mapping.get(subscription_data.get("status"), "active")
+    subscription.cancel_at_period_end = subscription_data.get("cancel_at_period_end", False)
+
+    if subscription_data.get("canceled_at"):
+        subscription.canceled_at = datetime.fromtimestamp(subscription_data["canceled_at"])
+
+    await db.commit()
+    logger.info(f"Updated subscription {subscription.id} from Stripe webhook")
+
+
+async def _handle_subscription_deleted(db: AsyncSession, subscription_data: dict):
+    """Handle subscription.deleted webhook"""
+    from app.models.billing import Subscription
+    from sqlalchemy import select
+
+    stripe_sub_id = subscription_data.get("id")
+    result = await db.execute(
+        select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
+    )
+    subscription = result.scalar_one_or_none()
+
+    if subscription:
+        subscription.status = "canceled"
+        subscription.canceled_at = datetime.utcnow()
+        await db.commit()
+        logger.info(f"Canceled subscription {subscription.id} from Stripe webhook")
+
+
+async def _handle_payment_succeeded(db: AsyncSession, invoice_data: dict):
+    """Handle invoice.payment_succeeded webhook"""
+    from app.models.billing import StripeInvoice
+    from sqlalchemy import select
+    import uuid
+
+    stripe_invoice_id = invoice_data.get("id")
+
+    # Check if invoice already exists
+    result = await db.execute(
+        select(StripeInvoice).where(StripeInvoice.stripe_invoice_id == stripe_invoice_id)
+    )
+    existing_invoice = result.scalar_one_or_none()
+
+    if existing_invoice:
+        existing_invoice.status = "paid"
+        existing_invoice.paid_at = datetime.fromtimestamp(invoice_data.get("status_transitions", {}).get("paid_at"))
+    else:
+        # Create new invoice record
+        invoice = StripeInvoice(
+            id=str(uuid.uuid4()),
+            company_id=None,  # Would need to look up from customer_id
+            stripe_invoice_id=stripe_invoice_id,
+            amount_due=invoice_data.get("amount_due", 0) / 100,
+            amount_paid=invoice_data.get("amount_paid", 0) / 100,
+            status="paid",
+            created_at=datetime.fromtimestamp(invoice_data.get("created")),
+            paid_at=datetime.fromtimestamp(invoice_data.get("status_transitions", {}).get("paid_at")),
+        )
+        db.add(invoice)
+
+    await db.commit()
+    logger.info(f"Recorded successful payment for invoice {stripe_invoice_id}")
+
+
+async def _handle_payment_failed(db: AsyncSession, invoice_data: dict):
+    """Handle invoice.payment_failed webhook"""
+    from app.models.billing import Subscription
+    from sqlalchemy import select
+
+    # Get subscription from invoice
+    stripe_sub_id = invoice_data.get("subscription")
+    if not stripe_sub_id:
+        return
+
+    result = await db.execute(
+        select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
+    )
+    subscription = result.scalar_one_or_none()
+
+    if subscription:
+        subscription.status = "past_due"
+        await db.commit()
+        logger.warning(f"Payment failed for subscription {subscription.id}")
+        # TODO: Send notification to customer
+
+
+async def _handle_trial_will_end(db: AsyncSession, subscription_data: dict):
+    """Handle subscription.trial_will_end webhook (3 days before trial ends)"""
+    from app.models.billing import Subscription
+    from sqlalchemy import select
+
+    stripe_sub_id = subscription_data.get("id")
+    result = await db.execute(
+        select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
+    )
+    subscription = result.scalar_one_or_none()
+
+    if subscription:
+        logger.info(f"Trial ending soon for subscription {subscription.id}")
+        # TODO: Send notification to customer about trial ending
