@@ -3,7 +3,7 @@
 ## Overview
 Complete Stripe billing integration for FreightOps TMS with support for:
 - 14-day trial period for new signups
-- Truck-based pricing ($49/truck monthly, $39/truck annual)
+- Truck-based pricing ($75/truck monthly, $60/truck annual)
 - Add-on services (Port Integration, Check Payroll)
 - Self-serve and contract subscription types
 - HQ admin oversight and management

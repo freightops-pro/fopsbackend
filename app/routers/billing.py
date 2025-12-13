@@ -57,6 +57,47 @@ async def update_subscription(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update subscription")
 
 
+@router.post("/preview", response_model=schemas.SubscriptionPreviewResponse)
+async def preview_subscription_changes(
+    request: schemas.SubscriptionPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
+) -> schemas.SubscriptionPreviewResponse:
+    """
+    Preview subscription cost changes before committing
+    Shows current cost, new cost, and immediate prorated charge
+    """
+    try:
+        service = BillingService(db)
+        return await service.preview_subscription_changes(current_user.company_id, request)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to preview subscription: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to preview subscription")
+
+
+@router.post("/update-subscription", response_model=schemas.BillingData)
+async def bulk_update_subscription(
+    request: schemas.BulkSubscriptionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
+) -> schemas.BillingData:
+    """
+    Update subscription with multiple changes at once
+    Supports: truck count, billing cycle, add-ons, and payment method in a single transaction
+    User will be charged immediately for prorated amounts
+    """
+    try:
+        service = BillingService(db)
+        return await service.bulk_update_subscription(current_user.company_id, request)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update subscription: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update subscription")
+
+
 @router.post("/add-ons", response_model=schemas.BillingData)
 async def activate_addon(
     request: schemas.ActivateAddOnRequest,

@@ -83,7 +83,7 @@ class BillingService:
         if request.billing_cycle is not None:
             subscription.billing_cycle = request.billing_cycle
             # Update price per truck based on billing cycle
-            subscription.base_price_per_truck = 39.00 if request.billing_cycle == "annual" else 49.00
+            subscription.base_price_per_truck = 60.00 if request.billing_cycle == "annual" else 75.00
 
         # Recalculate total monthly cost
         subscription.total_monthly_cost = self._calculate_total_cost(subscription)
@@ -97,7 +97,7 @@ class BillingService:
                         {
                             "price_data": {
                                 "currency": "usd",
-                                "product": settings.stripe_product_id,
+                                "product": settings.get_stripe_product_id(),
                                 "recurring": {
                                     "interval": "month" if subscription.billing_cycle == "monthly" else "year"
                                 },
@@ -189,7 +189,7 @@ class BillingService:
                         {
                             "price_data": {
                                 "currency": "usd",
-                                "product": settings.stripe_addon_products.get(request.service),
+                                "product": settings.get_stripe_addon_products().get(request.service),
                                 "recurring": {"interval": "month"},
                                 "unit_amount": int(monthly_cost * 100),
                             },
@@ -356,6 +356,275 @@ class BillingService:
         await self.db.commit()
         return await self.get_billing_data(company_id)
 
+    async def preview_subscription_changes(
+        self,
+        company_id: str,
+        request: schemas.SubscriptionPreviewRequest,
+    ) -> schemas.SubscriptionPreviewResponse:
+        """Preview subscription cost changes without committing"""
+        subscription = await self._get_subscription(company_id)
+
+        current_monthly_cost = float(subscription.total_monthly_cost)
+
+        # Calculate new costs
+        new_truck_count = request.truck_count or subscription.truck_count
+        new_billing_cycle = request.billing_cycle or subscription.billing_cycle
+
+        # Base subscription cost
+        base_price = 75.00 if new_billing_cycle == "monthly" else 60.00
+        new_base_cost = new_truck_count * base_price
+
+        # Add-on costs
+        addon_cost = 0.0
+        addon_breakdown = {}
+
+        for addon_service in request.add_ons:
+            if addon_service == "port_integration":
+                addon_cost += 99.00
+                addon_breakdown["port_integration"] = {
+                    "name": "Port Integration",
+                    "cost": 99.00,
+                }
+            elif addon_service == "check_payroll":
+                employee_count = request.check_payroll_employees or 0
+                cost = 39.00 + (employee_count * 6.00)
+                addon_cost += cost
+                addon_breakdown["check_payroll"] = {
+                    "name": "Check Payroll",
+                    "cost": cost,
+                    "employees": employee_count,
+                }
+
+        new_monthly_cost = new_base_cost + addon_cost
+
+        # Calculate prorated charge for immediate billing
+        # This is a simplified calculation - real proration would use Stripe's calculation
+        days_in_period = (subscription.current_period_end - subscription.current_period_start).days
+        days_remaining = (subscription.current_period_end - datetime.utcnow()).days
+        proration_factor = days_remaining / days_in_period if days_in_period > 0 else 0
+
+        cost_difference = new_monthly_cost - current_monthly_cost
+        immediate_charge = max(0, cost_difference * proration_factor)
+
+        return schemas.SubscriptionPreviewResponse(
+            current_monthly_cost=current_monthly_cost,
+            new_monthly_cost=new_monthly_cost,
+            immediate_charge=immediate_charge,
+            next_invoice_date=subscription.current_period_end,
+            breakdown={
+                "base": {
+                    "trucks": new_truck_count,
+                    "price_per_truck": base_price,
+                    "subtotal": new_base_cost,
+                },
+                "addons": addon_breakdown,
+                "total": new_monthly_cost,
+            },
+        )
+
+    async def bulk_update_subscription(
+        self,
+        company_id: str,
+        request: schemas.BulkSubscriptionUpdateRequest,
+    ) -> schemas.BillingData:
+        """Update subscription with multiple changes in a single transaction"""
+        subscription = await self._get_subscription(company_id)
+
+        if subscription.subscription_type == "contract":
+            raise ValueError("Contract subscriptions cannot be modified via self-service")
+
+        # Ensure Stripe customer exists
+        if not subscription.stripe_customer_id:
+            raise ValueError("No Stripe customer found. Please add a payment method first.")
+
+        # Attach payment method if provided
+        if request.payment_method_id:
+            try:
+                # Attach payment method to customer
+                stripe.PaymentMethod.attach(
+                    request.payment_method_id,
+                    customer=subscription.stripe_customer_id,
+                )
+
+                # Set as default payment method
+                stripe.Customer.modify(
+                    subscription.stripe_customer_id,
+                    invoice_settings={"default_payment_method": request.payment_method_id},
+                )
+
+                # Save to database
+                payment_method_data = stripe.PaymentMethod.retrieve(request.payment_method_id)
+                pm = PaymentMethod(
+                    id=str(uuid.uuid4()),
+                    company_id=company_id,
+                    stripe_payment_method_id=request.payment_method_id,
+                    payment_type="card",
+                    is_default=True,
+                    card_brand=payment_method_data.card.brand,
+                    card_last4=payment_method_data.card.last4,
+                    card_exp_month=payment_method_data.card.exp_month,
+                    card_exp_year=payment_method_data.card.exp_year,
+                )
+
+                # Mark other payment methods as not default
+                await self.db.execute(
+                    select(PaymentMethod)
+                    .where(PaymentMethod.company_id == company_id)
+                    .where(PaymentMethod.is_default == True)
+                )
+                for existing_pm in await self.db.execute(
+                    select(PaymentMethod).where(PaymentMethod.company_id == company_id)
+                ):
+                    existing_pm.is_default = False
+
+                self.db.add(pm)
+                logger.info(f"Attached payment method {request.payment_method_id} to customer")
+
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to attach payment method: {e}")
+                raise ValueError(f"Failed to add payment method: {str(e)}")
+
+        # Update truck count if changed
+        if request.truck_count and request.truck_count != subscription.truck_count:
+            subscription.truck_count = request.truck_count
+
+        # Update billing cycle if changed
+        if request.billing_cycle and request.billing_cycle != subscription.billing_cycle:
+            subscription.billing_cycle = request.billing_cycle
+            subscription.base_price_per_truck = 75.00 if request.billing_cycle == "monthly" else 60.00
+
+        # Deactivate all existing add-ons first
+        for addon in subscription.add_ons:
+            if addon.status == "active":
+                addon.status = "inactive"
+                if addon.stripe_subscription_id:
+                    try:
+                        stripe.Subscription.delete(addon.stripe_subscription_id)
+                    except stripe.error.StripeError as e:
+                        logger.warning(f"Failed to cancel old add-on subscription: {e}")
+
+        # Activate requested add-ons
+        for addon_service in request.add_ons:
+            existing = next((a for a in subscription.add_ons if a.service == addon_service), None)
+
+            if addon_service == "port_integration":
+                monthly_cost = 99.00
+                name = "Port Integration"
+                description = "Container tracking and port terminal access"
+                employee_count = None
+                per_employee_cost = None
+            elif addon_service == "check_payroll":
+                if not request.check_payroll_employees:
+                    raise ValueError("employee_count required for Check Payroll")
+                employee_count = request.check_payroll_employees
+                per_employee_cost = 6.00
+                monthly_cost = 39.00 + (employee_count * per_employee_cost)
+                name = "Check Payroll Service"
+                description = f"Full-service payroll processing for {employee_count} employees"
+
+            # Create or update add-on
+            if existing:
+                addon = existing
+                addon.status = "active"
+                addon.monthly_cost = monthly_cost
+                addon.employee_count = employee_count
+                addon.per_employee_cost = per_employee_cost
+                addon.activated_at = datetime.utcnow()
+            else:
+                addon = SubscriptionAddOn(
+                    id=str(uuid.uuid4()),
+                    subscription_id=subscription.id,
+                    service=addon_service,
+                    name=name,
+                    description=description,
+                    status="active",
+                    monthly_cost=monthly_cost,
+                    employee_count=employee_count,
+                    per_employee_cost=per_employee_cost,
+                    has_trial=False,
+                    activated_at=datetime.utcnow(),
+                )
+                self.db.add(addon)
+
+            # Create Stripe subscription for add-on
+            try:
+                stripe_addon_sub = stripe.Subscription.create(
+                    customer=subscription.stripe_customer_id,
+                    items=[
+                        {
+                            "price_data": {
+                                "currency": "usd",
+                                "product": settings.get_stripe_addon_products().get(addon_service),
+                                "recurring": {"interval": "month"},
+                                "unit_amount": int(monthly_cost * 100),
+                            },
+                            "quantity": 1,
+                        }
+                    ],
+                    proration_behavior="create_prorations",
+                )
+                addon.stripe_subscription_id = stripe_addon_sub.id
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to create add-on subscription: {e}")
+                raise ValueError(f"Failed to activate {name}: {str(e)}")
+
+        # Create or update main Stripe subscription
+        if not subscription.stripe_subscription_id:
+            # Create new Stripe subscription
+            try:
+                stripe_sub = stripe.Subscription.create(
+                    customer=subscription.stripe_customer_id,
+                    items=[
+                        {
+                            "price_data": {
+                                "currency": "usd",
+                                "product": settings.get_stripe_product_id(),
+                                "recurring": {
+                                    "interval": "month" if subscription.billing_cycle == "monthly" else "year"
+                                },
+                                "unit_amount": int(subscription.base_price_per_truck * 100),
+                            },
+                            "quantity": subscription.truck_count,
+                        }
+                    ],
+                    trial_end=int(subscription.trial_ends_at.timestamp()) if subscription.trial_ends_at else "now",
+                )
+                subscription.stripe_subscription_id = stripe_sub.id
+                subscription.status = "active"
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to create Stripe subscription: {e}")
+                raise ValueError(f"Failed to create subscription: {str(e)}")
+        else:
+            # Update existing Stripe subscription
+            try:
+                stripe.Subscription.modify(
+                    subscription.stripe_subscription_id,
+                    items=[
+                        {
+                            "price_data": {
+                                "currency": "usd",
+                                "product": settings.get_stripe_product_id(),
+                                "recurring": {
+                                    "interval": "month" if subscription.billing_cycle == "monthly" else "year"
+                                },
+                                "unit_amount": int(subscription.base_price_per_truck * 100),
+                            },
+                            "quantity": subscription.truck_count,
+                        }
+                    ],
+                    proration_behavior="create_prorations",
+                )
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to update Stripe subscription: {e}")
+                raise ValueError(f"Failed to update subscription: {str(e)}")
+
+        # Recalculate total cost
+        subscription.total_monthly_cost = self._calculate_total_cost(subscription)
+        subscription.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        return await self.get_billing_data(company_id)
+
     # Helper methods
     async def _get_subscription(self, company_id: str) -> Subscription:
         """Get subscription with add-ons"""
@@ -370,7 +639,9 @@ class BillingService:
         return subscription
 
     async def _get_or_create_subscription(self, company_id: str) -> Subscription:
-        """Get existing subscription or create trial subscription"""
+        """Get existing subscription or create trial subscription with Stripe customer"""
+        from app.models.company import Company
+
         subscription = await self.db.execute(
             select(Subscription)
             .options(selectinload(Subscription.add_ons))
@@ -379,28 +650,137 @@ class BillingService:
         sub = subscription.scalar_one_or_none()
 
         if not sub:
-            # Create new trial subscription
+            # Get company info for Stripe customer
+            company_result = await self.db.execute(
+                select(Company).where(Company.id == company_id)
+            )
+            company = company_result.scalar_one_or_none()
+            if not company:
+                raise ValueError(f"Company {company_id} not found")
+
+            # Create Stripe customer
+            try:
+                stripe_customer = stripe.Customer.create(
+                    email=company.email,
+                    name=company.name,
+                    metadata={
+                        "company_id": company_id,
+                        "dot_number": company.dotNumber or "",
+                        "mc_number": company.mcNumber or "",
+                    },
+                )
+                stripe_customer_id = stripe_customer.id
+                logger.info(f"Created Stripe customer {stripe_customer_id} for company {company_id}")
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to create Stripe customer: {e}")
+                # Continue without Stripe customer - will be created later when payment added
+                stripe_customer_id = None
+
+            # Create Stripe subscription with 14-day trial
             trial_ends_at = datetime.utcnow() + timedelta(days=14)
+
+            # Create Stripe subscription immediately (Stripe will manage the trial)
+            stripe_subscription_id = None
+            if stripe_customer_id:
+                try:
+                    stripe_sub = stripe.Subscription.create(
+                        customer=stripe_customer_id,
+                        items=[
+                            {
+                                "price_data": {
+                                    "currency": "usd",
+                                    "product": settings.get_stripe_product_id(),
+                                    "recurring": {"interval": "month"},
+                                    "unit_amount": 7500,  # $75.00
+                                },
+                                "quantity": 1,
+                            }
+                        ],
+                        trial_end=int(trial_ends_at.timestamp()),
+                        payment_behavior="default_incomplete",  # Don't require payment during trial
+                    )
+                    stripe_subscription_id = stripe_sub.id
+
+                    # Stripe will send us the actual status via webhook
+                    # But for now, we know it's trialing
+                    logger.info(f"Created Stripe subscription {stripe_subscription_id} with 14-day trial")
+                except stripe.error.StripeError as e:
+                    logger.error(f"Failed to create Stripe subscription: {e}")
+                    # Continue without Stripe subscription - will be created when payment added
+
+            # Create local subscription record that mirrors Stripe
             sub = Subscription(
                 id=str(uuid.uuid4()),
                 company_id=company_id,
-                status="trialing",
+                status="trialing",  # Stripe will update this via webhook
                 subscription_type="self_serve",
                 billing_cycle="monthly",
                 truck_count=1,
-                base_price_per_truck=49.00,
+                base_price_per_truck=75.00,
                 total_monthly_cost=0.00,  # Free during trial
-                trial_ends_at=trial_ends_at,
-                trial_days_remaining=14,
+                trial_ends_at=trial_ends_at,  # For display purposes only - Stripe is source of truth
+                trial_days_remaining=14,  # Calculated from Stripe data
                 current_period_start=datetime.utcnow(),
                 current_period_end=trial_ends_at,
+                stripe_customer_id=stripe_customer_id,
+                stripe_subscription_id=stripe_subscription_id,
             )
             self.db.add(sub)
             await self.db.commit()
             await self.db.refresh(sub)
 
-        # Update trial days remaining
-        if sub.trial_ends_at and sub.status == "trialing":
+        # Ensure Stripe customer exists
+        if not sub.stripe_customer_id:
+            company_result = await self.db.execute(
+                select(Company).where(Company.id == company_id)
+            )
+            company = company_result.scalar_one_or_none()
+            if company:
+                try:
+                    stripe_customer = stripe.Customer.create(
+                        email=company.email,
+                        name=company.name,
+                        metadata={"company_id": company_id},
+                    )
+                    sub.stripe_customer_id = stripe_customer.id
+                    await self.db.commit()
+                except stripe.error.StripeError as e:
+                    logger.error(f"Failed to create Stripe customer: {e}")
+
+        # Sync status from Stripe if subscription exists
+        if sub.stripe_subscription_id:
+            try:
+                stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+
+                # Update status from Stripe (Stripe is source of truth)
+                status_mapping = {
+                    "active": "active",
+                    "past_due": "past_due",
+                    "canceled": "canceled",
+                    "unpaid": "unpaid",
+                    "trialing": "trialing",
+                }
+                sub.status = status_mapping.get(stripe_sub.status, sub.status)
+
+                # Update trial info from Stripe
+                if stripe_sub.trial_end:
+                    sub.trial_ends_at = datetime.fromtimestamp(stripe_sub.trial_end)
+                    days_remaining = (sub.trial_ends_at - datetime.utcnow()).days
+                    sub.trial_days_remaining = max(0, days_remaining)
+                else:
+                    sub.trial_ends_at = None
+                    sub.trial_days_remaining = None
+
+                # Update period dates from Stripe
+                sub.current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start)
+                sub.current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end)
+
+                await self.db.commit()
+                logger.debug(f"Synced subscription status from Stripe: {sub.status}")
+            except stripe.error.StripeError as e:
+                logger.warning(f"Failed to sync subscription from Stripe: {e}")
+        elif sub.trial_ends_at and sub.status == "trialing":
+            # Fallback: calculate trial days if no Stripe subscription
             days_remaining = (sub.trial_ends_at - datetime.utcnow()).days
             sub.trial_days_remaining = max(0, days_remaining)
 

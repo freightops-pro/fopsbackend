@@ -156,3 +156,29 @@ class CustomerPortalSession(BaseModel):
 class CheckoutSession(BaseModel):
     """Stripe Checkout session"""
     url: str
+
+
+class SubscriptionPreviewRequest(BaseModel):
+    """Request for previewing subscription changes"""
+    truck_count: Optional[int] = None
+    billing_cycle: Optional[BillingCycle] = None
+    add_ons: List[AddOnService] = Field(default_factory=list)
+    check_payroll_employees: Optional[int] = None  # Required if check_payroll in add_ons
+
+
+class SubscriptionPreviewResponse(BaseModel):
+    """Preview of subscription costs"""
+    current_monthly_cost: float
+    new_monthly_cost: float
+    immediate_charge: float  # Prorated charge for remainder of billing period
+    next_invoice_date: datetime
+    breakdown: dict  # Detailed cost breakdown
+
+
+class BulkSubscriptionUpdateRequest(BaseModel):
+    """Update subscription with multiple changes at once"""
+    truck_count: Optional[int] = None
+    billing_cycle: Optional[BillingCycle] = None
+    add_ons: List[AddOnService] = Field(default_factory=list)
+    check_payroll_employees: Optional[int] = None  # Required if check_payroll in add_ons
+    payment_method_id: Optional[str] = None  # Stripe payment method ID if adding new card
