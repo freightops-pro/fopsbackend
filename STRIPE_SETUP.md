@@ -140,8 +140,8 @@ All endpoints require authentication and belong to the tenant's company.
 
 ### Pricing Structure
 **Base Subscription**
-- Monthly: $49 per truck
-- Annual: $39 per truck (20% discount)
+- Monthly: $75 per truck/month
+- Annual: $720 per truck/year ($60/month equivalent, 20% discount)
 
 **Add-ons** (charged immediately)
 - Port Integration: $99/month

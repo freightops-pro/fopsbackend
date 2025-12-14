@@ -142,7 +142,7 @@ STRIPE_LIVE_ADDON_PRODUCTS='{"port_integration": "prod_DEF456", "check_payroll":
 | Product | Price | Billing | Notes |
 |---------|-------|---------|-------|
 | Base Subscription | $75/truck/month | Monthly | Per unit pricing |
-| Base Subscription | $60/truck/year | Annual | 20% discount |
+| Base Subscription | $720/truck/year | Annual | 20% discount ($60/month equivalent) |
 | Port Integration | $99/month | Monthly | Flat rate add-on |
 | Check Payroll | $39 + $6/employee | Monthly | Base + per-employee |
 
