@@ -128,8 +128,8 @@ class Settings(BaseSettings):
     stripe_test_publishable_key: Optional[str] = None
     stripe_test_webhook_secret: Optional[str] = None
     stripe_test_product_id: Optional[str] = None
-    stripe_test_addon_products: dict = Field(
-        default={
+    stripe_test_addon_products: Optional[dict] = Field(
+        default_factory=lambda: {
             "port_integration": None,
             "check_payroll": None,
         }
@@ -140,8 +140,8 @@ class Settings(BaseSettings):
     stripe_live_publishable_key: Optional[str] = None
     stripe_live_webhook_secret: Optional[str] = None
     stripe_live_product_id: Optional[str] = None
-    stripe_live_addon_products: dict = Field(
-        default={
+    stripe_live_addon_products: Optional[dict] = Field(
+        default_factory=lambda: {
             "port_integration": None,
             "check_payroll": None,
         }
@@ -169,7 +169,8 @@ class Settings(BaseSettings):
 
     def get_stripe_addon_products(self) -> dict:
         """Get the appropriate Stripe addon product IDs based on mode"""
-        return self.stripe_live_addon_products if self.stripe_use_live_mode else self.stripe_test_addon_products
+        products = self.stripe_live_addon_products if self.stripe_use_live_mode else self.stripe_test_addon_products
+        return products or {"port_integration": None, "check_payroll": None}
 
 
 @lru_cache(maxsize=1)
