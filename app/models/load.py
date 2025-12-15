@@ -43,6 +43,31 @@ class Load(Base):
     preferred_driver_ids = Column(JSON, nullable=True)
     preferred_truck_ids = Column(JSON, nullable=True)
 
+    # Driver assignment
+    driver_id = Column(String, ForeignKey("driver.id"), nullable=True, index=True)
+    truck_id = Column(String, ForeignKey("fleet_equipment.id"), nullable=True, index=True)
+
+    # Pickup tracking fields
+    pickup_arrival_time = Column(DateTime, nullable=True)
+    pickup_arrival_lat = Column(Float, nullable=True)
+    pickup_arrival_lng = Column(Float, nullable=True)
+    pickup_departure_time = Column(DateTime, nullable=True)
+    pickup_departure_lat = Column(Float, nullable=True)
+    pickup_departure_lng = Column(Float, nullable=True)
+
+    # Delivery tracking fields
+    delivery_arrival_time = Column(DateTime, nullable=True)
+    delivery_arrival_lat = Column(Float, nullable=True)
+    delivery_arrival_lng = Column(Float, nullable=True)
+    delivery_departure_time = Column(DateTime, nullable=True)
+    delivery_departure_lat = Column(Float, nullable=True)
+    delivery_departure_lng = Column(Float, nullable=True)
+
+    # Last known location (for tracking in-transit)
+    last_known_lat = Column(Float, nullable=True)
+    last_known_lng = Column(Float, nullable=True)
+    last_location_update = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -342,3 +342,253 @@ async def get_port_appointment(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
+
+# ==================== DRIVER APP ENDPOINTS ====================
+
+class LoadArrivalRequest(BaseModel):
+    """Driver arrival at pickup/delivery stop."""
+    stop_type: str  # "pickup" or "delivery"
+    stop_id: str | None = None
+    arrival_time: datetime
+    latitude: float
+    longitude: float
+    notes: str | None = None
+
+
+class LoadDepartureRequest(BaseModel):
+    """Driver departure from pickup/delivery stop."""
+    stop_type: str  # "pickup" or "delivery"
+    stop_id: str | None = None
+    departure_time: datetime
+    latitude: float
+    longitude: float
+    notes: str | None = None
+
+
+class LoadStatusUpdateRequest(BaseModel):
+    """Update load status from driver app."""
+    status: str  # e.g., "in_progress", "at_pickup", "loading", "in_transit", "at_delivery", "delivered"
+    latitude: float | None = None
+    longitude: float | None = None
+    notes: str | None = None
+
+
+@router.post("/{load_id}/arrival")
+async def record_load_arrival(
+    load_id: str,
+    request: LoadArrivalRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+    websocket: WebSocketManager = Depends(get_websocket_manager),
+):
+    """Record driver arrival at pickup or delivery location."""
+    try:
+        # Get load and verify access
+        load_service = LoadService(db)
+        load = await load_service.get_load(load_id)
+
+        if not load:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Load {load_id} not found"
+            )
+
+        # Verify driver has access to this load
+        if current_user.role == "DRIVER" and load.driver_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this load"
+            )
+
+        # Update load based on stop type
+        if request.stop_type == "pickup":
+            load.pickup_arrival_time = request.arrival_time
+            load.pickup_arrival_lat = request.latitude
+            load.pickup_arrival_lng = request.longitude
+            load.status = "at_pickup"
+        elif request.stop_type == "delivery":
+            load.delivery_arrival_time = request.arrival_time
+            load.delivery_arrival_lat = request.latitude
+            load.delivery_arrival_lng = request.longitude
+            load.status = "at_delivery"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid stop_type: {request.stop_type}"
+            )
+
+        db.add(load)
+        await db.commit()
+        await db.refresh(load)
+
+        # Broadcast update via WebSocket
+        await websocket.broadcast_load_update(
+            load_id=load_id,
+            company_id=current_user.company_id,
+            update_data={
+                "type": "driver_arrival",
+                "stop_type": request.stop_type,
+                "arrival_time": request.arrival_time.isoformat(),
+                "location": {
+                    "latitude": request.latitude,
+                    "longitude": request.longitude,
+                },
+                "status": load.status,
+                "driver_id": current_user.id,
+            }
+        )
+
+        return {
+            "message": f"Arrival at {request.stop_type} recorded successfully",
+            "load_id": load_id,
+            "status": load.status,
+            "arrival_time": request.arrival_time.isoformat(),
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/{load_id}/departure")
+async def record_load_departure(
+    load_id: str,
+    request: LoadDepartureRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+    websocket: WebSocketManager = Depends(get_websocket_manager),
+):
+    """Record driver departure from pickup or delivery location."""
+    try:
+        # Get load and verify access
+        load_service = LoadService(db)
+        load = await load_service.get_load(load_id)
+
+        if not load:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Load {load_id} not found"
+            )
+
+        # Verify driver has access to this load
+        if current_user.role == "DRIVER" and load.driver_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this load"
+            )
+
+        # Update load based on stop type
+        if request.stop_type == "pickup":
+            load.pickup_departure_time = request.departure_time
+            load.pickup_departure_lat = request.latitude
+            load.pickup_departure_lng = request.longitude
+            load.status = "in_transit"
+        elif request.stop_type == "delivery":
+            load.delivery_departure_time = request.departure_time
+            load.delivery_departure_lat = request.latitude
+            load.delivery_departure_lng = request.longitude
+            load.status = "delivered"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid stop_type: {request.stop_type}"
+            )
+
+        db.add(load)
+        await db.commit()
+        await db.refresh(load)
+
+        # Broadcast update via WebSocket
+        await websocket.broadcast_load_update(
+            load_id=load_id,
+            company_id=current_user.company_id,
+            update_data={
+                "type": "driver_departure",
+                "stop_type": request.stop_type,
+                "departure_time": request.departure_time.isoformat(),
+                "location": {
+                    "latitude": request.latitude,
+                    "longitude": request.longitude,
+                },
+                "status": load.status,
+                "driver_id": current_user.id,
+            }
+        )
+
+        return {
+            "message": f"Departure from {request.stop_type} recorded successfully",
+            "load_id": load_id,
+            "status": load.status,
+            "departure_time": request.departure_time.isoformat(),
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.put("/{load_id}/status")
+async def update_load_status(
+    load_id: str,
+    request: LoadStatusUpdateRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_active_user),
+    websocket: WebSocketManager = Depends(get_websocket_manager),
+):
+    """Update load status from driver app."""
+    try:
+        # Get load and verify access
+        load_service = LoadService(db)
+        load = await load_service.get_load(load_id)
+
+        if not load:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Load {load_id} not found"
+            )
+
+        # Verify driver has access to this load
+        if current_user.role == "DRIVER" and load.driver_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this load"
+            )
+
+        # Update load status
+        old_status = load.status
+        load.status = request.status
+
+        # Update location if provided
+        if request.latitude and request.longitude:
+            load.last_known_lat = request.latitude
+            load.last_known_lng = request.longitude
+
+        db.add(load)
+        await db.commit()
+        await db.refresh(load)
+
+        # Broadcast update via WebSocket
+        await websocket.broadcast_load_update(
+            load_id=load_id,
+            company_id=current_user.company_id,
+            update_data={
+                "type": "status_update",
+                "old_status": old_status,
+                "new_status": request.status,
+                "location": {
+                    "latitude": request.latitude,
+                    "longitude": request.longitude,
+                } if request.latitude and request.longitude else None,
+                "driver_id": current_user.id,
+                "notes": request.notes,
+            }
+        )
+
+        return {
+            "message": "Load status updated successfully",
+            "load_id": load_id,
+            "old_status": old_status,
+            "new_status": request.status,
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
