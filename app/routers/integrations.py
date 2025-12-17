@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Import sub-routers for specific integrations
+from app.routers.integrations import xero, gusto, samsara as samsara_router, geotab, loadboards
+
+# Include sub-routers
+router.include_router(xero.router, tags=["Integrations - Xero"])
+router.include_router(gusto.router, tags=["Integrations - Gusto"])
+router.include_router(samsara_router.router, tags=["Integrations - Samsara"])
+router.include_router(geotab.router, tags=["Integrations - Geotab"])
+router.include_router(loadboards.router, tags=["Integrations - Load Boards"])
+
 
 async def _service(db: AsyncSession = Depends(get_db)) -> MotiveService:
     """Get Motive service instance."""

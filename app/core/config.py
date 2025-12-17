@@ -122,6 +122,19 @@ class Settings(BaseSettings):
             return self.api_base_url
         return f"{self.base_url}/api"
 
+    # Xero Integration (Accounting)
+    xero_client_id: Optional[str] = None
+    xero_client_secret: Optional[str] = None
+
+    # Gusto Integration (Payroll & HR)
+    gusto_client_id: Optional[str] = None
+    gusto_client_secret: Optional[str] = None
+
+    # Samsara Integration (Fleet Management & ELD)
+    samsara_client_id: Optional[str] = None
+    samsara_client_secret: Optional[str] = None
+    samsara_api_base_url: str = "https://api.samsara.com"  # Or https://api.eu.samsara.com for EU
+
     # Stripe Configuration for Billing
     # Test mode keys (for development/staging)
     stripe_test_secret_key: Optional[str] = None

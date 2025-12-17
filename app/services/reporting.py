@@ -139,13 +139,86 @@ class ReportingService:
         fuel_entries = list(fuel_entries_result.scalars().all())
         fuel_cost = sum(float(e.amount or 0) for e in fuel_entries)
         fuel_cost_per_mile = fuel_cost / total_miles if total_miles > 0 else 0.0
-        
+
+        # === CHART DATA ===
+
+        # Revenue Trend (Last 4 weeks)
+        revenue_trend = []
+        for i in range(4):
+            week_start = now - timedelta(days=(4-i)*7)
+            week_end = week_start + timedelta(days=7)
+
+            week_loads = [l for l in loads if
+                         l.status and l.status.upper() in ["DELIVERED", "COMPLETED"] and
+                         l.created_at and week_start <= l.created_at < week_end]
+
+            week_revenue = 0.0
+            for l in week_loads:
+                if l.metadata_json:
+                    try:
+                        import json
+                        if isinstance(l.metadata_json, str):
+                            metadata = json.loads(l.metadata_json)
+                        else:
+                            metadata = l.metadata_json
+                        week_revenue += float(metadata.get("base_rate", 0))
+                    except:
+                        pass
+
+            from app.schemas.dashboard import ChartDataPoint
+            revenue_trend.append(ChartDataPoint(name=f"Week {i+1}", value=round(week_revenue, 2)))
+
+        # Load Volume (Last 5 days)
+        load_volume = []
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+
+        for i in range(5):
+            day_start = now - timedelta(days=5-i)
+            day_end = day_start + timedelta(days=1)
+
+            completed = sum(1 for l in loads if
+                          l.status and l.status.upper() in ["DELIVERED", "COMPLETED"] and
+                          l.created_at and day_start <= l.created_at < day_end)
+
+            in_progress = sum(1 for l in loads if
+                            l.status and l.status.upper() in ["IN_PROGRESS", "PICKUP", "IN_TRANSIT"] and
+                            l.created_at and l.created_at < day_end)
+
+            pending = sum(1 for l in loads if
+                        l.status and l.status.upper() in ["PENDING", "DISPATCHED"] and
+                        l.created_at and day_start <= l.created_at < day_end)
+
+            load_volume.append(ChartDataPoint(
+                name=days[i] if i < len(days) else f"Day {i+1}",
+                completed=completed,
+                inProgress=in_progress,
+                pending=pending
+            ))
+
+        # Equipment Utilization
+        total_trucks = sum(1 for e in equipment if
+                          e.equipment_type and "TRACTOR" in e.equipment_type.upper())
+        total_trailers = sum(1 for e in equipment if
+                            e.equipment_type and "TRAILER" in e.equipment_type.upper())
+        total_drivers = len(drivers)
+
+        truck_utilization = int((active_trucks / total_trucks) * 100) if total_trucks > 0 else 0
+        trailer_utilization = int((operational_trailers / total_trailers) * 100) if total_trailers > 0 else 0
+        driver_utilization = int((drivers_dispatched / total_drivers) * 100) if total_drivers > 0 else 0
+
+        utilization_data = [
+            ChartDataPoint(name="Trucks", utilization=truck_utilization, target=85),
+            ChartDataPoint(name="Trailers", utilization=trailer_utilization, target=80),
+            ChartDataPoint(name="Drivers", utilization=driver_utilization, target=85)
+        ]
+
         from app.schemas.dashboard import (
             DashboardFleetMetrics,
             DashboardDispatchMetrics,
             DashboardAccountingMetrics,
+            DashboardChartsData,
         )
-        
+
         return DashboardMetricsV2(
             fleet=DashboardFleetMetrics(
                 activeTrucks=active_trucks,
@@ -164,6 +237,11 @@ class ReportingService:
                 invoicesPending=invoices_pending,
                 outstandingAmount=outstanding_amount,
                 fuelCostPerMile=fuel_cost_per_mile,
+            ),
+            charts=DashboardChartsData(
+                revenueTrend=revenue_trend,
+                loadVolume=load_volume,
+                utilization=utilization_data
             ),
         )
 

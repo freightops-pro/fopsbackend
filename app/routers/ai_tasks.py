@@ -14,6 +14,11 @@ from app.models.ai_task import AITask
 from app.services.annie_ai import AnnieAI
 from app.services.atlas_ai import AtlasAI
 from app.services.alex_ai import AlexAI
+from app.services.adam_ai import AdamAI
+from app.services.harper_ai import HarperAI
+from app.services.fleet_manager_ai import FleetManagerAI
+from app.services.agent_orchestrator import AgentOrchestrator
+from sqlalchemy import text
 
 
 router = APIRouter()
@@ -23,7 +28,7 @@ router = APIRouter()
 
 class CreateAITaskRequest(BaseModel):
     """Request to create a new AI task."""
-    agent_type: str  # annie, atlas, alex
+    agent_type: str  # annie, atlas, alex, adam, harper, fleet_manager
     task_description: str
     input_data: Optional[dict] = None
     priority: str = "normal"  # low, normal, high, urgent
@@ -60,8 +65,12 @@ async def create_ai_task(
     The AI agent will autonomously plan and execute the task.
     """
     # Validate agent type
-    if request.agent_type not in ["annie", "atlas", "alex"]:
-        raise HTTPException(status_code=400, detail="Invalid agent_type. Must be: annie, atlas, or alex")
+    valid_agents = ["annie", "atlas", "alex", "adam", "harper", "fleet_manager"]
+    if request.agent_type not in valid_agents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agent_type. Must be one of: {', '.join(valid_agents)}"
+        )
 
     # Create the task
     task = AITask(
@@ -106,6 +115,36 @@ async def create_ai_task(
 
     elif request.agent_type == "alex":
         agent = AlexAI(db)
+        await agent.register_tools()
+
+        success, error = await agent.execute_task(
+            task=task,
+            company_id=current_user.company_id,
+            user_id=current_user.id
+        )
+
+    elif request.agent_type == "adam":
+        agent = AdamAI(db)
+        await agent.register_tools()
+
+        success, error = await agent.execute_task(
+            task=task,
+            company_id=current_user.company_id,
+            user_id=current_user.id
+        )
+
+    elif request.agent_type == "harper":
+        agent = HarperAI(db)
+        await agent.register_tools()
+
+        success, error = await agent.execute_task(
+            task=task,
+            company_id=current_user.company_id,
+            user_id=current_user.id
+        )
+
+    elif request.agent_type == "fleet_manager":
+        agent = FleetManagerAI(db)
         await agent.register_tools()
 
         success, error = await agent.execute_task(
@@ -192,3 +231,112 @@ async def cancel_ai_task(
     await db.commit()
 
     return {"status": "cancelled", "task_id": task_id}
+
+
+@router.get("/tasks/{task_id}/events")
+async def get_task_events(
+    task_id: str,
+    limit: int = 100,
+    current_user=Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get real-time agent stream events for Glass Door UI.
+
+    Returns all thinking, decisions, rejections, and results from AI agents.
+    """
+    # Verify task belongs to user's company
+    result = await db.execute(
+        select(AITask).where(
+            AITask.id == task_id,
+            AITask.company_id == current_user.company_id
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Fetch events from ai_agent_stream table
+    events_result = await db.execute(
+        text("""
+        SELECT
+            agent_type, event_type, message, reasoning, metadata, severity, created_at
+        FROM ai_agent_stream
+        WHERE task_id = :task_id
+        ORDER BY created_at ASC
+        LIMIT :limit
+        """),
+        {"task_id": task_id, "limit": limit}
+    )
+
+    events = events_result.fetchall()
+
+    return {
+        "task_id": task_id,
+        "events": [
+            {
+                "task_id": task_id,
+                "agent_type": e[0],
+                "event_type": e[1],
+                "message": e[2],
+                "reasoning": e[3],
+                "metadata": e[4],
+                "severity": e[5],
+                "timestamp": e[6].isoformat()
+            }
+            for e in events
+        ]
+    }
+
+
+class HumanMessageRequest(BaseModel):
+    """Human message to AI agents."""
+    message: str
+
+
+@router.post("/tasks/{task_id}/human-message")
+async def send_human_message(
+    task_id: str,
+    request: HumanMessageRequest,
+    current_user=Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Send a message from human to AI agents via Glass Door UI.
+
+    The message will be processed by the active agent and incorporated into decision-making.
+    """
+    # Verify task belongs to user's company
+    result = await db.execute(
+        select(AITask).where(
+            AITask.id == task_id,
+            AITask.company_id == current_user.company_id
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Log human message to agent stream
+    from app.services.glass_door_stream import GlassDoorStream
+
+    stream = GlassDoorStream(db, task_id, current_user.company_id)
+    await stream.log_thinking(
+        agent_type=task.agent_type,  # Route to task's primary agent
+        thought=f"👤 Human instruction received: {request.message}",
+        reasoning="Human interaction via Glass Door interface - incorporating feedback into decision process",
+        metadata={
+            "source": "human",
+            "user_id": current_user.id,
+            "original_message": request.message
+        }
+    )
+
+    return {
+        "status": "message_received",
+        "task_id": task_id,
+        "message": request.message,
+        "routed_to": task.agent_type
+    }

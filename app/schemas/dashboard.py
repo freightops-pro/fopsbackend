@@ -30,8 +30,25 @@ class DashboardAccountingMetrics(BaseModel):
     fuelCostChangePercent: Optional[float] = None
 
 
+class ChartDataPoint(BaseModel):
+    name: str
+    value: Optional[float] = None
+    completed: Optional[int] = None
+    inProgress: Optional[int] = None
+    pending: Optional[int] = None
+    utilization: Optional[int] = None
+    target: Optional[int] = None
+
+
+class DashboardChartsData(BaseModel):
+    revenueTrend: list[ChartDataPoint]
+    loadVolume: list[ChartDataPoint]
+    utilization: list[ChartDataPoint]
+
+
 class DashboardMetrics(BaseModel):
     fleet: DashboardFleetMetrics
     dispatch: DashboardDispatchMetrics
     accounting: DashboardAccountingMetrics
+    charts: Optional[DashboardChartsData] = None
 
