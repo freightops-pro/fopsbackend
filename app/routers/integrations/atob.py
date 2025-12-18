@@ -27,8 +27,10 @@ import httpx
 
 from app.api import deps
 from app.core.db import get_db
-from app.core.config import settings
+from app.core.config import get_settings
 from app.models.integration import CompanyIntegration, Integration
+
+settings = get_settings()
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
