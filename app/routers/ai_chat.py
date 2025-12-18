@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from app.core.database import get_db
+from app.core.db import get_db
 from app.services.conversational_ai import ConversationalAI
 
 

@@ -118,6 +118,10 @@ class ContainerLookupService:
         "USNYC": "New York",
         "USEWR": "Newark/Elizabeth",
         "USSAV": "Savannah",
+        # Florida ports
+        "USPEF": "Port Everglades",
+        "USMIA": "Port Miami",
+        "USJAX": "Jacksonville (JAXPORT)",
     }
 
     def __init__(self, db=None):
@@ -176,6 +180,12 @@ class ContainerLookupService:
                 return await self._query_ny_nj(container_number, port_code, terminal)
             elif port_code == "USSAV":
                 return await self._query_savannah(container_number)
+            elif port_code == "USPEF":
+                return await self._query_port_everglades(container_number)
+            elif port_code == "USMIA":
+                return await self._query_port_miami(container_number)
+            elif port_code == "USJAX":
+                return await self._query_jaxport(container_number)
             else:
                 return ContainerLookupResult(
                     success=False,
@@ -194,7 +204,7 @@ class ContainerLookupService:
     async def _search_all_ports(self, container_number: str) -> ContainerLookupResult:
         """Search across all supported ports for the container."""
         # Try major ports in order of volume
-        for port_code in ["USLAX", "USLGB", "USNYC", "USEWR", "USHOU", "USSAV"]:
+        for port_code in ["USLAX", "USLGB", "USNYC", "USEWR", "USHOU", "USSAV", "USPEF", "USMIA", "USJAX"]:
             try:
                 result = await self._query_port(container_number, port_code)
                 if result.success:
@@ -238,26 +248,44 @@ class ContainerLookupService:
     ) -> ContainerLookupResult:
         """Query LA/Long Beach terminal APIs.
 
-        APM Terminals Pier 400 (USLAX) has API access.
-        Other terminals fall back to LA/LB adapter.
+        Priority order:
+        1. LBCT API (if terminal=lbct or searching Long Beach)
+        2. APM Terminals API (Pier 400)
+        3. eModal (TraPac, YTI, SSA, etc.)
+        4. Fallback adapter
         """
-        # Try APM Terminals first for Pier 400 (APM's LA terminal)
-        apm_terminals = ["pier400", "apm", "apmt"]
-        if terminal and terminal.lower() in apm_terminals:
-            try:
-                return await self._query_apm(container_number, port_code)
-            except Exception:
-                pass  # Fall through to generic adapter
+        terminal_lower = terminal.lower() if terminal else ""
 
-        # If no terminal specified or not APM, try APM first then fallback
-        if settings.apm_client_id and settings.apm_client_secret:
+        # 1. Try LBCT first for Long Beach
+        if port_code == "USLGB" or terminal_lower == "lbct":
+            try:
+                result = await self._query_lbct(container_number)
+                if result.success:
+                    return result
+            except Exception:
+                pass
+
+        # 2. Try APM Terminals for Pier 400
+        apm_terminals = ["pier400", "apm", "apmt"]
+        if terminal_lower in apm_terminals or (settings.apm_client_id and settings.apm_client_secret):
             try:
                 result = await self._query_apm(container_number, port_code)
                 if result.success:
                     return result
             except Exception:
-                pass  # Fall through to generic adapter
+                pass
 
+        # 3. Try eModal for other LA/LB terminals (TraPac, YTI, SSA, etc.)
+        emodal_terminals = ["trapac", "yti", "everport", "ssa", "tti", "pct"]
+        if terminal_lower in emodal_terminals or settings.emodal_api_key:
+            try:
+                result = await self._query_emodal(container_number, port_code, terminal)
+                if result.success:
+                    return result
+            except Exception:
+                pass
+
+        # 4. Fallback to generic LA/LB adapter
         from app.services.port.adapters.la_lb_adapter import LALBAdapter
         adapter = LALBAdapter()
 
@@ -361,6 +389,85 @@ class ContainerLookupService:
                 success=False,
                 container_number=container_number,
                 port_code=port_code,
+                error=str(e),
+            )
+
+    async def _query_lbct(self, container_number: str) -> ContainerLookupResult:
+        """Query LBCT (Long Beach Container Terminal) API.
+
+        LBCT was the first LA/LB terminal to offer a public API.
+        Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/lbct.html
+        """
+        from app.services.port.adapters.lbct_adapter import LBCTAdapter
+
+        adapter = LBCTAdapter(
+            credentials={"api_key": settings.lbct_api_key}
+        )
+
+        try:
+            tracking = await adapter.track_container(container_number, "USLGB")
+            return self._convert_port_response(tracking, "USLGB")
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code="USLGB",
+                error=str(e),
+            )
+
+    async def _query_emodal(
+        self,
+        container_number: str,
+        port_code: str,
+        terminal: Optional[str] = None,
+    ) -> ContainerLookupResult:
+        """Query eModal API (used by TraPac, YTI, Everport, SSA, TTI, PCT).
+
+        Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/pr/emodal.html
+        """
+        from app.services.port.adapters.emodal_adapter import EModalAdapter
+
+        adapter = EModalAdapter(
+            credentials={
+                "api_key": settings.emodal_api_key,
+                "sas_token": settings.emodal_sas_token,
+                "topic": settings.emodal_topic,
+            }
+        )
+
+        try:
+            tracking = await adapter.track_container(container_number, port_code)
+            return self._convert_port_response(tracking, port_code)
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code=port_code,
+                error=str(e),
+            )
+
+    async def _query_bnsf(self, container_number: str) -> ContainerLookupResult:
+        """Query BNSF Railway for rail intermodal tracking.
+
+        Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/bnsf.html
+        """
+        from app.services.port.adapters.bnsf_adapter import BNSFAdapter
+
+        adapter = BNSFAdapter(
+            credentials={
+                "client_id": settings.bnsf_client_id,
+                "client_secret": settings.bnsf_client_secret,
+            }
+        )
+
+        try:
+            tracking = await adapter.track_container(container_number, "RAIL")
+            return self._convert_port_response(tracking, "RAIL")
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code="RAIL",
                 error=str(e),
             )
 

@@ -151,16 +151,54 @@ class Settings(BaseSettings):
     gpa_savannah_client_id: Optional[str] = None
     gpa_savannah_client_secret: Optional[str] = None
 
-    # LA/Long Beach Terminal APIs
-    # Each terminal requires separate credentials - store in integration settings per company
-    # TraPac: https://losangeles.trapac.com/
-    # Fenix Marine: https://fenixmarineservices.com/
-    # LBCT: https://www.lbct.com/
+    # LBCT (Long Beach Container Terminal) API
+    # First terminal at LA/LB to offer public API
+    # Register at: https://portal.lbct.com/
+    # Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/lbct.html
+    lbct_api_key: Optional[str] = None
+
+    # eModal API (used by multiple LA/LB terminals)
+    # Terminals: TraPac, YTI, Everport, SSA, TTI, PCT
+    # Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/pr/emodal.html
+    emodal_api_key: Optional[str] = None
+    emodal_sas_token: Optional[str] = None  # SharedAccessSignature for Service Bus
+    emodal_topic: str = "envase"  # Service Bus topic
+
+    # BNSF Railway Intermodal API (OAuth2)
+    # For tracking containers on rail
+    # Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/bnsf.html
+    bnsf_client_id: Optional[str] = None
+    bnsf_client_secret: Optional[str] = None
+
+    # Union Pacific Rail API (if available)
+    up_client_id: Optional[str] = None
+    up_client_secret: Optional[str] = None
 
     # NY/NJ Terminal APIs
     # PNCT (Ports America MTOS): https://mtosportalec.portsamerica.com/
     # APM Elizabeth: Uses apm_client_id/apm_client_secret above
     # GCT: https://www.gcterminals.com/
+
+    # ITS (International Transportation Service) - Long Beach
+    # Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/its.html
+    its_username: Optional[str] = None
+    its_password: Optional[str] = None
+
+    # ICTSI (International Container Terminal Services Inc.)
+    # Global terminal operator - uses Azure API Management
+    # Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/ictsi.html
+    ictsi_subscription_id: Optional[str] = None
+    ictsi_subscription_key: Optional[str] = None
+
+    # Florida Ports
+    # Port Everglades: Uses Tideworks scraper (pet.tideworks.io)
+    # Port Miami: APM Terminals (uses apm_client_id above)
+    # JAXPORT: SSA Marine / Various
+
+    # Terminal49 API (third-party aggregator - fallback option)
+    # Sign up at: https://terminal49.com
+    # Docs: https://terminal49.com/docs/home
+    terminal49_api_key: Optional[str] = None
 
     # Stripe Configuration for Billing
     # Test mode keys (for development/staging)
