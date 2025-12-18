@@ -25,7 +25,7 @@ import httpx
 from datetime import datetime
 from typing import Literal
 
-from app.core.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.models.integration import CompanyIntegration, Integration
 from app.core.config import get_settings
