@@ -11,6 +11,15 @@ Creates a complete demo company with:
 Run: python -m scripts.seed_demo_tenant
 """
 
+# Set up Windows-compatible event loop BEFORE any database imports
+import sys
+if sys.platform == "win32":
+    import asyncio
+    import selectors
+    selector = selectors.SelectSelector()
+    loop = asyncio.SelectorEventLoop(selector)
+    asyncio.set_event_loop(loop)
+
 import asyncio
 import random
 import uuid
@@ -22,13 +31,16 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import async_session_maker
+from app.core.db import AsyncSessionFactory
 from app.models.company import Company
 from app.models.user import User
 from app.models.driver import Driver, DriverIncident, DriverTraining
 from app.models.equipment import Equipment, EquipmentUsageEvent, EquipmentMaintenanceEvent
 from app.models.load import Load, LoadStop
 from app.models.worker import Worker, WorkerType, WorkerRole, WorkerStatus
+from app.models.billing import Subscription  # noqa: F401 - needed for SQLAlchemy relationship resolution
+from app.models.accounting import Customer, Invoice, LedgerEntry
+from app.models.fuel import FuelTransaction, JurisdictionRollup
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -36,8 +48,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 COMPANY_NAME = "Demo Freight Co."
 COMPANY_EMAIL = "demo@freightops.com"
-COMPANY_DOT = "1234567"
-COMPANY_MC = "MC-123456"
+COMPANY_DOT = "9876543"  # Unique DOT for demo tenant
+COMPANY_MC = "MC-987654"  # Unique MC for demo tenant
 
 # Owner credentials - IMPORTANT: Change in production!
 OWNER_EMAIL = "owner@demofreight.com"
@@ -155,12 +167,12 @@ async def create_company(db: AsyncSession) -> Company:
         name=COMPANY_NAME,
         email=COMPANY_EMAIL,
         phone="(555) 123-4567",
-        subscription_plan="enterprise",
-        is_active=True,
-        business_type="Trucking",
-        dot_number=COMPANY_DOT,
-        mc_number=COMPANY_MC,
-        primary_contact_name="Michael Chen",
+        subscriptionPlan="enterprise",
+        isActive=True,
+        businessType="Trucking",
+        dotNumber=COMPANY_DOT,
+        mcNumber=COMPANY_MC,
+        primaryContactName="Michael Chen",
     )
     db.add(company)
     await db.flush()
@@ -337,12 +349,13 @@ async def create_equipment(db: AsyncSession, company_id: str) -> tuple[List[Equi
 
             maint = EquipmentMaintenanceEvent(
                 id=generate_id(),
+                company_id=company_id,
                 equipment_id=truck.id,
                 service_type=random.choice(service_types),
                 service_date=service_date,
                 vendor="Fleet Maintenance Inc.",
                 cost=Decimal(str(random.randint(100, 2000))),
-                odometer_at_service=truck.current_mileage - random.randint(10000, 50000),
+                odometer=truck.current_mileage - random.randint(10000, 50000),
                 notes="Routine maintenance completed",
                 next_due_date=service_date + timedelta(days=random.randint(90, 180)),
                 next_due_mileage=truck.current_mileage + random.randint(15000, 30000),
@@ -533,9 +546,9 @@ async def seed_demo_tenant():
     print("DEMO TENANT SEED SCRIPT")
     print("=" * 60 + "\n")
 
-    async with async_session_maker() as db:
+    async with AsyncSessionFactory() as db:
         try:
-            # Check if company already exists
+            # Check if company already exists by email
             result = await db.execute(
                 select(Company).where(Company.email == COMPANY_EMAIL)
             )
@@ -544,6 +557,17 @@ async def seed_demo_tenant():
             if existing:
                 print(f"Company '{COMPANY_NAME}' already exists!")
                 print("Delete existing data first if you want to re-seed.")
+                return
+
+            # Check if company exists by DOT number
+            result = await db.execute(
+                select(Company).where(Company.dotNumber == COMPANY_DOT)
+            )
+            existing_dot = result.scalar_one_or_none()
+
+            if existing_dot:
+                print(f"Company with DOT '{COMPANY_DOT}' already exists!")
+                print("Delete existing data first or use a different DOT number.")
                 return
 
             # Create everything
@@ -581,4 +605,12 @@ async def seed_demo_tenant():
 
 
 if __name__ == "__main__":
-    asyncio.run(seed_demo_tenant())
+    if sys.platform == "win32":
+        # Event loop already set up at module load time
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(seed_demo_tenant())
+        finally:
+            loop.close()
+    else:
+        asyncio.run(seed_demo_tenant())

@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     google_ai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
 
     # Cloudflare R2 Storage Configuration
     r2_account_id: Optional[str] = None
