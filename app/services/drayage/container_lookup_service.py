@@ -285,7 +285,16 @@ class ContainerLookupService:
             except Exception:
                 pass
 
-        # 4. Fallback to generic LA/LB adapter
+        # 4. Try ITS for Long Beach
+        if terminal_lower == "its" or (settings.its_username and settings.its_password):
+            try:
+                result = await self._query_its(container_number)
+                if result.success:
+                    return result
+            except Exception:
+                pass
+
+        # 5. Fallback to generic LA/LB adapter
         from app.services.port.adapters.la_lb_adapter import LALBAdapter
         adapter = LALBAdapter()
 
@@ -468,6 +477,91 @@ class ContainerLookupService:
                 success=False,
                 container_number=container_number,
                 port_code="RAIL",
+                error=str(e),
+            )
+
+    async def _query_port_everglades(self, container_number: str) -> ContainerLookupResult:
+        """Query Port Everglades via Tideworks scraper.
+
+        Port Everglades Terminal uses Tideworks: https://pet.tideworks.io/fc-PET-AWS
+        """
+        from app.services.port.adapters.tideworks_scraper import TideworksScraper
+
+        adapter = TideworksScraper()
+
+        try:
+            tracking = await adapter.track_container(container_number, "USPEF")
+            return self._convert_port_response(tracking, "USPEF")
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code="USPEF",
+                error=str(e),
+            )
+
+    async def _query_port_miami(self, container_number: str) -> ContainerLookupResult:
+        """Query Port Miami via APM Terminals.
+
+        Port Miami has APM Terminals facility.
+        """
+        from app.services.port.adapters.apm_terminals_adapter import APMTerminalsAdapter
+
+        adapter = APMTerminalsAdapter(
+            credentials={
+                "client_id": settings.apm_client_id,
+                "client_secret": settings.apm_client_secret,
+            }
+        )
+
+        try:
+            tracking = await adapter.track_container(container_number, "USMIA")
+            return self._convert_port_response(tracking, "USMIA")
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code="USMIA",
+                error=str(e),
+            )
+
+    async def _query_jaxport(self, container_number: str) -> ContainerLookupResult:
+        """Query JAXPORT (Jacksonville).
+
+        JAXPORT has SSA Marine at Blount Island.
+        Falls back to generic lookup if no specific adapter available.
+        """
+        # JAXPORT doesn't have a known public API yet
+        # Return not found - can be enhanced when API becomes available
+        return ContainerLookupResult(
+            success=False,
+            container_number=container_number,
+            port_code="USJAX",
+            error="JAXPORT API not yet available. Contact terminal directly.",
+        )
+
+    async def _query_its(self, container_number: str) -> ContainerLookupResult:
+        """Query ITS (International Transportation Service) Long Beach.
+
+        Docs: http://coredocs.envaseconnect.cloud/track-trace/providers/rt/its.html
+        """
+        from app.services.port.adapters.its_adapter import ITSAdapter
+
+        adapter = ITSAdapter(
+            credentials={
+                "username": settings.its_username,
+                "password": settings.its_password,
+            }
+        )
+
+        try:
+            tracking = await adapter.track_container(container_number, "USLGB")
+            return self._convert_port_response(tracking, "USLGB")
+        except Exception as e:
+            return ContainerLookupResult(
+                success=False,
+                container_number=container_number,
+                port_code="USLGB",
                 error=str(e),
             )
 
