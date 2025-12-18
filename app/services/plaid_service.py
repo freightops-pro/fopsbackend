@@ -40,27 +40,28 @@ class PlaidService:
     """
 
     def __init__(self):
-        # Configure Plaid client
+        # Configure Plaid client using settings (with env var fallback)
         configuration = Configuration(
             host=self._get_plaid_host(),
             api_key={
-                'clientId': os.getenv('PLAID_CLIENT_ID'),
-                'secret': os.getenv('PLAID_SECRET'),
+                'clientId': settings.plaid_client_id or os.getenv('PLAID_CLIENT_ID'),
+                'secret': settings.plaid_secret or os.getenv('PLAID_SECRET'),
             }
         )
 
         api_client = ApiClient(configuration)
         self.client = plaid_api.PlaidApi(api_client)
 
-        # Encryption key for access tokens
-        encryption_key = os.getenv('PLAID_ENCRYPTION_KEY')
+        # Encryption key for access tokens (with env var fallback)
+        encryption_key = settings.plaid_encryption_key or os.getenv('PLAID_ENCRYPTION_KEY')
         if not encryption_key:
             raise ValueError("PLAID_ENCRYPTION_KEY not set - required for token encryption")
         self.cipher = Fernet(encryption_key.encode())
 
     def _get_plaid_host(self) -> str:
         """Get Plaid API host based on environment."""
-        env = os.getenv('PLAID_ENV', 'sandbox')
+        # Use settings.plaid_environment, with fallback to PLAID_ENVIRONMENT or PLAID_ENV env vars
+        env = settings.plaid_environment or os.getenv('PLAID_ENVIRONMENT') or os.getenv('PLAID_ENV', 'sandbox')
         hosts = {
             'sandbox': 'https://sandbox.plaid.com',
             'development': 'https://development.plaid.com',

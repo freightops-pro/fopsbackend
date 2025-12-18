@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     r2_endpoint_url: Optional[str] = None  # e.g., "https://<account-id>.r2.cloudflarestorage.com"
     r2_public_url: Optional[str] = None  # Public CDN URL if using custom domain, e.g., "https://files.yourdomain.com"
 
+    # Synctera Banking API Configuration
+    # Sign up at: https://synctera.com/sandbox
+    # Docs: https://dev.synctera.com/
+    synctera_api_key: Optional[str] = None
+    synctera_api_url: str = "https://api.synctera.com"
+    synctera_environment: str = "sandbox"  # sandbox or production
+    synctera_webhook_secret: Optional[str] = None
+
+    # Plaid External Bank Integration
+    # Sign up at: https://dashboard.plaid.com/signup
+    # Docs: https://plaid.com/docs/
+    plaid_client_id: Optional[str] = None
+    plaid_secret: Optional[str] = None
+    plaid_environment: str = "sandbox"  # sandbox, development, or production
+    plaid_encryption_key: Optional[str] = None  # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
     # Port Integration Configuration
     port_tracking_cache_ttl_seconds: int = 300  # 5 minutes cache for container tracking
     port_api_rate_limit_per_minute: int = 60  # Default rate limit per port API

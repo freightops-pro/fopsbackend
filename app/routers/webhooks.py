@@ -3,7 +3,9 @@
 import hmac
 import hashlib
 import logging
+from datetime import datetime
 from typing import Any, Dict, Optional
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from sqlalchemy import select
@@ -11,11 +13,305 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.core.db import get_db
+from app.core.config import get_settings
 from app.models.integration import CompanyIntegration, Integration
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter()
+
+
+# =============================================================================
+# Synctera Banking Webhooks
+# =============================================================================
+
+@router.post("/synctera")
+async def handle_synctera_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    x_synctera_signature: Optional[str] = Header(None, alias="X-Synctera-Signature"),
+    x_synctera_timestamp: Optional[str] = Header(None, alias="X-Synctera-Timestamp"),
+) -> Dict[str, Any]:
+    """
+    Handle webhooks from Synctera Banking-as-a-Service.
+
+    Events include:
+    - BUSINESS.VERIFICATION_RESULT: KYB verification completed
+    - PERSON.VERIFICATION_RESULT: KYC verification completed
+    - ACCOUNT.STATUS_CHANGE: Account status changed
+    - CARD.STATUS_CHANGE: Card status changed
+    - TRANSACTION.CREATED/UPDATED: Transaction events
+    """
+    body = await request.body()
+
+    # Verify webhook signature if configured
+    if settings.synctera_webhook_secret:
+        if not x_synctera_signature or not x_synctera_timestamp:
+            logger.warning("Synctera webhook missing signature headers")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing webhook signature",
+            )
+
+        from app.services.synctera_service import get_synctera_client
+        synctera = get_synctera_client()
+        if not synctera.verify_webhook_signature(body, x_synctera_signature, x_synctera_timestamp):
+            logger.warning("Synctera webhook signature verification failed")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid webhook signature",
+            )
+
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse Synctera webhook: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
+
+    event_type = payload.get("event_type", "")
+    event_id = payload.get("id", "unknown")
+    data = payload.get("data", {})
+
+    logger.info(f"Received Synctera webhook: {event_type} (id: {event_id})")
+
+    try:
+        if event_type == "BUSINESS.VERIFICATION_RESULT":
+            await _handle_synctera_business_verification(data, db)
+        elif event_type == "PERSON.VERIFICATION_RESULT":
+            await _handle_synctera_person_verification(data, db)
+        elif event_type == "ACCOUNT.STATUS_CHANGE":
+            await _handle_synctera_account_status(data, db)
+        elif event_type == "CARD.STATUS_CHANGE":
+            await _handle_synctera_card_status(data, db)
+        elif event_type.startswith("TRANSACTION."):
+            await _handle_synctera_transaction(event_type, data, db)
+        else:
+            logger.info(f"Unhandled Synctera event type: {event_type}")
+
+        return {"status": "ok", "event_id": event_id}
+
+    except Exception as e:
+        logger.error(f"Error processing Synctera webhook {event_type}: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+async def _handle_synctera_business_verification(data: Dict[str, Any], db: AsyncSession) -> None:
+    """Handle business KYB verification result from Synctera."""
+    from app.models.banking import BankingApplication, BankingCustomer
+
+    business_id = data.get("business_id") or data.get("id")
+    verification_status = data.get("verification_status", "").upper()
+
+    logger.info(f"Synctera business {business_id} verification: {verification_status}")
+
+    # Map Synctera status to our status
+    kyc_status_map = {
+        "VERIFIED": "passed",
+        "PROVISIONAL": "provisional",
+        "PENDING": "pending",
+        "REVIEW": "review",
+        "REJECTED": "failed",
+        "UNVERIFIED": "unverified",
+    }
+    kyc_status = kyc_status_map.get(verification_status, "unknown")
+
+    # Find application with this Synctera business ID
+    result = await db.execute(
+        select(BankingApplication).where(
+            BankingApplication.synctera_business_id == business_id
+        )
+    )
+    application = result.scalar_one_or_none()
+
+    if application:
+        application.kyc_status = kyc_status
+        application.kyc_completed_at = datetime.utcnow()
+
+        if verification_status == "VERIFIED":
+            application.status = "approved"
+            application.reviewed_at = datetime.utcnow()
+
+            # Create banking customer record
+            existing = await db.execute(
+                select(BankingCustomer).where(BankingCustomer.company_id == application.company_id)
+            )
+            customer = existing.scalar_one_or_none()
+
+            if not customer:
+                customer = BankingCustomer(
+                    id=str(uuid.uuid4()),
+                    company_id=application.company_id,
+                    synctera_business_id=business_id,
+                    status="active",
+                    kyb_status="verified",
+                )
+                db.add(customer)
+            else:
+                customer.synctera_business_id = business_id
+                customer.status = "active"
+                customer.kyb_status = "verified"
+
+        elif verification_status == "REJECTED":
+            application.status = "rejected"
+            application.reviewed_at = datetime.utcnow()
+            application.rejection_reason = data.get("rejection_reason", "KYB verification failed")
+
+        await db.commit()
+        logger.info(f"Updated application {application.reference}: {application.status}")
+    else:
+        logger.warning(f"No application found for Synctera business {business_id}")
+
+
+async def _handle_synctera_person_verification(data: Dict[str, Any], db: AsyncSession) -> None:
+    """Handle person KYC verification result from Synctera."""
+    person_id = data.get("person_id") or data.get("id")
+    verification_status = data.get("verification_status", "").upper()
+    logger.info(f"Synctera person {person_id} verification: {verification_status}")
+    # Person verification is logged but doesn't directly affect application status
+
+
+async def _handle_synctera_account_status(data: Dict[str, Any], db: AsyncSession) -> None:
+    """Handle account status change from Synctera."""
+    from app.models.banking import BankingAccount
+
+    account_id = data.get("id")
+    new_status = data.get("status", "").lower()
+
+    logger.info(f"Synctera account {account_id} status: {new_status}")
+
+    result = await db.execute(
+        select(BankingAccount).where(BankingAccount.synctera_id == account_id)
+    )
+    account = result.scalar_one_or_none()
+
+    if account:
+        account.status = new_status
+        account.updated_at = datetime.utcnow()
+        await db.commit()
+
+
+async def _handle_synctera_card_status(data: Dict[str, Any], db: AsyncSession) -> None:
+    """Handle card status change from Synctera."""
+    from app.models.banking import BankingCard
+
+    card_id = data.get("id")
+    new_status = data.get("status", "").lower()
+
+    logger.info(f"Synctera card {card_id} status: {new_status}")
+
+    result = await db.execute(
+        select(BankingCard).where(BankingCard.synctera_id == card_id)
+    )
+    card = result.scalar_one_or_none()
+
+    if card:
+        card.status = new_status
+        card.updated_at = datetime.utcnow()
+        await db.commit()
+
+
+async def _handle_synctera_transaction(event_type: str, data: Dict[str, Any], db: AsyncSession) -> None:
+    """Handle transaction events from Synctera."""
+    transaction_id = data.get("id")
+    account_id = data.get("account_id")
+    logger.info(f"Synctera transaction {event_type}: {transaction_id} on account {account_id}")
+    # Log for now - in production, sync to local transaction table
+
+
+# =============================================================================
+# Plaid Banking Webhooks
+# =============================================================================
+
+@router.post("/plaid")
+async def handle_plaid_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Handle webhooks from Plaid for external bank connections.
+
+    Events include:
+    - TRANSACTIONS: New transactions available
+    - ITEM: Item status changes (connection issues)
+    - AUTH: Auth data updates
+    """
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse Plaid webhook: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
+
+    webhook_type = payload.get("webhook_type", "")
+    webhook_code = payload.get("webhook_code", "")
+    item_id = payload.get("item_id", "")
+
+    logger.info(f"Received Plaid webhook: {webhook_type}.{webhook_code} for item {item_id}")
+
+    if webhook_type == "TRANSACTIONS":
+        if webhook_code in ("INITIAL_UPDATE", "HISTORICAL_UPDATE", "DEFAULT_UPDATE", "SYNC_UPDATES_AVAILABLE"):
+            logger.info(f"Plaid transaction update available for item {item_id}")
+            # TODO: Queue transaction sync job
+
+    elif webhook_type == "ITEM":
+        if webhook_code == "ERROR":
+            error = payload.get("error", {})
+            logger.error(f"Plaid item error for {item_id}: {error}")
+        elif webhook_code == "PENDING_EXPIRATION":
+            logger.warning(f"Plaid item {item_id} access token expiring")
+
+    return {"status": "ok"}
+
+
+# =============================================================================
+# Stripe Billing Webhooks
+# =============================================================================
+
+@router.post("/stripe")
+async def handle_stripe_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    stripe_signature: Optional[str] = Header(None, alias="Stripe-Signature"),
+) -> Dict[str, Any]:
+    """Handle webhooks from Stripe for billing events."""
+    body = await request.body()
+
+    webhook_secret = settings.get_stripe_webhook_secret()
+    if webhook_secret and stripe_signature:
+        try:
+            import stripe
+            event = stripe.Webhook.construct_event(body, stripe_signature, webhook_secret)
+        except Exception as e:
+            logger.error(f"Stripe webhook signature verification failed: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+    else:
+        try:
+            import json
+            event = json.loads(body)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
+
+    event_type = event.get("type", "")
+    logger.info(f"Received Stripe webhook: {event_type}")
+
+    # Handle billing events (implement as needed)
+    if event_type == "customer.subscription.created":
+        pass
+    elif event_type == "customer.subscription.updated":
+        pass
+    elif event_type == "customer.subscription.deleted":
+        pass
+    elif event_type == "invoice.paid":
+        pass
+    elif event_type == "invoice.payment_failed":
+        pass
+
+    return {"status": "ok"}
+
+
+# =============================================================================
+# Motive ELD Webhooks (existing)
+# =============================================================================
 
 
 async def _company_id(current_user=Depends(deps.get_current_user)) -> str:

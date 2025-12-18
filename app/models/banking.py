@@ -11,6 +11,8 @@ class BankingCustomer(Base):
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
     status = Column(String, nullable=False, default="pending")
     external_id = Column(String, nullable=True, unique=True)
+    synctera_business_id = Column(String, nullable=True, unique=True, index=True)  # Synctera business ID
+    kyb_status = Column(String, nullable=True)  # pending, verified, rejected
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -27,8 +29,13 @@ class BankingAccount(Base):
     nickname = Column(String, nullable=True)
     currency = Column(String, nullable=False, default="USD")
     balance = Column(Numeric(14, 2), nullable=False, default=0)
+    current_balance = Column(Numeric(14, 2), nullable=True)  # Current balance from Synctera
+    available_balance = Column(Numeric(14, 2), nullable=True)  # Available balance from Synctera
     status = Column(String, nullable=False, default="inactive")
     external_id = Column(String, nullable=True, unique=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera account ID
+    account_number = Column(String, nullable=True)  # Masked account number
+    routing_number = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -44,11 +51,15 @@ class BankingCard(Base):
     account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
     cardholder_name = Column(String, nullable=False)
     last_four = Column(String, nullable=False)
-    card_type = Column(String, nullable=False)
+    card_type = Column(String, nullable=False)  # virtual, physical
+    card_form = Column(String, nullable=True)  # VIRTUAL, PHYSICAL
     status = Column(String, nullable=False, default="inactive")
     expiration_month = Column(String, nullable=True)
     expiration_year = Column(String, nullable=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera card ID
+    card_product_id = Column(String, nullable=True)  # Synctera card product ID
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     account = relationship("BankingAccount", back_populates="cards")
 
@@ -83,7 +94,7 @@ class BankingApplication(Base):
     id = Column(String, primary_key=True)
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
     reference = Column(String, nullable=False, unique=True, index=True)
-    status = Column(String, nullable=False, default="draft")  # draft, submitted, pending_review, approved, rejected, needs_info
+    status = Column(String, nullable=False, default="draft")  # draft, submitted, pending_review, approved, rejected, needs_info, synctera_error
 
     # Primary applicant reference
     primary_person_id = Column(String, ForeignKey("banking_person.id"), nullable=True)
@@ -91,8 +102,11 @@ class BankingApplication(Base):
     # Account selection preferences (JSON)
     account_choices = Column(JSON, nullable=True)
 
+    # Synctera integration
+    synctera_business_id = Column(String, nullable=True, index=True)  # Synctera business ID after submission
+
     # KYC/KYB status tracking
-    kyc_status = Column(String, nullable=True)  # pending, passed, failed, needs_review
+    kyc_status = Column(String, nullable=True)  # pending, passed, failed, needs_review, provisional, error
     kyc_provider_ref = Column(String, nullable=True)  # External KYC provider reference
     kyc_completed_at = Column(DateTime, nullable=True)
 
@@ -118,6 +132,7 @@ class BankingBusiness(Base):
 
     id = Column(String, primary_key=True)
     application_id = Column(String, ForeignKey("banking_application.id"), nullable=False, unique=True, index=True)
+    synctera_id = Column(String, nullable=True, index=True)  # Synctera business ID
 
     # Core business info
     legal_name = Column(String, nullable=False)
@@ -160,6 +175,7 @@ class BankingPerson(Base):
 
     id = Column(String, primary_key=True)
     application_id = Column(String, ForeignKey("banking_application.id"), nullable=False, index=True)
+    synctera_id = Column(String, nullable=True, index=True)  # Synctera person ID
 
     # Person type: primary, owner, signer
     person_type = Column(String, nullable=False)

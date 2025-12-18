@@ -1,15 +1,16 @@
 import logging
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List
+from datetime import datetime, date
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.core.db import get_db
+from app.core.config import get_settings
 from app.models.banking import (
     BankingApplication,
     BankingApplicationDocument,
@@ -33,10 +34,26 @@ from app.schemas.banking import (
     PersonResponse,
 )
 from app.services.banking import BankingService
+from app.services.synctera_service import (
+    get_synctera_client,
+    SyncteraClient,
+    SyncteraError,
+    BusinessCreateRequest,
+    PersonCreateRequest,
+    AccountCreateRequest,
+    CardCreateRequest,
+    AddressRequest,
+)
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter()
+
+
+def _get_synctera() -> SyncteraClient:
+    """Get Synctera client dependency."""
+    return get_synctera_client()
 
 
 async def _service(db: AsyncSession = Depends(get_db)) -> BankingService:
@@ -54,6 +71,185 @@ async def ensure_customer(
     service: BankingService = Depends(_service),
 ) -> BankingCustomerResponse:
     return await service.ensure_customer(company_id, payload)
+
+
+# =============================================================================
+# Banking Status Endpoints (Required by Frontend)
+# =============================================================================
+
+
+@router.get("/activation-status")
+async def get_activation_status(
+    company_id: str = Depends(_company_id),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get banking activation status for current company."""
+    from app.models.banking import BankingCustomer
+
+    result = await db.execute(
+        select(BankingCustomer).where(BankingCustomer.company_id == company_id)
+    )
+    customer = result.scalar_one_or_none()
+
+    # Check for any applications
+    app_result = await db.execute(
+        select(BankingApplication)
+        .where(BankingApplication.company_id == company_id)
+        .order_by(BankingApplication.created_at.desc())
+    )
+    applications = app_result.scalars().all()
+    latest_app = applications[0] if applications else None
+
+    if not customer and not latest_app:
+        return {
+            "status": "not_started",
+            "has_customer": False,
+            "has_application": False,
+            "message": "Banking not set up. Submit an application to get started.",
+        }
+
+    if latest_app:
+        app_status = latest_app.status
+        if app_status == "approved":
+            return {
+                "status": "approved",
+                "has_customer": customer is not None,
+                "has_application": True,
+                "application_id": latest_app.id,
+                "message": "Banking application approved. You can now create accounts.",
+            }
+        elif app_status == "rejected":
+            return {
+                "status": "rejected",
+                "has_customer": customer is not None,
+                "has_application": True,
+                "application_id": latest_app.id,
+                "rejection_reason": latest_app.rejection_reason,
+                "message": "Banking application was rejected.",
+            }
+        elif app_status in ("submitted", "pending_review"):
+            return {
+                "status": "pending_review",
+                "has_customer": customer is not None,
+                "has_application": True,
+                "application_id": latest_app.id,
+                "message": "Banking application is under review.",
+            }
+        else:
+            return {
+                "status": "draft",
+                "has_customer": customer is not None,
+                "has_application": True,
+                "application_id": latest_app.id,
+                "message": "Complete and submit your banking application.",
+            }
+
+    return {
+        "status": "pending",
+        "has_customer": True,
+        "has_application": False,
+        "customer_id": customer.id if customer else None,
+        "message": "Banking customer exists but no application submitted.",
+    }
+
+
+@router.get("/status/{company_id}")
+async def get_banking_status(
+    company_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
+) -> Dict[str, Any]:
+    """Get comprehensive banking status for a company."""
+    from app.models.banking import BankingCustomer, BankingAccount
+
+    # Check customer
+    cust_result = await db.execute(
+        select(BankingCustomer).where(BankingCustomer.company_id == company_id)
+    )
+    customer = cust_result.scalar_one_or_none()
+
+    # Check applications
+    app_result = await db.execute(
+        select(BankingApplication)
+        .where(BankingApplication.company_id == company_id)
+        .order_by(BankingApplication.created_at.desc())
+    )
+    applications = app_result.scalars().all()
+    latest_app = applications[0] if applications else None
+
+    # Check accounts
+    accounts_count = 0
+    if customer:
+        acc_result = await db.execute(
+            select(BankingAccount).where(BankingAccount.company_id == company_id)
+        )
+        accounts_count = len(acc_result.scalars().all())
+
+    return {
+        "has_customer": customer is not None,
+        "customer_id": customer.id if customer else None,
+        "customer_status": customer.status if customer else None,
+        "has_application": latest_app is not None,
+        "application_status": latest_app.status if latest_app else None,
+        "kyc_status": latest_app.kyc_status if latest_app else None,
+        "has_accounts": accounts_count > 0,
+        "accounts_count": accounts_count,
+    }
+
+
+@router.get("/customers/company/{company_id}", response_model=BankingCustomerResponse)
+async def get_customer_by_company(
+    company_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
+) -> BankingCustomerResponse:
+    """Get banking customer by company ID."""
+    from app.models.banking import BankingCustomer
+
+    result = await db.execute(
+        select(BankingCustomer).where(BankingCustomer.company_id == company_id)
+    )
+    customer = result.scalar_one_or_none()
+
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Banking customer not found for this company",
+        )
+
+    return BankingCustomerResponse.model_validate(customer)
+
+
+@router.get("/customers/{customer_id}/accounts")
+async def get_customer_accounts(
+    customer_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
+) -> Dict[str, Any]:
+    """Get all accounts for a banking customer."""
+    from app.models.banking import BankingAccount
+
+    result = await db.execute(
+        select(BankingAccount)
+        .where(BankingAccount.customer_id == customer_id)
+        .order_by(BankingAccount.created_at.desc())
+    )
+    accounts = result.scalars().all()
+
+    return {
+        "accounts": [BankingAccountResponse.model_validate(acc) for acc in accounts],
+        "total": len(accounts),
+    }
+
+
+@router.post("/cards", response_model=BankingCardResponse, status_code=status.HTTP_201_CREATED)
+async def create_card(
+    payload: BankingCardCreate,
+    service: BankingService = Depends(_service),
+    current_user=Depends(deps.get_current_user),
+) -> BankingCardResponse:
+    """Create a new card for an account."""
+    return await service.issue_card(payload)
 
 
 @router.get("/accounts", response_model=List[BankingAccountResponse])
@@ -197,13 +393,121 @@ async def get_application(
     return _build_application_response(app)
 
 
+async def _submit_to_synctera(
+    app: BankingApplication,
+    db: AsyncSession,
+) -> None:
+    """
+    Background task to submit application to Synctera for KYB verification.
+
+    This creates the business and persons in Synctera and triggers verification.
+    """
+    synctera = get_synctera_client()
+
+    if not synctera.is_configured:
+        logger.warning("Synctera not configured - skipping KYB submission")
+        app.kyc_status = "pending_manual_review"
+        await db.commit()
+        return
+
+    try:
+        # Parse address from JSON string if needed
+        physical_address = app.business.physical_address
+        if isinstance(physical_address, str):
+            import json
+            physical_address = json.loads(physical_address)
+
+        # Create business in Synctera
+        business_request = BusinessCreateRequest(
+            legal_name=app.business.legal_name,
+            doing_business_as=app.business.dba,
+            entity_type=app.business.entity_type or "LLC",
+            ein=app.business.ein or "",
+            formation_date=app.business.formation_date,
+            formation_state=app.business.state_of_formation,
+            legal_address=AddressRequest(
+                address_line_1=physical_address.get("line1", ""),
+                address_line_2=physical_address.get("line2"),
+                city=physical_address.get("city", ""),
+                state=physical_address.get("state", ""),
+                postal_code=physical_address.get("zip", ""),
+                country_code="US",
+            ),
+            phone_number=app.business.phone,
+            website=app.business.website,
+            naics_code=app.business.naics_code,
+            industry=app.business.industry_description,
+        )
+
+        synctera_business = await synctera.create_business(business_request)
+        synctera_business_id = synctera_business.get("id")
+
+        # Store Synctera business ID
+        app.business.synctera_id = synctera_business_id
+        app.synctera_business_id = synctera_business_id
+
+        # Create persons in Synctera (primary applicant and owners)
+        for person in app.people:
+            person_address = person.address
+            if isinstance(person_address, str):
+                import json
+                person_address = json.loads(person_address)
+
+            person_request = PersonCreateRequest(
+                first_name=person.first_name,
+                last_name=person.last_name,
+                dob=person.dob or date(1980, 1, 1),  # Default if not provided
+                ssn_last_4=person.ssn_last4,
+                email=person.email or "",
+                phone_number=person.phone,
+                legal_address=AddressRequest(
+                    address_line_1=person_address.get("line1", "") if person_address else "",
+                    address_line_2=person_address.get("line2") if person_address else None,
+                    city=person_address.get("city", "") if person_address else "",
+                    state=person_address.get("state", "") if person_address else "",
+                    postal_code=person_address.get("zip", "") if person_address else "",
+                    country_code="US",
+                ),
+                is_customer=True,
+            )
+
+            synctera_person = await synctera.create_person(
+                person_request,
+                business_id=synctera_business_id,
+            )
+            person.synctera_id = synctera_person.get("id")
+
+        # Trigger KYB verification
+        await synctera.verify_business(synctera_business_id)
+
+        # Update application status
+        app.status = "pending_review"
+        app.kyc_status = "pending"
+
+        await db.commit()
+        logger.info(f"Submitted application {app.reference} to Synctera (business_id: {synctera_business_id})")
+
+    except SyncteraError as e:
+        logger.error(f"Synctera submission failed for {app.reference}: {e.message}")
+        app.status = "synctera_error"
+        app.kyc_status = "error"
+        app.rejection_reason = f"Synctera error: {e.message}"
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to submit {app.reference} to Synctera: {e}", exc_info=True)
+        app.status = "error"
+        app.kyc_status = "error"
+        await db.commit()
+
+
 @router.post("/applications", response_model=BankingApplicationResponse, status_code=status.HTTP_201_CREATED)
 async def create_application(
     payload: BankingApplicationCreate,
+    background_tasks: BackgroundTasks,
     company_id: str = Depends(_company_id),
     db: AsyncSession = Depends(get_db),
 ) -> BankingApplicationResponse:
-    """Create a new banking application with all KYB data."""
+    """Create a new banking application with all KYB data and submit to Synctera."""
     try:
         # Create application record
         app_id = str(uuid.uuid4())
@@ -331,8 +635,15 @@ async def create_application(
 
         logger.info(f"Created banking application {app.reference} for company {company_id}")
 
-        # TODO: Queue KYC/OFAC screening job here
-        # await queue_kyc_check(app)
+        # Submit to Synctera in background (non-blocking)
+        # Note: For production, consider using a proper task queue (Celery, etc.)
+        synctera = get_synctera_client()
+        if synctera.is_configured:
+            # For now, do it inline since background tasks with DB sessions are tricky
+            await _submit_to_synctera(app, db)
+
+        # Reload after Synctera submission
+        await db.refresh(app)
 
         return _build_application_response(app)
 
