@@ -538,9 +538,169 @@ async def create_workers(db: AsyncSession, company_id: str, drivers: List[Driver
     return workers
 
 
+async def create_customers(db: AsyncSession, company_id: str) -> List[Customer]:
+    """Create customer records for the loads."""
+    customers = []
+    payment_terms = ["NET_30", "NET_15", "NET_45", "DUE_ON_RECEIPT"]
+
+    for customer_name in CUSTOMERS:
+        customer = Customer(
+            id=generate_id(),
+            company_id=company_id,
+            name=customer_name,
+            legal_name=f"{customer_name} LLC",
+            primary_contact_name=f"{random.choice(DRIVER_FIRST_NAMES)} {random.choice(DRIVER_LAST_NAMES)}",
+            primary_contact_email=f"logistics@{customer_name.lower().replace(' ', '')}.com",
+            primary_contact_phone=f"(555) {random.randint(100, 999)}-{random.randint(1000, 9999)}",
+            payment_terms=random.choice(payment_terms),
+            credit_limit=Decimal(str(random.randint(50000, 500000))),
+            status="active",
+            is_active=True,
+        )
+        db.add(customer)
+        customers.append(customer)
+
+    await db.flush()
+    print(f"Created {len(customers)} customers")
+    return customers
+
+
+async def create_fuel_transactions(
+    db: AsyncSession,
+    company_id: str,
+    drivers: List[Driver],
+    trucks: List[Equipment],
+    loads: List[Load],
+) -> List[FuelTransaction]:
+    """Create fuel transaction records for IFTA and expense tracking."""
+    transactions = []
+    today = date.today()
+
+    # State jurisdictions for IFTA
+    jurisdictions = ["CA", "AZ", "NV", "TX", "NM", "CO", "UT", "OR", "WA", "OK"]
+    fuel_stations = [
+        "Pilot Flying J", "Love's Travel Stop", "TA Petro", "Sapp Bros",
+        "Kwik Trip", "Buc-ee's", "Casey's", "Circle K"
+    ]
+
+    # Create fuel transactions for the past 6 months
+    for i in range(400):  # ~400 fuel stops over 6 months
+        transaction_date = today - timedelta(days=random.randint(1, 180))
+        gallons = Decimal(str(round(random.uniform(80, 250), 1)))
+        price_per_gallon = Decimal(str(round(random.uniform(3.20, 4.50), 3)))
+
+        transaction = FuelTransaction(
+            id=generate_id(),
+            company_id=company_id,
+            driver_id=random.choice(drivers).id,
+            truck_id=random.choice(trucks).id,
+            load_id=random.choice(loads).id if loads and random.random() > 0.3 else None,
+            transaction_date=transaction_date,
+            jurisdiction=random.choice(jurisdictions),
+            location=f"{random.choice(fuel_stations)} - {random.choice(['Exit 42', 'Exit 156', 'Exit 89', 'I-40 West', 'I-10 East'])}",
+            gallons=gallons,
+            cost=gallons * price_per_gallon,
+            price_per_gallon=price_per_gallon,
+            fuel_card=f"****{random.randint(1000, 9999)}",
+            status="posted",
+        )
+        db.add(transaction)
+        transactions.append(transaction)
+
+    await db.flush()
+    print(f"Created {len(transactions)} fuel transactions")
+    return transactions
+
+
+async def create_ifta_rollups(
+    db: AsyncSession,
+    company_id: str,
+) -> List[JurisdictionRollup]:
+    """Create IFTA jurisdiction rollup records for quarterly reporting."""
+    rollups = []
+    today = date.today()
+
+    # Jurisdictions and tax rates
+    jurisdictions = {
+        "CA": Decimal("0.539"), "AZ": Decimal("0.18"), "NV": Decimal("0.27"),
+        "TX": Decimal("0.20"), "NM": Decimal("0.185"), "CO": Decimal("0.205"),
+        "UT": Decimal("0.315"), "OR": Decimal("0.38"), "WA": Decimal("0.494"),
+        "OK": Decimal("0.19"),
+    }
+
+    # Create rollups for last 2 quarters
+    quarters = [
+        (date(2025, 7, 1), date(2025, 9, 30)),  # Q3
+        (date(2025, 10, 1), date(2025, 12, 31)),  # Q4
+    ]
+
+    for period_start, period_end in quarters:
+        for jurisdiction, tax_rate in jurisdictions.items():
+            miles = Decimal(str(random.randint(5000, 50000)))
+            gallons = miles / Decimal("6.5")  # ~6.5 MPG for trucks
+            taxable_gallons = gallons * Decimal("0.95")  # 95% taxable
+
+            rollup = JurisdictionRollup(
+                id=generate_id(),
+                company_id=company_id,
+                period_start=period_start,
+                period_end=period_end,
+                jurisdiction=jurisdiction,
+                gallons=round(gallons, 3),
+                taxable_gallons=round(taxable_gallons, 3),
+                miles=round(miles, 1),
+                tax_due=round(taxable_gallons * tax_rate, 2),
+                last_trip_date=period_end - timedelta(days=random.randint(1, 30)),
+            )
+            db.add(rollup)
+            rollups.append(rollup)
+
+    await db.flush()
+    print(f"Created {len(rollups)} IFTA jurisdiction rollups")
+    return rollups
+
+
+async def create_invoices(
+    db: AsyncSession,
+    company_id: str,
+    loads: List[Load],
+) -> List[Invoice]:
+    """Create invoice records for completed loads."""
+    invoices = []
+    invoice_num = 1000
+
+    # Create invoices for completed/invoiced/paid loads
+    for load in loads:
+        if load.status in ["invoiced", "paid", "delivered"]:
+            invoice = Invoice(
+                id=generate_id(),
+                company_id=company_id,
+                load_id=load.id,
+                invoice_number=f"INV-{invoice_num:05d}",
+                invoice_date=load.created_at.date() if load.created_at else date.today(),
+                status="paid" if load.status == "paid" else "sent",
+                subtotal=load.base_rate,
+                tax=Decimal("0"),
+                total=load.base_rate,
+                line_items=[{
+                    "description": f"Freight - {load.customer_name}",
+                    "quantity": 1,
+                    "rate": float(load.base_rate),
+                    "amount": float(load.base_rate),
+                }],
+            )
+            db.add(invoice)
+            invoices.append(invoice)
+            invoice_num += 1
+
+    await db.flush()
+    print(f"Created {len(invoices)} invoices")
+    return invoices
+
+
 # ============== MAIN ==============
 
-async def seed_demo_tenant():
+async def seed_demo_tenant(force: bool = False):
     """Main function to seed demo tenant."""
     print("\n" + "=" * 60)
     print("DEMO TENANT SEED SCRIPT")
@@ -555,9 +715,45 @@ async def seed_demo_tenant():
             existing = result.scalar_one_or_none()
 
             if existing:
-                print(f"Company '{COMPANY_NAME}' already exists!")
-                print("Delete existing data first if you want to re-seed.")
-                return
+                if force:
+                    print(f"Deleting existing company '{COMPANY_NAME}' and all related data...")
+                    company_id = existing.id
+                    # Delete in order to avoid FK constraints - handle missing tables gracefully
+                    from sqlalchemy import text
+                    delete_queries = [
+                        "DELETE FROM accounting_invoice WHERE company_id = :cid",
+                        "DELETE FROM accounting_ledger_entry WHERE company_id = :cid",
+                        "DELETE FROM accounting_settlement WHERE company_id = :cid",
+                        "DELETE FROM accounting_customer WHERE company_id = :cid",
+                        "DELETE FROM fuel_transaction WHERE company_id = :cid",
+                        "DELETE FROM jurisdiction_rollup WHERE company_id = :cid",
+                        "DELETE FROM freight_load_stop WHERE load_id IN (SELECT id FROM freight_load WHERE company_id = :cid)",
+                        "DELETE FROM freight_load WHERE company_id = :cid",
+                        "DELETE FROM fleet_equipment_maintenance WHERE company_id = :cid",
+                        "DELETE FROM fleet_equipment_usage WHERE company_id = :cid",
+                        "DELETE FROM fleet_equipment WHERE company_id = :cid",
+                        "DELETE FROM driverincident WHERE driver_id IN (SELECT id FROM driver WHERE company_id = :cid)",
+                        "DELETE FROM drivertraining WHERE driver_id IN (SELECT id FROM driver WHERE company_id = :cid)",
+                        "DELETE FROM driver WHERE company_id = :cid",
+                        "DELETE FROM worker WHERE company_id = :cid",
+                        'DELETE FROM "user" WHERE company_id = :cid',
+                        "DELETE FROM company WHERE id = :cid",
+                    ]
+                    for query in delete_queries:
+                        try:
+                            await db.execute(text(query), {"cid": company_id})
+                            await db.commit()
+                        except Exception as e:
+                            await db.rollback()
+                            if "UndefinedTable" not in str(e) and "does not exist" not in str(e):
+                                print(f"Warning: {e}")
+                            # Table doesn't exist or other error, skip it
+                            pass
+                    print("Existing company deleted. Creating new data...")
+                else:
+                    print(f"Company '{COMPANY_NAME}' already exists!")
+                    print("Use --force flag to delete and re-seed.")
+                    return
 
             # Check if company exists by DOT number
             result = await db.execute(
@@ -565,10 +761,18 @@ async def seed_demo_tenant():
             )
             existing_dot = result.scalar_one_or_none()
 
-            if existing_dot:
-                print(f"Company with DOT '{COMPANY_DOT}' already exists!")
-                print("Delete existing data first or use a different DOT number.")
-                return
+            if existing_dot and existing_dot.id != (existing.id if existing else None):
+                if force:
+                    print(f"Deleting existing company with DOT '{COMPANY_DOT}'...")
+                    company_id = existing_dot.id
+                    from sqlalchemy import text
+                    await db.execute(text("DELETE FROM company WHERE id = :cid"), {"cid": company_id})
+                    await db.commit()
+                    print("Existing company deleted. Creating new data...")
+                else:
+                    print(f"Company with DOT '{COMPANY_DOT}' already exists!")
+                    print("Use --force flag to delete and re-seed.")
+                    return
 
             # Create everything
             company = await create_company(db)
@@ -577,6 +781,28 @@ async def seed_demo_tenant():
             trucks, trailers = await create_equipment(db, company.id)
             loads = await create_loads(db, company.id, drivers, trucks, trailers)
             workers = await create_workers(db, company.id, drivers)
+            customers = await create_customers(db, company.id)
+
+            # These tables may not exist yet - handle gracefully
+            fuel_txns = []
+            ifta_rollups = []
+            try:
+                fuel_txns = await create_fuel_transactions(db, company.id, drivers, trucks, loads)
+            except Exception as e:
+                if "UndefinedTable" in str(e) or "does not exist" in str(e):
+                    print("Skipping fuel transactions - table not yet created")
+                else:
+                    raise
+
+            try:
+                ifta_rollups = await create_ifta_rollups(db, company.id)
+            except Exception as e:
+                if "UndefinedTable" in str(e) or "does not exist" in str(e):
+                    print("Skipping IFTA rollups - table not yet created")
+                else:
+                    raise
+
+            invoices = await create_invoices(db, company.id, loads)
 
             # Commit all changes
             await db.commit()
@@ -591,6 +817,10 @@ async def seed_demo_tenant():
             print(f"Trailers: {len(trailers)}")
             print(f"Loads: {len(loads)}")
             print(f"Workers: {len(workers)}")
+            print(f"Customers: {len(customers)}")
+            print(f"Fuel Transactions: {len(fuel_txns)}")
+            print(f"IFTA Rollups: {len(ifta_rollups)}")
+            print(f"Invoices: {len(invoices)}")
             print("\n" + "-" * 60)
             print("OWNER LOGIN CREDENTIALS:")
             print("-" * 60)
@@ -605,12 +835,14 @@ async def seed_demo_tenant():
 
 
 if __name__ == "__main__":
+    force_flag = "--force" in sys.argv or "-f" in sys.argv
+
     if sys.platform == "win32":
         # Event loop already set up at module load time
         loop = asyncio.get_event_loop()
         try:
-            loop.run_until_complete(seed_demo_tenant())
+            loop.run_until_complete(seed_demo_tenant(force=force_flag))
         finally:
             loop.close()
     else:
-        asyncio.run(seed_demo_tenant())
+        asyncio.run(seed_demo_tenant(force=force_flag))
