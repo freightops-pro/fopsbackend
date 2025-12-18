@@ -497,9 +497,8 @@ class LoadStatusUpdateRequest(BaseModel):
 async def record_load_arrival(
     load_id: str,
     request: LoadArrivalRequest,
-    db: AsyncSession = Depends(get_async_db),
-    current_user: User = Depends(get_current_active_user),
-    websocket: WebSocketManager = Depends(get_websocket_manager),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
 ):
     """Record driver arrival at pickup or delivery location."""
     try:
@@ -541,22 +540,7 @@ async def record_load_arrival(
         await db.commit()
         await db.refresh(load)
 
-        # Broadcast update via WebSocket
-        await websocket.broadcast_load_update(
-            load_id=load_id,
-            company_id=current_user.company_id,
-            update_data={
-                "type": "driver_arrival",
-                "stop_type": request.stop_type,
-                "arrival_time": request.arrival_time.isoformat(),
-                "location": {
-                    "latitude": request.latitude,
-                    "longitude": request.longitude,
-                },
-                "status": load.status,
-                "driver_id": current_user.id,
-            }
-        )
+        # TODO: Broadcast update via WebSocket when WebSocketManager is implemented
 
         return {
             "message": f"Arrival at {request.stop_type} recorded successfully",
@@ -573,9 +557,8 @@ async def record_load_arrival(
 async def record_load_departure(
     load_id: str,
     request: LoadDepartureRequest,
-    db: AsyncSession = Depends(get_async_db),
-    current_user: User = Depends(get_current_active_user),
-    websocket: WebSocketManager = Depends(get_websocket_manager),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
 ):
     """Record driver departure from pickup or delivery location."""
     try:
@@ -617,22 +600,7 @@ async def record_load_departure(
         await db.commit()
         await db.refresh(load)
 
-        # Broadcast update via WebSocket
-        await websocket.broadcast_load_update(
-            load_id=load_id,
-            company_id=current_user.company_id,
-            update_data={
-                "type": "driver_departure",
-                "stop_type": request.stop_type,
-                "departure_time": request.departure_time.isoformat(),
-                "location": {
-                    "latitude": request.latitude,
-                    "longitude": request.longitude,
-                },
-                "status": load.status,
-                "driver_id": current_user.id,
-            }
-        )
+        # TODO: Broadcast update via WebSocket when WebSocketManager is implemented
 
         return {
             "message": f"Departure from {request.stop_type} recorded successfully",
@@ -649,9 +617,8 @@ async def record_load_departure(
 async def update_load_status(
     load_id: str,
     request: LoadStatusUpdateRequest,
-    db: AsyncSession = Depends(get_async_db),
-    current_user: User = Depends(get_current_active_user),
-    websocket: WebSocketManager = Depends(get_websocket_manager),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(deps.get_current_user),
 ):
     """Update load status from driver app."""
     try:
@@ -685,22 +652,7 @@ async def update_load_status(
         await db.commit()
         await db.refresh(load)
 
-        # Broadcast update via WebSocket
-        await websocket.broadcast_load_update(
-            load_id=load_id,
-            company_id=current_user.company_id,
-            update_data={
-                "type": "status_update",
-                "old_status": old_status,
-                "new_status": request.status,
-                "location": {
-                    "latitude": request.latitude,
-                    "longitude": request.longitude,
-                } if request.latitude and request.longitude else None,
-                "driver_id": current_user.id,
-                "notes": request.notes,
-            }
-        )
+        # TODO: Broadcast update via WebSocket when WebSocketManager is implemented
 
         return {
             "message": "Load status updated successfully",
