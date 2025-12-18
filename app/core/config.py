@@ -135,6 +135,33 @@ class Settings(BaseSettings):
     samsara_client_secret: Optional[str] = None
     samsara_api_base_url: str = "https://api.samsara.com"  # Or https://api.eu.samsara.com for EU
 
+    # AtoB Fuel Card Integration (OAuth2)
+    # Modern API-first fuel card platform
+    # Get credentials at: https://www.atob.com/dev-home
+    atob_client_id: Optional[str] = None
+    atob_client_secret: Optional[str] = None
+
+    # ===== PORT INTEGRATIONS =====
+    # Container tracking via PORT terminal APIs (not steamship lines)
+    # One port API = all carriers at that port (more efficient)
+
+    # GPA Savannah - Navis N4 EVP API (OAuth2)
+    # Contact GPA Customer Service at 912-963-5526 or [email protected] for API access
+    # EDI inquiries: [email protected]
+    gpa_savannah_client_id: Optional[str] = None
+    gpa_savannah_client_secret: Optional[str] = None
+
+    # LA/Long Beach Terminal APIs
+    # Each terminal requires separate credentials - store in integration settings per company
+    # TraPac: https://losangeles.trapac.com/
+    # Fenix Marine: https://fenixmarineservices.com/
+    # LBCT: https://www.lbct.com/
+
+    # NY/NJ Terminal APIs
+    # PNCT (Ports America MTOS): https://mtosportalec.portsamerica.com/
+    # APM Elizabeth: Uses apm_client_id/apm_client_secret above
+    # GCT: https://www.gcterminals.com/
+
     # Stripe Configuration for Billing
     # Test mode keys (for development/staging)
     stripe_test_secret_key: Optional[str] = None

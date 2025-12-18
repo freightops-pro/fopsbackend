@@ -1,6 +1,8 @@
-from typing import List
+from datetime import datetime
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -16,6 +18,7 @@ from app.schemas.load import (
 )
 from app.services.load import LoadService
 from app.services.document_processing import DocumentProcessingService
+from app.services.drayage.container_lookup_service import ContainerLookupService
 
 router = APIRouter()
 
@@ -58,6 +61,123 @@ async def extract_from_rate_confirmation(
 async def list_loads(company_id: str = Depends(_company_id), service: LoadService = Depends(_service)) -> List[LoadResponse]:
     loads = await service.list_loads(company_id)
     return [LoadResponse.model_validate(load) for load in loads]
+
+
+# ==================== CONTAINER AUTO-LOOKUP ====================
+
+
+class ContainerLookupRequest(BaseModel):
+    """Request to look up container information for load creation."""
+    container_number: str
+    port_code: Optional[str] = None  # UN/LOCODE (e.g., USHOU, USLAX)
+    terminal: Optional[str] = None
+
+
+class ContainerLookupResponseData(BaseModel):
+    """Container data response for auto-population."""
+    success: bool
+    container_number: str
+    error: Optional[str] = None
+
+    # Container data for load auto-population
+    status: Optional[str] = None
+    status_description: Optional[str] = None
+    is_available: Optional[bool] = None
+    holds: Optional[List[str]] = None
+
+    # Location info
+    port_code: Optional[str] = None
+    terminal: Optional[str] = None
+    carrier_scac: Optional[str] = None
+
+    # Vessel info
+    vessel_name: Optional[str] = None
+    vessel_voyage: Optional[str] = None
+    vessel_eta: Optional[datetime] = None
+
+    # Critical dates for drayage
+    last_free_day: Optional[datetime] = None
+    discharge_date: Optional[datetime] = None
+    empty_return_by: Optional[datetime] = None
+
+    # Container specs
+    size: Optional[str] = None
+    container_type: Optional[str] = None
+
+    # Charges from port
+    demurrage_amount: Optional[float] = None
+
+
+@router.post("/container-lookup", response_model=ContainerLookupResponseData)
+async def lookup_container_for_load(
+    request: ContainerLookupRequest,
+    company_id: str = Depends(_company_id),
+):
+    """
+    Look up container information from PORT API for auto-populating load data.
+
+    Call this endpoint when:
+    - User selects load_type = "container"
+    - User enters a container number
+
+    Returns container status, vessel info, LFD, terminal, and other data
+    from the port's terminal operating system.
+
+    Example flow:
+    1. User enters container number "MAEU1234567" and port "USHOU"
+    2. Frontend calls POST /loads/container-lookup
+    3. Backend queries Port Houston API
+    4. Returns container data for form auto-population
+
+    If port_code not provided, searches across all supported ports.
+    """
+    service = ContainerLookupService()
+    result = await service.lookup_container(
+        container_number=request.container_number,
+        port_code=request.port_code,
+        terminal=request.terminal,
+    )
+
+    return ContainerLookupResponseData(
+        success=result.success,
+        container_number=result.container_number,
+        error=result.error,
+        status=result.status,
+        status_description=result.status_description,
+        is_available=result.is_available,
+        holds=result.holds,
+        port_code=result.port_code,
+        terminal=result.terminal,
+        carrier_scac=result.carrier_scac,
+        vessel_name=result.vessel_name,
+        vessel_voyage=result.vessel_voyage,
+        vessel_eta=result.vessel_eta,
+        last_free_day=result.last_free_day,
+        discharge_date=result.discharge_date,
+        empty_return_by=result.empty_return_by,
+        size=result.size,
+        container_type=result.container_type,
+        demurrage_amount=result.demurrage_amount,
+    )
+
+
+@router.get("/container-lookup/{container_number}", response_model=ContainerLookupResponseData)
+async def lookup_container_by_number(
+    container_number: str,
+    port_code: Optional[str] = Query(None, description="Port UN/LOCODE (e.g., USHOU, USLAX). Searches all if not provided."),
+    company_id: str = Depends(_company_id),
+):
+    """
+    Look up container information by number (GET method).
+
+    Same as POST /container-lookup but as GET for convenience.
+    If port_code not provided, searches across all supported ports.
+    """
+    request = ContainerLookupRequest(
+        container_number=container_number,
+        port_code=port_code,
+    )
+    return await lookup_container_for_load(request, company_id)
 
 
 # Driver-specific endpoints - MUST be before /{load_id} route

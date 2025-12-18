@@ -38,6 +38,7 @@ router = APIRouter()
 
 # Import sub-routers for specific integrations
 from app.routers.integrations import xero, gusto, samsara as samsara_router, geotab, loadboards
+from app.routers.integrations import efs, comdata, atob
 
 # Include sub-routers
 router.include_router(xero.router, tags=["Integrations - Xero"])
@@ -45,6 +46,11 @@ router.include_router(gusto.router, tags=["Integrations - Gusto"])
 router.include_router(samsara_router.router, tags=["Integrations - Samsara"])
 router.include_router(geotab.router, tags=["Integrations - Geotab"])
 router.include_router(loadboards.router, tags=["Integrations - Load Boards"])
+
+# Fuel Card integrations
+router.include_router(efs.router, tags=["Integrations - EFS Fuel Cards"])
+router.include_router(comdata.router, tags=["Integrations - Comdata"])
+router.include_router(atob.router, tags=["Integrations - AtoB"])
 
 
 async def _service(db: AsyncSession = Depends(get_db)) -> MotiveService:
