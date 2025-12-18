@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Import sub-routers for specific integrations
-from app.routers.integrations import xero, gusto, samsara as samsara_router, geotab, loadboards
-from app.routers.integrations import efs, comdata, atob
+# Import sub-routers for specific integrations (using relative imports)
+from . import xero, gusto, samsara as samsara_router, geotab, loadboards
+from . import efs, comdata, atob
 
 # Include sub-routers
 router.include_router(xero.router, tags=["Integrations - Xero"])
