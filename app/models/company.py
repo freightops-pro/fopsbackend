@@ -25,3 +25,6 @@ class Company(Base):
     workers = relationship("Worker", back_populates="company", cascade="all, delete-orphan")
     subscription = relationship("Subscription", back_populates="company", uselist=False, cascade="all, delete-orphan")
 
+    # RBAC: Custom roles defined by this tenant
+    custom_roles = relationship("Role", back_populates="company", cascade="all, delete-orphan")
+

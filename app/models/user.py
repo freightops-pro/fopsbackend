@@ -10,7 +10,10 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
-    role = Column(String, nullable=False, default="dispatcher")
+
+    # Legacy role column - kept for backwards compatibility during migration
+    # New code should use user_roles relationship instead
+    role = Column(String, nullable=True, default=None)
 
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
@@ -20,4 +23,12 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     company = relationship("Company", back_populates="users")
+
+    # RBAC: Many-to-many relationship with roles
+    user_roles = relationship(
+        "UserRole",
+        back_populates="user",
+        foreign_keys="UserRole.user_id",
+        cascade="all, delete-orphan"
+    )
 

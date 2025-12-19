@@ -30,6 +30,7 @@ from app.routers import (
     payroll,
     ports,
     reporting,
+    roles,
     tenant,
     usage_ledger,
     webhooks,
@@ -69,6 +70,7 @@ api_router.include_router(wex.router, prefix="/wex", tags=["WEX Fuel Cards"])
 api_router.include_router(admin.router, prefix="/admin", tags=["HQ Admin"])
 api_router.include_router(hq.router, prefix="/hq", tags=["HQ Portal"])
 api_router.include_router(tenant.router, prefix="/tenant", tags=["Tenant"])
+api_router.include_router(roles.router, prefix="/rbac", tags=["Roles & Permissions"])
 api_router.include_router(websocket.router, tags=["WebSocket"])
 
 # Onboarding & DQF System
