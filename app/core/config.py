@@ -250,6 +250,8 @@ class Settings(BaseSettings):
     stripe_secret_key: Optional[str] = None
     stripe_publishable_key: Optional[str] = None
     stripe_webhook_secret: Optional[str] = None
+    stripe_product_id: Optional[str] = None
+    stripe_addon_products: Optional[dict] = None
 
     def get_stripe_secret_key(self) -> Optional[str]:
         """Get the appropriate Stripe secret key based on mode, with fallback to simple key"""
@@ -270,12 +272,17 @@ class Settings(BaseSettings):
         return self.stripe_test_webhook_secret or self.stripe_webhook_secret
 
     def get_stripe_product_id(self) -> Optional[str]:
-        """Get the appropriate Stripe product ID based on mode"""
-        return self.stripe_live_product_id if self.stripe_use_live_mode else self.stripe_test_product_id
+        """Get the appropriate Stripe product ID based on mode, with fallback to simple key"""
+        if self.stripe_use_live_mode:
+            return self.stripe_live_product_id or self.stripe_product_id
+        return self.stripe_test_product_id or self.stripe_product_id
 
     def get_stripe_addon_products(self) -> dict:
-        """Get the appropriate Stripe addon product IDs based on mode"""
-        products = self.stripe_live_addon_products if self.stripe_use_live_mode else self.stripe_test_addon_products
+        """Get the appropriate Stripe addon product IDs based on mode, with fallback to simple key"""
+        if self.stripe_use_live_mode:
+            products = self.stripe_live_addon_products or self.stripe_addon_products
+        else:
+            products = self.stripe_test_addon_products or self.stripe_addon_products
         return products or {"port_integration": None, "check_payroll": None}
 
 
