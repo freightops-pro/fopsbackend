@@ -246,17 +246,28 @@ class Settings(BaseSettings):
     # Set to True for production, False for development/staging
     stripe_use_live_mode: bool = False
 
+    # Legacy/simple Stripe keys (fallback if test/live specific keys not set)
+    stripe_secret_key: Optional[str] = None
+    stripe_publishable_key: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+
     def get_stripe_secret_key(self) -> Optional[str]:
-        """Get the appropriate Stripe secret key based on mode"""
-        return self.stripe_live_secret_key if self.stripe_use_live_mode else self.stripe_test_secret_key
+        """Get the appropriate Stripe secret key based on mode, with fallback to simple key"""
+        if self.stripe_use_live_mode:
+            return self.stripe_live_secret_key or self.stripe_secret_key
+        return self.stripe_test_secret_key or self.stripe_secret_key
 
     def get_stripe_publishable_key(self) -> Optional[str]:
-        """Get the appropriate Stripe publishable key based on mode"""
-        return self.stripe_live_publishable_key if self.stripe_use_live_mode else self.stripe_test_publishable_key
+        """Get the appropriate Stripe publishable key based on mode, with fallback to simple key"""
+        if self.stripe_use_live_mode:
+            return self.stripe_live_publishable_key or self.stripe_publishable_key
+        return self.stripe_test_publishable_key or self.stripe_publishable_key
 
     def get_stripe_webhook_secret(self) -> Optional[str]:
-        """Get the appropriate Stripe webhook secret based on mode"""
-        return self.stripe_live_webhook_secret if self.stripe_use_live_mode else self.stripe_test_webhook_secret
+        """Get the appropriate Stripe webhook secret based on mode, with fallback to simple key"""
+        if self.stripe_use_live_mode:
+            return self.stripe_live_webhook_secret or self.stripe_webhook_secret
+        return self.stripe_test_webhook_secret or self.stripe_webhook_secret
 
     def get_stripe_product_id(self) -> Optional[str]:
         """Get the appropriate Stripe product ID based on mode"""
