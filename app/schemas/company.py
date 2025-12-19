@@ -33,3 +33,66 @@ class CompanyUserResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
+class CompanyProfileResponse(BaseModel):
+    """Full company profile for settings page."""
+
+    id: str
+    name: str
+    legal_name: Optional[str] = None
+    email: str
+    phone: Optional[str] = None
+    fax: Optional[str] = None
+    business_type: Optional[str] = None
+    dot_number: Optional[str] = None
+    mc_number: Optional[str] = None
+    tax_id: Optional[str] = None
+    primary_contact_name: Optional[str] = None
+
+    # Address
+    address_line1: Optional[str] = None
+    address_line2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
+    # Additional
+    description: Optional[str] = None
+    website: Optional[str] = None
+    year_founded: Optional[str] = None
+    logo_url: Optional[str] = None
+
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CompanyProfileUpdate(BaseModel):
+    """Update company profile."""
+
+    name: Optional[str] = None
+    legal_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    fax: Optional[str] = None
+    business_type: Optional[str] = None
+    dot_number: Optional[str] = None
+    mc_number: Optional[str] = None
+    tax_id: Optional[str] = None
+    primary_contact_name: Optional[str] = None
+
+    # Address
+    address_line1: Optional[str] = None
+    address_line2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
+    # Additional
+    description: Optional[str] = None
+    website: Optional[str] = None
+    year_founded: Optional[str] = None
+    logo_url: Optional[str] = None
+
