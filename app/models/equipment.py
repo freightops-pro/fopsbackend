@@ -32,6 +32,15 @@ class Equipment(Base):
     eld_provider = Column(String, nullable=True)
     eld_device_id = Column(String, nullable=True)
 
+    # Live location tracking (from ELD/GPS telemetry)
+    current_lat = Column(Float, nullable=True)
+    current_lng = Column(Float, nullable=True)
+    current_city = Column(String, nullable=True)
+    current_state = Column(String, nullable=True)
+    last_location_update = Column(DateTime, nullable=True)
+    heading = Column(Float, nullable=True)  # Direction of travel in degrees
+    speed_mph = Column(Float, nullable=True)
+
     assigned_driver_id = Column(String, nullable=True)
     assigned_truck_id = Column(String, nullable=True)
 

@@ -109,6 +109,16 @@ class EquipmentResponse(BaseModel):
     gps_device_id: Optional[str]
     eld_provider: Optional[str]
     eld_device_id: Optional[str]
+
+    # Live location tracking (from ELD/GPS telemetry)
+    current_lat: Optional[float] = None
+    current_lng: Optional[float] = None
+    current_city: Optional[str] = None
+    current_state: Optional[str] = None
+    last_location_update: Optional[datetime] = None
+    heading: Optional[float] = None
+    speed_mph: Optional[float] = None
+
     assigned_driver_id: Optional[str]
     assigned_truck_id: Optional[str]
     created_at: datetime
@@ -118,4 +128,28 @@ class EquipmentResponse(BaseModel):
     maintenance_forecasts: List[EquipmentMaintenanceForecastResponse] = []
 
     model_config = {"from_attributes": True}
+
+
+class LocationUpdate(BaseModel):
+    """Schema for updating equipment location from ELD/driver app/telemetry."""
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+    city: Optional[str] = None
+    state: Optional[str] = None
+    heading: Optional[float] = Field(default=None, ge=0, le=360)
+    speed_mph: Optional[float] = Field(default=None, ge=0)
+    odometer: Optional[int] = Field(default=None, ge=0)
+    source: Optional[str] = None  # "eld", "driver_app", "samsara", "motive"
+
+
+class BulkLocationUpdate(BaseModel):
+    """Schema for bulk location updates from telemetry providers."""
+    updates: List["EquipmentLocationUpdate"]
+
+
+class EquipmentLocationUpdate(LocationUpdate):
+    """Location update with equipment identifier."""
+    equipment_id: Optional[str] = None
+    unit_number: Optional[str] = None  # Alternative to equipment_id
+    eld_device_id: Optional[str] = None  # Alternative lookup key
 

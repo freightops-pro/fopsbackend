@@ -134,6 +134,23 @@ class LoadResponse(BaseModel):
     port_appointment_status: Optional[str] = None
     port_appointment_terminal: Optional[str] = None
 
+    # Assignment fields
+    driver_id: Optional[str] = None
+    truck_id: Optional[str] = None
+
+    # Live location tracking (from ELD/driver app)
+    last_known_lat: Optional[float] = None
+    last_known_lng: Optional[float] = None
+    last_location_update: Optional[datetime] = None
+
+    # Pickup/delivery location tracking
+    pickup_arrival_lat: Optional[float] = None
+    pickup_arrival_lng: Optional[float] = None
+    pickup_arrival_time: Optional[datetime] = None
+    delivery_arrival_lat: Optional[float] = None
+    delivery_arrival_lng: Optional[float] = None
+    delivery_arrival_time: Optional[datetime] = None
+
     metadata: Optional[dict] = Field(None, validation_alias="metadata_json")
     created_at: datetime
     updated_at: datetime
