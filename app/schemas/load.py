@@ -134,12 +134,12 @@ class LoadResponse(BaseModel):
     port_appointment_status: Optional[str] = None
     port_appointment_terminal: Optional[str] = None
 
-    metadata: Optional[dict]
+    metadata: Optional[dict] = Field(None, validation_alias="metadata_json")
     created_at: datetime
     updated_at: datetime
     stops: List[LoadStopResponse]
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class LoadStopScheduleUpdate(BaseModel):

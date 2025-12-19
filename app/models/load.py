@@ -73,11 +73,6 @@ class Load(Base):
 
     stops = relationship("LoadStop", back_populates="load", cascade="all, delete-orphan", order_by="LoadStop.sequence")
 
-    @property
-    def metadata(self) -> dict | None:
-        """Expose metadata_json as metadata for Pydantic serialization."""
-        return self.metadata_json
-
 
 class LoadStop(Base):
     __tablename__ = "freight_load_stop"
