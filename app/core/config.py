@@ -253,29 +253,53 @@ class Settings(BaseSettings):
     stripe_product_id: Optional[str] = None
     stripe_addon_products: Optional[dict] = None
 
+    def _is_valid_stripe_key(self, key: Optional[str]) -> bool:
+        """Check if a Stripe key is valid (not None and not a placeholder)"""
+        if not key:
+            return False
+        # Check for common placeholder patterns
+        placeholders = ["CHANGE_ME", "change_me", "YOUR_", "your_", "PLACEHOLDER", "placeholder"]
+        return not any(p in key for p in placeholders)
+
     def get_stripe_secret_key(self) -> Optional[str]:
         """Get the appropriate Stripe secret key based on mode, with fallback to simple key"""
         if self.stripe_use_live_mode:
-            return self.stripe_live_secret_key or self.stripe_secret_key
-        return self.stripe_test_secret_key or self.stripe_secret_key
+            if self._is_valid_stripe_key(self.stripe_live_secret_key):
+                return self.stripe_live_secret_key
+            return self.stripe_secret_key
+        if self._is_valid_stripe_key(self.stripe_test_secret_key):
+            return self.stripe_test_secret_key
+        return self.stripe_secret_key
 
     def get_stripe_publishable_key(self) -> Optional[str]:
         """Get the appropriate Stripe publishable key based on mode, with fallback to simple key"""
         if self.stripe_use_live_mode:
-            return self.stripe_live_publishable_key or self.stripe_publishable_key
-        return self.stripe_test_publishable_key or self.stripe_publishable_key
+            if self._is_valid_stripe_key(self.stripe_live_publishable_key):
+                return self.stripe_live_publishable_key
+            return self.stripe_publishable_key
+        if self._is_valid_stripe_key(self.stripe_test_publishable_key):
+            return self.stripe_test_publishable_key
+        return self.stripe_publishable_key
 
     def get_stripe_webhook_secret(self) -> Optional[str]:
         """Get the appropriate Stripe webhook secret based on mode, with fallback to simple key"""
         if self.stripe_use_live_mode:
-            return self.stripe_live_webhook_secret or self.stripe_webhook_secret
-        return self.stripe_test_webhook_secret or self.stripe_webhook_secret
+            if self._is_valid_stripe_key(self.stripe_live_webhook_secret):
+                return self.stripe_live_webhook_secret
+            return self.stripe_webhook_secret
+        if self._is_valid_stripe_key(self.stripe_test_webhook_secret):
+            return self.stripe_test_webhook_secret
+        return self.stripe_webhook_secret
 
     def get_stripe_product_id(self) -> Optional[str]:
         """Get the appropriate Stripe product ID based on mode, with fallback to simple key"""
         if self.stripe_use_live_mode:
-            return self.stripe_live_product_id or self.stripe_product_id
-        return self.stripe_test_product_id or self.stripe_product_id
+            if self._is_valid_stripe_key(self.stripe_live_product_id):
+                return self.stripe_live_product_id
+            return self.stripe_product_id
+        if self._is_valid_stripe_key(self.stripe_test_product_id):
+            return self.stripe_test_product_id
+        return self.stripe_product_id
 
     def get_stripe_addon_products(self) -> dict:
         """Get the appropriate Stripe addon product IDs based on mode, with fallback to simple key"""
