@@ -49,9 +49,10 @@ class BillingService:
         upcoming_invoice = None
         if subscription.stripe_customer_id:
             try:
-                upcoming = stripe.Invoice.upcoming(customer=subscription.stripe_customer_id)
+                # Stripe v5+ uses Invoice.upcoming.create() instead of Invoice.upcoming()
+                upcoming = stripe.Invoice.create_preview(customer=subscription.stripe_customer_id)
                 upcoming_invoice = self._stripe_invoice_to_schema(upcoming)
-            except stripe.error.StripeError as e:
+            except (stripe.error.StripeError, AttributeError) as e:
                 logger.warning(f"No upcoming invoice for company {company_id}: {e}")
 
         return schemas.BillingData(
