@@ -11,6 +11,12 @@ class User(Base):
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
 
+    # Profile fields
+    phone = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    timezone = Column(String, nullable=True, default="America/Chicago")
+    job_title = Column(String, nullable=True)
+
     # Legacy role column - kept for backwards compatibility during migration
     # New code should use user_roles relationship instead
     role = Column(String, nullable=True, default=None)
