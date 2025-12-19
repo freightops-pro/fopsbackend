@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.load import Load, LoadStop
 from app.models.accounting import Customer
@@ -54,7 +55,10 @@ class LoadService:
 
     async def list_loads(self, company_id: str) -> List[Load]:
         result = await self.db.execute(
-            select(Load).where(Load.company_id == company_id).order_by(Load.created_at.desc())
+            select(Load)
+            .options(selectinload(Load.stops))
+            .where(Load.company_id == company_id)
+            .order_by(Load.created_at.desc())
         )
         return list(result.scalars().all())
 
