@@ -16,12 +16,14 @@ from app.models.equipment import (
 )
 from app.schemas.equipment import (
     EquipmentCreate,
+    EquipmentLocationUpdate,
     EquipmentMaintenanceCreate,
     EquipmentMaintenanceEventResponse,
     EquipmentMaintenanceForecastResponse,
     EquipmentResponse,
     EquipmentUsageEventCreate,
     EquipmentUsageEventResponse,
+    LocationUpdate,
 )
 
 
@@ -360,4 +362,117 @@ class EquipmentService:
                 notes = f"Projected in {int(days_until or 0)} days at current utilization."
 
         return status, risk_score, notes
+
+    # ============ Location Tracking Methods ============
+
+    async def update_location(
+        self,
+        company_id: str,
+        equipment_id: str,
+        payload: LocationUpdate,
+    ) -> EquipmentResponse:
+        """Update the live location of a specific equipment unit."""
+        equipment = await self._get_equipment(company_id, equipment_id)
+
+        equipment.current_lat = payload.lat
+        equipment.current_lng = payload.lng
+        equipment.current_city = payload.city
+        equipment.current_state = payload.state
+        equipment.heading = payload.heading
+        equipment.speed_mph = payload.speed_mph
+        equipment.last_location_update = datetime.utcnow()
+
+        if payload.odometer is not None:
+            equipment.current_mileage = payload.odometer
+
+        await self.db.commit()
+
+        # Refresh with eager loading
+        result = await self.db.execute(
+            select(Equipment)
+            .where(Equipment.id == equipment_id)
+            .options(
+                selectinload(Equipment.maintenance_events),
+                selectinload(Equipment.usage_events),
+                selectinload(Equipment.maintenance_forecasts),
+            )
+        )
+        equipment_with_relations = result.scalar_one()
+        return EquipmentResponse.model_validate(equipment_with_relations)
+
+    async def bulk_update_locations(
+        self,
+        company_id: str,
+        updates: List[EquipmentLocationUpdate],
+    ) -> Dict[str, int]:
+        """Bulk update locations for multiple equipment units."""
+        updated = 0
+        failed = 0
+
+        for update in updates:
+            try:
+                # Find equipment by ID, unit number, or ELD device ID
+                equipment = None
+                if update.equipment_id:
+                    result = await self.db.execute(
+                        select(Equipment).where(
+                            Equipment.company_id == company_id,
+                            Equipment.id == update.equipment_id,
+                        )
+                    )
+                    equipment = result.scalar_one_or_none()
+                elif update.unit_number:
+                    result = await self.db.execute(
+                        select(Equipment).where(
+                            Equipment.company_id == company_id,
+                            Equipment.unit_number == update.unit_number,
+                        )
+                    )
+                    equipment = result.scalar_one_or_none()
+                elif update.eld_device_id:
+                    result = await self.db.execute(
+                        select(Equipment).where(
+                            Equipment.company_id == company_id,
+                            Equipment.eld_device_id == update.eld_device_id,
+                        )
+                    )
+                    equipment = result.scalar_one_or_none()
+
+                if equipment:
+                    equipment.current_lat = update.lat
+                    equipment.current_lng = update.lng
+                    equipment.current_city = update.city
+                    equipment.current_state = update.state
+                    equipment.heading = update.heading
+                    equipment.speed_mph = update.speed_mph
+                    equipment.last_location_update = datetime.utcnow()
+                    if update.odometer is not None:
+                        equipment.current_mileage = update.odometer
+                    updated += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+
+        await self.db.commit()
+        return {"updated": updated, "failed": failed}
+
+    async def get_equipment_with_locations(self, company_id: str) -> List[EquipmentResponse]:
+        """Get all equipment that has live location data."""
+        result = await self.db.execute(
+            select(Equipment)
+            .where(
+                Equipment.company_id == company_id,
+                Equipment.current_lat.isnot(None),
+                Equipment.current_lng.isnot(None),
+            )
+            .options(
+                selectinload(Equipment.maintenance_events),
+                selectinload(Equipment.usage_events),
+                selectinload(Equipment.maintenance_forecasts),
+            )
+            .order_by(Equipment.unit_number)
+        )
+        equipment_items = result.scalars().unique().all()
+        return [EquipmentResponse.model_validate(equipment) for equipment in equipment_items]
 
