@@ -36,7 +36,8 @@ async def list_equipment(
     company_id: str = Depends(_company_id),
     service: EquipmentService = Depends(_service),
 ) -> List[EquipmentResponse]:
-    return await service.list_equipment(company_id)
+    equipment_with_expenses = await service.list_equipment_with_expenses(company_id)
+    return [EquipmentResponse.model_validate(e) for e in equipment_with_expenses]
 
 
 @router.post("/equipment", response_model=EquipmentResponse, status_code=status.HTTP_201_CREATED)

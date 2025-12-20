@@ -92,6 +92,26 @@ class EquipmentMaintenanceForecastResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TruckLoadExpenseBreakdown(BaseModel):
+    """Expense breakdown by category for a load."""
+    fuel: float = 0
+    detention: float = 0
+    accessorial: float = 0
+    other: float = 0
+    total: float = 0
+
+
+class TruckLoadExpense(BaseModel):
+    """Expense summary for a single load assigned to a truck (for settlement)."""
+    load_id: str
+    load_reference: str
+    customer_name: str
+    base_rate: float
+    expenses: TruckLoadExpenseBreakdown
+    profit: float
+    completed_at: Optional[datetime] = None
+
+
 class EquipmentResponse(BaseModel):
     id: str
     company_id: str
@@ -126,6 +146,9 @@ class EquipmentResponse(BaseModel):
     maintenance_events: List[EquipmentMaintenanceEventResponse] = []
     usage_events: List[EquipmentUsageEventResponse] = []
     maintenance_forecasts: List[EquipmentMaintenanceForecastResponse] = []
+
+    # Expense tracking for settlement (populated from fuel transactions matched to loads)
+    load_expenses: List[TruckLoadExpense] = []
 
     model_config = {"from_attributes": True}
 

@@ -59,8 +59,8 @@ async def extract_from_rate_confirmation(
 
 @router.get("", response_model=List[LoadResponse])
 async def list_loads(company_id: str = Depends(_company_id), service: LoadService = Depends(_service)) -> List[LoadResponse]:
-    loads = await service.list_loads(company_id)
-    return [LoadResponse.model_validate(load) for load in loads]
+    loads_with_expenses = await service.list_loads_with_expenses(company_id)
+    return [LoadResponse.model_validate(load) for load in loads_with_expenses]
 
 
 # ==================== CONTAINER AUTO-LOOKUP ====================
@@ -220,10 +220,10 @@ async def get_load(
     service: LoadService = Depends(_service),
 ) -> LoadResponse:
     try:
-        load = await service.get_load(company_id, load_id)
+        load_with_expenses = await service.get_load_with_expenses(company_id, load_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return LoadResponse.model_validate(load)
+    return LoadResponse.model_validate(load_with_expenses)
 
 
 class LoadCreateResponse(LoadResponse):

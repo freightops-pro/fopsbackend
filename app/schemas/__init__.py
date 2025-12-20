@@ -48,4 +48,24 @@ from app.schemas.equipment import (  # noqa: F401
     EquipmentUsageEventCreate,
     EquipmentUsageEventResponse,
 )
+from app.schemas.carrier_compliance import (  # noqa: F401
+    CarrierComplianceDashboardResponse,
+    CarrierCredentialCreate,
+    CarrierCredentialResponse,
+    CarrierCredentialUpdate,
+    CarrierSAFERDataResponse,
+    CompanyInsuranceCreate,
+    CompanyInsuranceResponse,
+    CompanyInsuranceUpdate,
+    CSAScoreCreate,
+    CSAScoreResponse,
+    ELDAuditItemCreate,
+    ELDAuditItemResolve,
+    ELDAuditItemResponse,
+    ELDAuditItemUpdate,
+    ELDAuditSummaryResponse,
+    VehicleRegistrationCreate,
+    VehicleRegistrationResponse,
+    VehicleRegistrationUpdate,
+)
 

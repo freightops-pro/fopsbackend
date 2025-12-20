@@ -23,6 +23,14 @@ from app.models.user import User  # noqa: F401
 from app.models.rbac import Role, Permission, RolePermission, UserRole  # noqa: F401
 from app.models.port import Port, PortIntegration, ContainerTracking, ContainerTrackingEvent  # noqa: F401
 from app.models.integration import Integration, CompanyIntegration  # noqa: F401
+from app.models.carrier_compliance import (  # noqa: F401
+    CompanyInsurance,
+    CarrierCredential,
+    VehicleRegistration,
+    ELDAuditItem,
+    CSAScore,
+    CarrierSAFERSnapshot,
+)
 from app.models.worker import (  # noqa: F401
     Worker,
     WorkerDocument,

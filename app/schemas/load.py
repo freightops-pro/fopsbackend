@@ -106,6 +106,24 @@ class LoadStopResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LoadExpense(BaseModel):
+    """Expense item matched to a load (fuel, detention, accessorial, etc.)."""
+    id: str
+    entry_type: Literal["FUEL", "DETENTION", "ACCESSORIAL", "OTHER"]
+    description: str
+    amount: float
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    recorded_at: datetime
+
+
+class LoadProfitSummary(BaseModel):
+    """Profit calculation summary for a load."""
+    total_expenses: float
+    gross_profit: float
+    profit_margin: float  # percentage (0-100)
+
+
 class LoadResponse(BaseModel):
     id: str
     customer_name: str
@@ -155,6 +173,10 @@ class LoadResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     stops: List[LoadStopResponse]
+
+    # Expense tracking (populated from fuel transactions and other sources)
+    expenses: List[LoadExpense] = []
+    profit_summary: Optional[LoadProfitSummary] = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 

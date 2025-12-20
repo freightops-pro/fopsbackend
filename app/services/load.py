@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import List, Optional, Tuple
+from decimal import Decimal
+from typing import List, Optional, Tuple, Dict, Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models.load import Load, LoadStop
 from app.models.accounting import Customer
-from app.schemas.load import LoadCreate, LoadResponse
+from app.models.fuel import FuelTransaction
+from app.schemas.load import LoadCreate, LoadResponse, LoadExpense, LoadProfitSummary
 from app.services.event_dispatcher import emit_event, EventType
 
 
@@ -476,3 +478,163 @@ class LoadService:
 
         except Exception as e:
             raise ValueError(f"Failed to cancel port appointment: {str(e)}")
+
+    async def get_load_expenses(self, company_id: str, load_id: str) -> List[LoadExpense]:
+        """
+        Get all expenses matched to a load.
+
+        Currently fetches fuel transactions matched to this load.
+        Can be extended to include detention, accessorials, etc.
+        """
+        # Fetch fuel transactions for this load
+        result = await self.db.execute(
+            select(FuelTransaction).where(
+                FuelTransaction.company_id == company_id,
+                FuelTransaction.load_id == load_id,
+            ).order_by(FuelTransaction.transaction_date.desc())
+        )
+        fuel_txns = list(result.scalars().all())
+
+        expenses: List[LoadExpense] = []
+
+        for txn in fuel_txns:
+            cost = float(txn.cost) if isinstance(txn.cost, Decimal) else txn.cost
+            gallons = float(txn.gallons) if isinstance(txn.gallons, Decimal) else txn.gallons
+
+            expenses.append(LoadExpense(
+                id=txn.id,
+                entry_type="FUEL",
+                description=f"Fuel at {txn.location or 'Unknown'}" if txn.location else "Fuel purchase",
+                amount=cost,
+                quantity=gallons,
+                unit="gallons",
+                recorded_at=datetime.combine(txn.transaction_date, datetime.min.time()) if txn.transaction_date else datetime.now(),
+            ))
+
+        return expenses
+
+    def compute_profit_summary(self, base_rate: float, expenses: List[LoadExpense]) -> LoadProfitSummary:
+        """Compute profit summary from base rate and expenses."""
+        total_expenses = sum(e.amount for e in expenses)
+        gross_profit = base_rate - total_expenses
+        profit_margin = (gross_profit / base_rate * 100) if base_rate > 0 else 0.0
+
+        return LoadProfitSummary(
+            total_expenses=total_expenses,
+            gross_profit=gross_profit,
+            profit_margin=profit_margin,
+        )
+
+    async def get_load_with_expenses(self, company_id: str, load_id: str) -> Dict[str, Any]:
+        """
+        Get a load with computed expenses and profit summary.
+        Returns a dict suitable for LoadResponse model.
+        """
+        load = await self.get_load(company_id, load_id)
+        expenses = await self.get_load_expenses(company_id, load_id)
+        base_rate = float(load.base_rate) if isinstance(load.base_rate, Decimal) else load.base_rate
+        profit_summary = self.compute_profit_summary(base_rate, expenses)
+
+        # Convert to dict and add expenses
+        load_dict = {
+            "id": load.id,
+            "customer_name": load.customer_name,
+            "load_type": load.load_type,
+            "commodity": load.commodity,
+            "base_rate": base_rate,
+            "status": load.status,
+            "notes": load.notes,
+            "container_number": load.container_number,
+            "container_size": load.container_size,
+            "container_type": load.container_type,
+            "vessel_name": load.vessel_name,
+            "voyage_number": load.voyage_number,
+            "origin_port_code": load.origin_port_code,
+            "destination_port_code": load.destination_port_code,
+            "drayage_appointment": load.drayage_appointment,
+            "customs_hold": load.customs_hold,
+            "customs_reference": load.customs_reference,
+            "port_appointment_id": load.port_appointment_id,
+            "port_appointment_number": load.port_appointment_number,
+            "port_entry_code": load.port_entry_code,
+            "port_appointment_time": load.port_appointment_time,
+            "port_appointment_gate": load.port_appointment_gate,
+            "port_appointment_status": load.port_appointment_status,
+            "port_appointment_terminal": load.port_appointment_terminal,
+            "driver_id": load.driver_id,
+            "truck_id": load.truck_id,
+            "last_known_lat": load.last_known_lat,
+            "last_known_lng": load.last_known_lng,
+            "last_location_update": load.last_location_update,
+            "pickup_arrival_lat": load.pickup_arrival_lat,
+            "pickup_arrival_lng": load.pickup_arrival_lng,
+            "pickup_arrival_time": load.pickup_arrival_time,
+            "delivery_arrival_lat": load.delivery_arrival_lat,
+            "delivery_arrival_lng": load.delivery_arrival_lng,
+            "delivery_arrival_time": load.delivery_arrival_time,
+            "metadata_json": load.metadata_json,
+            "created_at": load.created_at,
+            "updated_at": load.updated_at,
+            "stops": load.stops,
+            "expenses": expenses,
+            "profit_summary": profit_summary,
+        }
+
+        return load_dict
+
+    async def list_loads_with_expenses(self, company_id: str) -> List[Dict[str, Any]]:
+        """List all loads with computed expenses and profit summaries."""
+        loads = await self.list_loads(company_id)
+        result = []
+
+        for load in loads:
+            expenses = await self.get_load_expenses(company_id, load.id)
+            base_rate = float(load.base_rate) if isinstance(load.base_rate, Decimal) else load.base_rate
+            profit_summary = self.compute_profit_summary(base_rate, expenses)
+
+            load_dict = {
+                "id": load.id,
+                "customer_name": load.customer_name,
+                "load_type": load.load_type,
+                "commodity": load.commodity,
+                "base_rate": base_rate,
+                "status": load.status,
+                "notes": load.notes,
+                "container_number": load.container_number,
+                "container_size": load.container_size,
+                "container_type": load.container_type,
+                "vessel_name": load.vessel_name,
+                "voyage_number": load.voyage_number,
+                "origin_port_code": load.origin_port_code,
+                "destination_port_code": load.destination_port_code,
+                "drayage_appointment": load.drayage_appointment,
+                "customs_hold": load.customs_hold,
+                "customs_reference": load.customs_reference,
+                "port_appointment_id": load.port_appointment_id,
+                "port_appointment_number": load.port_appointment_number,
+                "port_entry_code": load.port_entry_code,
+                "port_appointment_time": load.port_appointment_time,
+                "port_appointment_gate": load.port_appointment_gate,
+                "port_appointment_status": load.port_appointment_status,
+                "port_appointment_terminal": load.port_appointment_terminal,
+                "driver_id": load.driver_id,
+                "truck_id": load.truck_id,
+                "last_known_lat": load.last_known_lat,
+                "last_known_lng": load.last_known_lng,
+                "last_location_update": load.last_location_update,
+                "pickup_arrival_lat": load.pickup_arrival_lat,
+                "pickup_arrival_lng": load.pickup_arrival_lng,
+                "pickup_arrival_time": load.pickup_arrival_time,
+                "delivery_arrival_lat": load.delivery_arrival_lat,
+                "delivery_arrival_lng": load.delivery_arrival_lng,
+                "delivery_arrival_time": load.delivery_arrival_time,
+                "metadata_json": load.metadata_json,
+                "created_at": load.created_at,
+                "updated_at": load.updated_at,
+                "stops": load.stops,
+                "expenses": expenses,
+                "profit_summary": profit_summary,
+            }
+            result.append(load_dict)
+
+        return result

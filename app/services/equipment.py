@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Sequence
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from app.models.equipment import (
     EquipmentMaintenanceForecast,
     EquipmentUsageEvent,
 )
+from app.models.load import Load
+from app.models.fuel import FuelTransaction
 from app.schemas.equipment import (
     EquipmentCreate,
     EquipmentLocationUpdate,
@@ -24,6 +27,8 @@ from app.schemas.equipment import (
     EquipmentUsageEventCreate,
     EquipmentUsageEventResponse,
     LocationUpdate,
+    TruckLoadExpense,
+    TruckLoadExpenseBreakdown,
 )
 
 
@@ -475,4 +480,135 @@ class EquipmentService:
         )
         equipment_items = result.scalars().unique().all()
         return [EquipmentResponse.model_validate(equipment) for equipment in equipment_items]
+
+    async def get_truck_load_expenses(self, company_id: str, truck_id: str) -> List[TruckLoadExpense]:
+        """
+        Get expenses grouped by load for a truck (for settlement calculation).
+
+        Fetches all loads assigned to this truck that have fuel transactions,
+        and computes expense breakdown and profit for each load.
+        """
+        # Get all loads assigned to this truck
+        loads_result = await self.db.execute(
+            select(Load)
+            .where(
+                Load.company_id == company_id,
+                Load.truck_id == truck_id,
+            )
+            .order_by(Load.created_at.desc())
+        )
+        loads = list(loads_result.scalars().all())
+
+        load_expenses: List[TruckLoadExpense] = []
+
+        for load in loads:
+            # Fetch fuel transactions for this load
+            fuel_result = await self.db.execute(
+                select(FuelTransaction).where(
+                    FuelTransaction.company_id == company_id,
+                    FuelTransaction.load_id == load.id,
+                )
+            )
+            fuel_txns = list(fuel_result.scalars().all())
+
+            # Calculate fuel expenses
+            fuel_total = sum(
+                float(txn.cost) if isinstance(txn.cost, Decimal) else txn.cost
+                for txn in fuel_txns
+            )
+
+            # Create expense breakdown (other categories can be added later)
+            expenses = TruckLoadExpenseBreakdown(
+                fuel=fuel_total,
+                detention=0,  # TODO: fetch from detention records
+                accessorial=0,  # TODO: fetch from accessorial charges
+                other=0,
+                total=fuel_total,
+            )
+
+            base_rate = float(load.base_rate) if isinstance(load.base_rate, Decimal) else load.base_rate
+            profit = base_rate - expenses.total
+
+            # Generate load reference (first 8 chars of ID)
+            load_reference = f"#{load.id[:8].upper()}"
+
+            load_expenses.append(TruckLoadExpense(
+                load_id=load.id,
+                load_reference=load_reference,
+                customer_name=load.customer_name,
+                base_rate=base_rate,
+                expenses=expenses,
+                profit=profit,
+                completed_at=load.delivery_departure_time,
+            ))
+
+        return load_expenses
+
+    async def list_equipment_with_expenses(self, company_id: str) -> List[Dict[str, Any]]:
+        """List all equipment with computed load expenses for settlement."""
+        result = await self.db.execute(
+            select(Equipment)
+            .where(Equipment.company_id == company_id)
+            .options(
+                selectinload(Equipment.maintenance_events),
+                selectinload(Equipment.usage_events),
+                selectinload(Equipment.maintenance_forecasts),
+            )
+            .order_by(Equipment.unit_number)
+        )
+        equipment_items = result.scalars().unique().all()
+
+        equipment_list = []
+        for equipment in equipment_items:
+            # Only compute load_expenses for tractors/trucks
+            load_expenses = []
+            if equipment.equipment_type in ("TRACTOR", "TRUCK"):
+                load_expenses = await self.get_truck_load_expenses(company_id, equipment.id)
+
+            # Build response dict
+            equip_dict = {
+                "id": equipment.id,
+                "company_id": equipment.company_id,
+                "unit_number": equipment.unit_number,
+                "equipment_type": equipment.equipment_type,
+                "status": equipment.status,
+                "operational_status": equipment.operational_status,
+                "make": equipment.make,
+                "model": equipment.model,
+                "year": equipment.year,
+                "vin": equipment.vin,
+                "current_mileage": equipment.current_mileage,
+                "current_engine_hours": equipment.current_engine_hours,
+                "gps_provider": equipment.gps_provider,
+                "gps_device_id": equipment.gps_device_id,
+                "eld_provider": equipment.eld_provider,
+                "eld_device_id": equipment.eld_device_id,
+                "current_lat": equipment.current_lat,
+                "current_lng": equipment.current_lng,
+                "current_city": equipment.current_city,
+                "current_state": equipment.current_state,
+                "last_location_update": equipment.last_location_update,
+                "heading": equipment.heading,
+                "speed_mph": equipment.speed_mph,
+                "assigned_driver_id": equipment.assigned_driver_id,
+                "assigned_truck_id": equipment.assigned_truck_id,
+                "created_at": equipment.created_at,
+                "updated_at": equipment.updated_at,
+                "maintenance_events": [
+                    EquipmentMaintenanceEventResponse.model_validate(e)
+                    for e in equipment.maintenance_events
+                ],
+                "usage_events": [
+                    EquipmentUsageEventResponse.model_validate(e)
+                    for e in equipment.usage_events
+                ],
+                "maintenance_forecasts": [
+                    EquipmentMaintenanceForecastResponse.model_validate(f)
+                    for f in equipment.maintenance_forecasts
+                ],
+                "load_expenses": load_expenses,
+            }
+            equipment_list.append(equip_dict)
+
+        return equipment_list
 
