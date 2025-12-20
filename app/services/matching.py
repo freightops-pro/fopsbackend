@@ -101,7 +101,7 @@ class MatchingService:
                 MatchingSuggestion(
                     driver_id=driver.id,
                     driver_name=f"{driver.first_name} {driver.last_name}".strip(),
-                    truck_id=self._select_truck(load),
+                    truck_id=self._get_driver_truck(driver),
                     score=round(score, 2),
                     reasons=reasons,
                     eta_available=self._eta(driver),
@@ -152,14 +152,10 @@ class MatchingService:
         )
         return list(result.scalars().all())
 
-    def _select_truck(self, load: Load) -> str | None:
-        """Get preferred truck ID from load metadata or return None."""
-        preferred = (getattr(load, "preferred_truck_ids", None) or [])
-        if preferred:
-            return preferred[0]
-        # Check metadata for assigned truck
-        if load.metadata_json and "assigned_truck_id" in load.metadata_json:
-            return load.metadata_json.get("assigned_truck_id")
+    def _get_driver_truck(self, driver: Driver) -> str | None:
+        """Get the driver's assigned truck from their profile metadata."""
+        if driver.profile_metadata and "assigned_truck_id" in driver.profile_metadata:
+            return driver.profile_metadata.get("assigned_truck_id")
         return None
 
     def _eta(self, driver: Driver) -> datetime:
