@@ -277,6 +277,16 @@ app.include_router(api_router, prefix="/api")
 async def root() -> dict[str, str]:
     return {"status": "ok", "environment": settings.environment}
 
+@app.get("/debug/cors", tags=["Debug"])
+async def debug_cors() -> dict:
+    """Debug endpoint to check CORS configuration."""
+    import os
+    return {
+        "cors_origins": settings.backend_cors_origins,
+        "cors_origins_env": os.environ.get("CORS_ORIGINS", "NOT SET"),
+        "cors_origins_count": len(settings.backend_cors_origins),
+    }
+
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict:
     """Health check endpoint - responds immediately, reports database status."""
