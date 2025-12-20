@@ -258,6 +258,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Debug: Log CORS origins at startup
+print(f"[CORS] Configured origins: {settings.backend_cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.backend_cors_origins,
