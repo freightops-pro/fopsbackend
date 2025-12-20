@@ -16,16 +16,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     backend_cors_origins: Union[str, List[str]] = Field(
-        default=[
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:3000",
-            "http://localhost:4173",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:5174",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:4173"
-        ],
+        default=[],
         validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
     )
 
