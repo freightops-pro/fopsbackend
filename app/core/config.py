@@ -24,7 +24,9 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://127.0.0.1:5174",
             "http://127.0.0.1:3000",
-            "http://127.0.0.1:4173"
+            "http://127.0.0.1:4173",
+            "https://freightopstms.up.railway.app",
+            "https://fopsbackend-production.up.railway.app"
         ],
         validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
     )
