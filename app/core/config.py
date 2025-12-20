@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import List, Optional, Union
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,33 +24,21 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://127.0.0.1:5174",
             "http://127.0.0.1:3000",
-            "http://127.0.0.1:4173",
-            "https://freightopstms.up.railway.app",
-            "https://fopsbackend-production.up.railway.app"
+            "http://127.0.0.1:4173"
         ],
         validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
     )
 
-    @model_validator(mode="before")
+    @field_validator('backend_cors_origins', mode='before')
     @classmethod
-    def parse_cors_origins(cls, values):
+    def parse_cors_origins(cls, v):
         """Parse CORS_ORIGINS from environment variable (comma-separated string or list)."""
-        cors_key = None
-        for key in ["backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins"]:
-            if key in values:
-                cors_key = key
-                break
-
-        if cors_key and isinstance(values[cors_key], str):
-            cors_value = values[cors_key].strip()
-            # Handle empty string - remove key to use default
-            if not cors_value:
-                del values[cors_key]
-            else:
-                # Split by comma and strip whitespace
-                values[cors_key] = [origin.strip() for origin in cors_value.split(",") if origin.strip()]
-
-        return values
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
 
     database_url: str  # Required - no default, must be set in .env
 
