@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 import uuid
 
 from fastapi import FastAPI
@@ -259,7 +260,10 @@ app = FastAPI(
 )
 
 # Debug: Log CORS origins at startup
-print(f"[CORS] Configured origins: {settings.backend_cors_origins}")
+print(f"[CORS] Raw env CORS_ORIGINS: {os.environ.get('CORS_ORIGINS', 'NOT SET')}")
+print(f"[CORS] Settings cors_origins_raw: {settings.cors_origins_raw}")
+print(f"[CORS] Parsed origins list: {settings.backend_cors_origins}")
+print(f"[CORS] Origins count: {len(settings.backend_cors_origins)}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -280,10 +284,11 @@ async def root() -> dict[str, str]:
 @app.get("/debug/cors", tags=["Debug"])
 async def debug_cors() -> dict:
     """Debug endpoint to check CORS configuration."""
-    import os
     return {
         "cors_origins": settings.backend_cors_origins,
+        "cors_origins_raw": settings.cors_origins_raw,
         "cors_origins_env": os.environ.get("CORS_ORIGINS", "NOT SET"),
+        "backend_cors_origins_env": os.environ.get("BACKEND_CORS_ORIGINS", "NOT SET"),
         "cors_origins_count": len(settings.backend_cors_origins),
     }
 

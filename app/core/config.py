@@ -1,7 +1,8 @@
 from functools import lru_cache
-from typing import List, Optional, Union
+import os
+from typing import List, Optional
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,21 +16,26 @@ class Settings(BaseSettings):
     project_name: str = "FreightOps API v2"
     environment: str = "development"
 
-    backend_cors_origins: Union[str, List[str]] = Field(
-        default=[],
-        validation_alias=AliasChoices("backend_cors_origins", "BACKEND_CORS_ORIGINS", "CORS_ORIGINS", "cors_origins")
+    # Raw CORS origins string - read from env
+    cors_origins_raw: Optional[str] = Field(
+        default=None,
+        alias="CORS_ORIGINS"
     )
 
-    @field_validator('backend_cors_origins', mode='before')
-    @classmethod
-    def parse_cors_origins(cls, v):
-        """Parse CORS_ORIGINS from environment variable (comma-separated string or list)."""
-        if isinstance(v, str):
-            v = v.strip()
-            if not v:
-                return []
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
+    @computed_field
+    @property
+    def backend_cors_origins(self) -> List[str]:
+        """Parse CORS_ORIGINS from environment variable (comma-separated string)."""
+        # Check multiple possible env var names
+        raw = self.cors_origins_raw
+        if not raw:
+            raw = os.environ.get("CORS_ORIGINS") or os.environ.get("BACKEND_CORS_ORIGINS") or ""
+
+        if not raw or not raw.strip():
+            return []
+
+        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        return origins
 
     database_url: str  # Required - no default, must be set in .env
 
