@@ -225,7 +225,7 @@ async def update_employee(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_employee(
     employee_id: str,
     _: HQEmployee = Depends(get_current_hq_employee),

@@ -700,7 +700,7 @@ async def update_application(
     return _build_application_response(app)
 
 
-@router.delete("/applications/{application_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/applications/{application_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_application(
     application_id: str,
     company_id: str = Depends(_company_id),

@@ -158,12 +158,12 @@ def update_dqf_document(
     return DQFDocumentResponse.model_validate(document)
 
 
-@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_dqf_document(
     document_id: str,
     company_id: str = Depends(_company_id),
     db: Session = Depends(get_db_sync),
-):
+) -> None:
     """Delete a DQF document."""
     document = db.query(DQFDocument).filter(
         DQFDocument.id == document_id,

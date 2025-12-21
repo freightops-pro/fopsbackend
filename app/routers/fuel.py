@@ -150,7 +150,7 @@ async def update_fuel_card(
     return _card_to_response(card)
 
 
-@router.delete("/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_fuel_card(
     card_id: str,
     company_id: str = Depends(_company_id),

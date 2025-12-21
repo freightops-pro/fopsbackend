@@ -221,12 +221,12 @@ async def update_company_integration(
     return CompanyIntegrationResponse.model_validate(integration)
 
 
-@router.delete("/company/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/company/{integration_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_company_integration(
     integration_id: str,
     company_id: str = Depends(_company_id),
     db: AsyncSession = Depends(get_db),
-):
+) -> None:
     """Delete a company integration."""
     result = await db.execute(
         select(CompanyIntegration).where(

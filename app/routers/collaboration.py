@@ -87,7 +87,7 @@ async def get_channel_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_channel(
     channel_id: str,
     company_id: str = Depends(_company_id),

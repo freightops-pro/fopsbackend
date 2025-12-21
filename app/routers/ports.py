@@ -138,7 +138,7 @@ async def update_port_integration(
     return PortIntegrationResponse.model_validate(integration)
 
 
-@router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_port_integration(
     integration_id: str,
     company_id: str = Depends(_company_id),

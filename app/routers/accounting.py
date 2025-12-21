@@ -200,7 +200,7 @@ async def update_customer(
     return CustomerResponse.model_validate(customer)
 
 
-@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_customer(
     customer_id: str,
     company_id: str = Depends(_company_id),
@@ -280,7 +280,7 @@ async def update_vendor(
     return VendorResponse.model_validate(vendor)
 
 
-@router.delete("/vendors/{vendor_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/vendors/{vendor_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_vendor(
     vendor_id: str,
     company_id: str = Depends(_company_id),

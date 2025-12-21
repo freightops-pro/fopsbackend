@@ -112,7 +112,7 @@ async def update_insurance(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/insurance/{insurance_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/insurance/{insurance_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_insurance(
     insurance_id: str,
     company_id: str = Depends(_company_id),
@@ -165,7 +165,7 @@ async def update_credential(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_credential(
     credential_id: str,
     company_id: str = Depends(_company_id),
@@ -218,7 +218,7 @@ async def update_registration(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/registrations/{registration_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/registrations/{registration_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_registration(
     registration_id: str,
     company_id: str = Depends(_company_id),
