@@ -11,6 +11,7 @@ from app.routers import (
     background_checks,
     banking,
     billing,
+    carrier_compliance,
     company,
     collaboration,
     dashboard,
@@ -63,6 +64,7 @@ api_router.include_router(hr.router, prefix="/hr", tags=["HR"])
 api_router.include_router(payroll.router, prefix="/payroll", tags=["Payroll"])
 api_router.include_router(fleet.router, prefix="/fleet", tags=["Fleet"])
 api_router.include_router(equipment.router, prefix="/fleet", tags=["Fleet"])
+api_router.include_router(carrier_compliance.router, prefix="/fleet/carrier-compliance", tags=["Carrier Compliance"])
 api_router.include_router(ports.router, prefix="/ports", tags=["Ports"])
 api_router.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
