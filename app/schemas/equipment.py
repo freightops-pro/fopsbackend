@@ -92,6 +92,88 @@ class EquipmentMaintenanceForecastResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ============ Permit Schemas ============
+
+class EquipmentPermitCreate(BaseModel):
+    permit_type: str
+    permit_number: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    issue_date: Optional[date] = None
+    expiration_date: Optional[date] = None
+    status: str = "COMPLIANT"
+    notes: Optional[str] = None
+
+
+class EquipmentPermitResponse(BaseModel):
+    id: str
+    equipment_id: str
+    permit_type: str
+    permit_number: Optional[str]
+    jurisdiction: Optional[str]
+    issue_date: Optional[date]
+    expiration_date: Optional[date]
+    status: str
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ============ Insurance Schemas ============
+
+class EquipmentInsuranceCreate(BaseModel):
+    carrier: str
+    policy_number: str
+    coverage_type: str
+    effective_date: date
+    expiration_date: date
+    limit_amount: Optional[float] = None
+
+
+class EquipmentInsuranceResponse(BaseModel):
+    id: str
+    equipment_id: str
+    carrier: str
+    policy_number: str
+    coverage_type: str
+    effective_date: date
+    expiration_date: date
+    limit_amount: Optional[float]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ============ Fuel Schemas ============
+
+class EquipmentFuelCreate(BaseModel):
+    transaction_date: date
+    location: Optional[str] = None
+    gallons: float = Field(..., gt=0)
+    cost: float = Field(..., ge=0)
+    driver_id: Optional[str] = None
+    fuel_card: Optional[str] = None
+    jurisdiction: Optional[str] = None
+
+
+class EquipmentFuelResponse(BaseModel):
+    id: str
+    equipment_id: Optional[str]
+    transaction_date: date
+    location: Optional[str]
+    gallons: float
+    cost: float
+    driver_id: Optional[str]
+    fuel_card: Optional[str]
+    jurisdiction: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class TruckLoadExpenseBreakdown(BaseModel):
     """Expense breakdown by category for a load."""
     fuel: float = 0
@@ -146,6 +228,8 @@ class EquipmentResponse(BaseModel):
     maintenance_events: List[EquipmentMaintenanceEventResponse] = []
     usage_events: List[EquipmentUsageEventResponse] = []
     maintenance_forecasts: List[EquipmentMaintenanceForecastResponse] = []
+    permits: List[EquipmentPermitResponse] = []
+    insurance_policies: List[EquipmentInsuranceResponse] = []
 
     # Expense tracking for settlement (populated from fuel transactions matched to loads)
     load_expenses: List[TruckLoadExpense] = []

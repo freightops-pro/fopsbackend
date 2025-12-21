@@ -11,18 +11,26 @@ from sqlalchemy.orm import selectinload
 
 from app.models.equipment import (
     Equipment,
+    EquipmentInsurance,
     EquipmentMaintenanceEvent,
     EquipmentMaintenanceForecast,
+    EquipmentPermit,
     EquipmentUsageEvent,
 )
 from app.models.load import Load
 from app.models.fuel import FuelTransaction
 from app.schemas.equipment import (
     EquipmentCreate,
+    EquipmentFuelCreate,
+    EquipmentFuelResponse,
+    EquipmentInsuranceCreate,
+    EquipmentInsuranceResponse,
     EquipmentLocationUpdate,
     EquipmentMaintenanceCreate,
     EquipmentMaintenanceEventResponse,
     EquipmentMaintenanceForecastResponse,
+    EquipmentPermitCreate,
+    EquipmentPermitResponse,
     EquipmentResponse,
     EquipmentUsageEventCreate,
     EquipmentUsageEventResponse,
@@ -58,6 +66,8 @@ class EquipmentService:
                 selectinload(Equipment.maintenance_events),
                 selectinload(Equipment.usage_events),
                 selectinload(Equipment.maintenance_forecasts),
+                selectinload(Equipment.permits),
+                selectinload(Equipment.insurance_policies),
             )
             .order_by(Equipment.unit_number)
         )
@@ -553,6 +563,8 @@ class EquipmentService:
                 selectinload(Equipment.maintenance_events),
                 selectinload(Equipment.usage_events),
                 selectinload(Equipment.maintenance_forecasts),
+                selectinload(Equipment.permits),
+                selectinload(Equipment.insurance_policies),
             )
             .order_by(Equipment.unit_number)
         )
@@ -606,9 +618,134 @@ class EquipmentService:
                     EquipmentMaintenanceForecastResponse.model_validate(f)
                     for f in equipment.maintenance_forecasts
                 ],
+                "permits": [
+                    EquipmentPermitResponse.model_validate(p)
+                    for p in equipment.permits
+                ],
+                "insurance_policies": [
+                    EquipmentInsuranceResponse.model_validate(i)
+                    for i in equipment.insurance_policies
+                ],
                 "load_expenses": load_expenses,
             }
             equipment_list.append(equip_dict)
 
         return equipment_list
+
+    # ============ Permit Methods ============
+
+    async def add_permit(
+        self,
+        company_id: str,
+        equipment_id: str,
+        payload: EquipmentPermitCreate,
+    ) -> EquipmentPermitResponse:
+        """Add a permit record to equipment."""
+        equipment = await self._get_equipment(company_id, equipment_id)
+
+        # Calculate status based on expiration date
+        status = self._calculate_compliance_status(payload.expiration_date)
+
+        permit = EquipmentPermit(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            equipment_id=equipment.id,
+            permit_type=payload.permit_type.upper(),
+            permit_number=payload.permit_number,
+            jurisdiction=payload.jurisdiction,
+            issue_date=payload.issue_date,
+            expiration_date=payload.expiration_date,
+            status=status,
+            notes=payload.notes,
+        )
+        self.db.add(permit)
+        await self.db.commit()
+        await self.db.refresh(permit)
+        return EquipmentPermitResponse.model_validate(permit)
+
+    # ============ Insurance Methods ============
+
+    async def add_insurance(
+        self,
+        company_id: str,
+        equipment_id: str,
+        payload: EquipmentInsuranceCreate,
+    ) -> EquipmentInsuranceResponse:
+        """Add an insurance policy to equipment."""
+        equipment = await self._get_equipment(company_id, equipment_id)
+
+        # Calculate status based on expiration date
+        status = self._calculate_compliance_status(payload.expiration_date)
+
+        insurance = EquipmentInsurance(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            equipment_id=equipment.id,
+            carrier=payload.carrier,
+            policy_number=payload.policy_number,
+            coverage_type=payload.coverage_type.upper(),
+            effective_date=payload.effective_date,
+            expiration_date=payload.expiration_date,
+            limit_amount=payload.limit_amount,
+            status=status,
+        )
+        self.db.add(insurance)
+        await self.db.commit()
+        await self.db.refresh(insurance)
+        return EquipmentInsuranceResponse.model_validate(insurance)
+
+    # ============ Fuel Methods ============
+
+    async def add_fuel_record(
+        self,
+        company_id: str,
+        equipment_id: str,
+        payload: EquipmentFuelCreate,
+    ) -> EquipmentFuelResponse:
+        """Add a fuel transaction record linked to equipment."""
+        equipment = await self._get_equipment(company_id, equipment_id)
+
+        fuel = FuelTransaction(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            truck_id=equipment.id,
+            driver_id=payload.driver_id,
+            transaction_date=payload.transaction_date,
+            location=payload.location,
+            gallons=Decimal(str(payload.gallons)),
+            cost=Decimal(str(payload.cost)),
+            fuel_card=payload.fuel_card,
+            jurisdiction=payload.jurisdiction,
+        )
+        self.db.add(fuel)
+        await self.db.commit()
+        await self.db.refresh(fuel)
+
+        return EquipmentFuelResponse(
+            id=fuel.id,
+            equipment_id=equipment.id,
+            transaction_date=fuel.transaction_date,
+            location=fuel.location,
+            gallons=float(fuel.gallons),
+            cost=float(fuel.cost),
+            driver_id=fuel.driver_id,
+            fuel_card=fuel.fuel_card,
+            jurisdiction=fuel.jurisdiction,
+            created_at=fuel.created_at,
+        )
+
+    def _calculate_compliance_status(self, expiration_date: Optional[date]) -> str:
+        """Calculate compliance status based on expiration date."""
+        if not expiration_date:
+            return "COMPLIANT"
+
+        today = date.today()
+        days_until_expiry = (expiration_date - today).days
+
+        if days_until_expiry < 0:
+            return "EXPIRED"
+        elif days_until_expiry <= 30:
+            return "EXPIRING"
+        else:
+            return "COMPLIANT"
 

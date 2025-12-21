@@ -9,10 +9,16 @@ from app.core.db import get_db
 from app.schemas.equipment import (
     BulkLocationUpdate,
     EquipmentCreate,
+    EquipmentFuelCreate,
+    EquipmentFuelResponse,
+    EquipmentInsuranceCreate,
+    EquipmentInsuranceResponse,
     EquipmentLocationUpdate,
     EquipmentMaintenanceCreate,
     EquipmentMaintenanceEventResponse,
     EquipmentMaintenanceForecastResponse,
+    EquipmentPermitCreate,
+    EquipmentPermitResponse,
     EquipmentResponse,
     EquipmentUsageEventCreate,
     EquipmentUsageEventResponse,
@@ -166,4 +172,70 @@ async def get_equipment_with_locations(
     Useful for populating the fleet tracking map.
     """
     return await service.get_equipment_with_locations(company_id)
+
+
+# ============ Permit Endpoints ============
+
+
+@router.post(
+    "/equipment/{equipment_id}/permits",
+    response_model=EquipmentPermitResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add permit to equipment",
+    description="Add a permit record (IRP, IFTA cab card, oversize, etc.) to equipment.",
+)
+async def add_equipment_permit(
+    equipment_id: str,
+    payload: EquipmentPermitCreate,
+    company_id: str = Depends(_company_id),
+    service: EquipmentService = Depends(_service),
+) -> EquipmentPermitResponse:
+    try:
+        return await service.add_permit(company_id, equipment_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# ============ Insurance Endpoints ============
+
+
+@router.post(
+    "/equipment/{equipment_id}/insurance",
+    response_model=EquipmentInsuranceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add insurance policy to equipment",
+    description="Add an insurance policy to equipment.",
+)
+async def add_equipment_insurance(
+    equipment_id: str,
+    payload: EquipmentInsuranceCreate,
+    company_id: str = Depends(_company_id),
+    service: EquipmentService = Depends(_service),
+) -> EquipmentInsuranceResponse:
+    try:
+        return await service.add_insurance(company_id, equipment_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# ============ Fuel Endpoints ============
+
+
+@router.post(
+    "/equipment/{equipment_id}/fuel",
+    response_model=EquipmentFuelResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add fuel transaction to equipment",
+    description="Log a fuel purchase for equipment.",
+)
+async def add_equipment_fuel(
+    equipment_id: str,
+    payload: EquipmentFuelCreate,
+    company_id: str = Depends(_company_id),
+    service: EquipmentService = Depends(_service),
+) -> EquipmentFuelResponse:
+    try:
+        return await service.add_fuel_record(company_id, equipment_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 

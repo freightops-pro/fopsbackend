@@ -68,6 +68,18 @@ class Equipment(Base):
         cascade="all, delete-orphan",
         order_by="desc(EquipmentMaintenanceForecast.generated_at)",
     )
+    permits = relationship(
+        "EquipmentPermit",
+        back_populates="equipment",
+        cascade="all, delete-orphan",
+        order_by="desc(EquipmentPermit.created_at)",
+    )
+    insurance_policies = relationship(
+        "EquipmentInsurance",
+        back_populates="equipment",
+        cascade="all, delete-orphan",
+        order_by="desc(EquipmentInsurance.created_at)",
+    )
 
 
 class EquipmentUsageEvent(Base):
@@ -135,4 +147,48 @@ class EquipmentMaintenanceForecast(Base):
 
     equipment = relationship("Equipment", back_populates="maintenance_forecasts")
     basis_event = relationship("EquipmentMaintenanceEvent", back_populates="forecasts")
+
+
+class EquipmentPermit(Base):
+    """Permit records for individual equipment (IRP, IFTA cab card, oversize permits, etc.)"""
+    __tablename__ = "fleet_equipment_permit"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    equipment_id = Column(String, ForeignKey("fleet_equipment.id"), nullable=False, index=True)
+
+    permit_type = Column(String, nullable=False)  # IRP, IFTA, OVERSIZE, HAZMAT, etc.
+    permit_number = Column(String, nullable=True)
+    jurisdiction = Column(String, nullable=True)
+    issue_date = Column(Date, nullable=True)
+    expiration_date = Column(Date, nullable=True)
+    status = Column(String, nullable=False, default="COMPLIANT")  # COMPLIANT, EXPIRING, EXPIRED
+    notes = Column(String, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    equipment = relationship("Equipment", back_populates="permits")
+
+
+class EquipmentInsurance(Base):
+    """Insurance policies for individual equipment"""
+    __tablename__ = "fleet_equipment_insurance"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    equipment_id = Column(String, ForeignKey("fleet_equipment.id"), nullable=False, index=True)
+
+    carrier = Column(String, nullable=False)
+    policy_number = Column(String, nullable=False)
+    coverage_type = Column(String, nullable=False)  # LIABILITY, CARGO, PHYSICAL_DAMAGE, etc.
+    effective_date = Column(Date, nullable=False)
+    expiration_date = Column(Date, nullable=False)
+    limit_amount = Column(Numeric(14, 2), nullable=True)
+    status = Column(String, nullable=False, default="COMPLIANT")  # COMPLIANT, EXPIRING, EXPIRED
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    equipment = relationship("Equipment", back_populates="insurance_policies")
 
