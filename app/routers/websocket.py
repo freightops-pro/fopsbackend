@@ -553,7 +553,8 @@ async def handle_chat_message(data: dict, user, driver_id: Optional[str], db: As
     from app.models.collaboration import Channel, Message
     from app.websocket.hub import channel_hub
 
-    message_body = data.get("message", "")
+    # Accept both "message" (legacy) and "body" (frontend standard) field names
+    message_body = data.get("message") or data.get("body", "")
     channel_id = data.get("channel_id")
     company_id = str(user.company_id)
 

@@ -734,6 +734,63 @@ class DriverService:
             message=f"New temporary password generated for {user.email}",
         )
 
+    async def create_user_account(
+        self, company_id: str, driver_id: str
+    ) -> GeneratePasswordResponse:
+        """Create a user account for a driver who doesn't have one yet."""
+        driver = await self._get_driver(company_id, driver_id)
+
+        if driver.user_id:
+            raise ValueError("Driver already has a user account")
+
+        if not driver.email:
+            raise ValueError("Driver must have an email address to create app access")
+
+        email_lower = driver.email.lower()
+
+        # Check if user already exists with this email
+        existing_user = await self.db.execute(select(User).where(User.email == email_lower))
+        if existing_user.scalar_one_or_none():
+            raise ValueError(f"A user with email {email_lower} already exists")
+
+        # Generate temporary password
+        temporary_password = self._generate_temporary_password()
+
+        # Create user account
+        user = User(
+            id=str(uuid.uuid4()),
+            email=email_lower,
+            hashed_password=hash_password(temporary_password),
+            first_name=driver.first_name,
+            last_name=driver.last_name,
+            company_id=company_id,
+            role="driver",
+            is_active=True,
+            must_change_password=True,
+        )
+        self.db.add(user)
+        await self.db.flush()
+
+        # Link driver to user
+        driver.user_id = user.id
+        await self.db.commit()
+
+        # Send invitation email with credentials
+        try:
+            EmailService.send_driver_invitation(
+                email=email_lower,
+                first_name=driver.first_name,
+                last_name=driver.last_name,
+                temporary_password=temporary_password,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to send invitation email to {email_lower}: {e}")
+
+        return GeneratePasswordResponse(
+            temporary_password=temporary_password,
+            message=f"App access created for {email_lower}. Login credentials have been sent.",
+        )
+
     async def get_driver_equipment(self, company_id: str, driver_id: str) -> DriverEquipmentInfo:
         """Get equipment assigned to a driver."""
         from app.models.equipment import Equipment
