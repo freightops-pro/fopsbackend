@@ -285,15 +285,34 @@ async def create_drivers(db: AsyncSession, company_id: str) -> List[Driver]:
 
 
 async def create_equipment(db: AsyncSession, company_id: str) -> tuple[List[Equipment], List[Equipment]]:
-    """Create 20 trucks and 15 trailers."""
+    """Create 20 trucks and 15 trailers with live location data."""
     trucks = []
     trailers = []
     today = date.today()
+    now = datetime.now()
 
-    # Create 20 trucks
+    # Create 20 trucks with live GPS locations
     for i in range(1, 21):
         make, model = random.choice(TRUCK_MAKES)
         year = random.randint(2019, 2024)
+
+        # Pick a random city for current location
+        city_data = random.choice(CITIES)
+        city_name, state, base_lat, base_lng = city_data
+
+        # Add some random offset to spread trucks around (within ~50 miles)
+        lat_offset = random.uniform(-0.5, 0.5)
+        lng_offset = random.uniform(-0.5, 0.5)
+        current_lat = base_lat + lat_offset
+        current_lng = base_lng + lng_offset
+
+        # Simulate movement - some trucks moving, some parked
+        is_moving = random.random() > 0.3  # 70% are moving
+        speed = random.uniform(55, 75) if is_moving else 0
+        heading = random.uniform(0, 360) if is_moving else None
+
+        # Last update within the past 5 minutes for active tracking
+        last_update = now - timedelta(seconds=random.randint(10, 300))
 
         truck = Equipment(
             id=generate_id(),
@@ -301,7 +320,7 @@ async def create_equipment(db: AsyncSession, company_id: str) -> tuple[List[Equi
             unit_number=generate_unit_number("T", i),
             equipment_type="TRACTOR",
             status="ACTIVE",
-            operational_status="IN_SERVICE",
+            operational_status="IN_TRANSIT" if is_moving else "IN_SERVICE",
             make=make,
             model=model,
             year=year,
@@ -312,6 +331,14 @@ async def create_equipment(db: AsyncSession, company_id: str) -> tuple[List[Equi
             gps_device_id=f"SAMSARA-{generate_id()[:8].upper()}",
             eld_provider="samsara",
             eld_device_id=f"ELD-{generate_id()[:8].upper()}",
+            # Live location data
+            current_lat=current_lat,
+            current_lng=current_lng,
+            current_city=city_name,
+            current_state=state,
+            last_location_update=last_update,
+            heading=heading,
+            speed_mph=speed,
         )
         db.add(truck)
         trucks.append(truck)
