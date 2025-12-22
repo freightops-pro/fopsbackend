@@ -244,3 +244,288 @@ class BankingApplicationDocument(Base):
     # Relationships
     application = relationship("BankingApplication", back_populates="documents")
 
+
+# =============================================================================
+# Banking Statement Model (Synctera Integration)
+# =============================================================================
+
+
+class BankingStatement(Base):
+    """Monthly account statement from Synctera."""
+
+    __tablename__ = "banking_statement"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera statement ID
+
+    # Statement period
+    statement_date = Column(Date, nullable=False)  # End of period date
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+
+    # Balances
+    opening_balance = Column(Numeric(14, 2), nullable=False, default=0)
+    closing_balance = Column(Numeric(14, 2), nullable=False, default=0)
+    total_credits = Column(Numeric(14, 2), nullable=False, default=0)
+    total_debits = Column(Numeric(14, 2), nullable=False, default=0)
+    transaction_count = Column(Integer, nullable=False, default=0)
+
+    # PDF storage
+    pdf_url = Column(String, nullable=True)  # URL to generated PDF
+    pdf_generated_at = Column(DateTime, nullable=True)
+
+    # Status
+    status = Column(String, nullable=False, default="pending")  # pending, available, generating
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking Document Model (Synctera Integration)
+# =============================================================================
+
+
+class BankingDocument(Base):
+    """Document record for banking (agreements, tax forms, etc.)."""
+
+    __tablename__ = "banking_document"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    customer_id = Column(String, ForeignKey("banking_customer.id"), nullable=True, index=True)
+    account_id = Column(String, ForeignKey("banking_account.id"), nullable=True, index=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera document ID
+
+    # Document info
+    document_type = Column(String, nullable=False)  # account_agreement, fee_schedule, tax_1099, etc.
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+
+    # File info
+    file_url = Column(String, nullable=True)
+    file_name = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=True)
+    mime_type = Column(String, nullable=True)
+
+    # Tax document specific
+    year = Column(Integer, nullable=True)  # For tax documents
+
+    # Status
+    status = Column(String, nullable=False, default="pending")  # pending, available, generating, expired
+    expires_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking Dispute Model (Synctera Integration)
+# =============================================================================
+
+
+class BankingDispute(Base):
+    """Transaction dispute record for chargeback processing."""
+
+    __tablename__ = "banking_dispute"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
+    transaction_id = Column(String, nullable=False, index=True)  # Reference to disputed transaction
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera dispute ID
+
+    # Transaction info (cached for display)
+    transaction_date = Column(DateTime, nullable=True)
+    transaction_amount = Column(Numeric(12, 2), nullable=True)
+    transaction_description = Column(String, nullable=True)
+    merchant_name = Column(String, nullable=True)
+
+    # Dispute details
+    reason = Column(String, nullable=False)  # NO_CARDHOLDER_AUTHORIZATION, FRAUD, DUPLICATE, etc.
+    reason_details = Column(Text, nullable=True)
+    disputed_amount = Column(Numeric(12, 2), nullable=False)
+
+    # Status tracking (Synctera lifecycle)
+    status = Column(String, nullable=False, default="submitted")  # submitted, under_review, pending_documentation, resolved_in_favor, resolved_against, withdrawn, closed
+    lifecycle_state = Column(String, nullable=True)  # PENDING_ACTION, CHARGEBACK, REPRESENTMENT, PRE_ARBITRATION, ARBITRATION, DENIED, WRITE_OFF
+    decision = Column(String, nullable=True)  # WON, LOST, ONGOING, RESOLVED, NONE
+    credit_status = Column(String, nullable=True)  # NONE, PROVISIONAL, FINAL
+
+    # Credit info
+    provisional_credit = Column(Numeric(12, 2), nullable=True)
+    provisional_credit_date = Column(DateTime, nullable=True)
+
+    # Resolution
+    resolution_date = Column(DateTime, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+
+    # Supporting documents (JSON array of URLs)
+    documents = Column(JSON, nullable=True)
+
+    # Timestamps
+    date_customer_reported = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking Check Deposit Model
+# =============================================================================
+
+
+class BankingCheckDeposit(Base):
+    """Mobile check deposit record."""
+
+    __tablename__ = "banking_check_deposit"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera deposit ID
+
+    # Check details
+    amount = Column(Numeric(12, 2), nullable=False)
+    check_number = Column(String, nullable=True)
+    memo = Column(String, nullable=True)
+
+    # Check images
+    front_image_url = Column(String, nullable=False)
+    back_image_url = Column(String, nullable=False)
+
+    # Status tracking
+    status = Column(String, nullable=False, default="pending")  # pending, approved, rejected, processing, completed
+    rejection_reason = Column(Text, nullable=True)
+
+    # Processing info
+    initiated_by = Column(String, nullable=True)  # User ID
+    processed_at = Column(DateTime, nullable=True)
+    available_at = Column(DateTime, nullable=True)  # When funds become available
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking Fraud Report Model
+# =============================================================================
+
+
+class BankingFraudReport(Base):
+    """Fraud report for suspected fraudulent activity."""
+
+    __tablename__ = "banking_fraud_report"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
+    card_id = Column(String, ForeignKey("banking_card.id"), nullable=True, index=True)
+    synctera_id = Column(String, nullable=True, unique=True, index=True)  # Synctera case ID
+
+    # Affected transactions (JSON array of transaction IDs)
+    transaction_ids = Column(JSON, nullable=True)
+
+    # Fraud details
+    fraud_type = Column(String, nullable=False)  # unauthorized, lost_card, stolen_card, counterfeit, account_takeover, other
+    description = Column(Text, nullable=True)
+
+    # Status tracking
+    status = Column(String, nullable=False, default="submitted")  # submitted, investigating, resolved, closed
+    resolution_notes = Column(Text, nullable=True)
+
+    # Reporting info
+    reported_by = Column(String, nullable=True)  # User ID
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(String, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking Transfer Model (for tracking transfers)
+# =============================================================================
+
+
+class BankingTransfer(Base):
+    """Transfer record for internal, ACH, and wire transfers."""
+
+    __tablename__ = "banking_transfer"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+    external_id = Column(String, nullable=True, unique=True, index=True)  # Synctera transfer ID
+
+    # Transfer type
+    transfer_type = Column(String, nullable=False)  # internal, ach, wire
+
+    # Accounts
+    from_account_id = Column(String, ForeignKey("banking_account.id"), nullable=False, index=True)
+    to_account_id = Column(String, ForeignKey("banking_account.id"), nullable=True, index=True)  # For internal transfers
+
+    # Amount
+    amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(String, nullable=False, default="USD")
+    fee_amount = Column(Numeric(10, 2), nullable=True)
+
+    # Recipient info (for ACH/Wire)
+    recipient_id = Column(String, nullable=True)  # Saved recipient ID
+    recipient_name = Column(String, nullable=True)
+    recipient_routing_number = Column(String, nullable=True)
+    recipient_account_number = Column(String, nullable=True)
+    recipient_account_type = Column(String, nullable=True)  # checking, savings
+    recipient_bank_name = Column(String, nullable=True)
+
+    # Wire-specific fields
+    wire_type = Column(String, nullable=True)  # domestic, international
+    recipient_swift_code = Column(String, nullable=True)
+    recipient_address = Column(JSON, nullable=True)
+
+    # Transfer details
+    description = Column(String, nullable=True)
+    scheduled_date = Column(DateTime, nullable=True)
+    estimated_completion_date = Column(DateTime, nullable=True)
+
+    # Status tracking
+    status = Column(String, nullable=False, default="pending")  # pending, processing, completed, failed, cancelled
+    error_message = Column(Text, nullable=True)
+
+    # Processing info
+    initiated_by = Column(String, nullable=True)  # User ID
+    processed_at = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Banking ACH Recipient Model (saved recipients)
+# =============================================================================
+
+
+class BankingACHRecipient(Base):
+    """Saved ACH recipient for faster transfers."""
+
+    __tablename__ = "banking_ach_recipient"
+
+    id = Column(String, primary_key=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
+
+    # Recipient details
+    name = Column(String, nullable=False)
+    routing_number = Column(String, nullable=False)
+    account_number = Column(String, nullable=False)  # Should be encrypted in production
+    account_type = Column(String, nullable=False)  # checking, savings
+
+    # Metadata
+    nickname = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

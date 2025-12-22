@@ -10,9 +10,15 @@ Handles all money movement operations:
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from enum import Enum
 import uuid
 import httpx
+import logging
+
+from app.models.accounting import LedgerEntry
+
+logger = logging.getLogger(__name__)
 
 
 class TransferType(str, Enum):
@@ -417,6 +423,17 @@ class TransferService:
         # Submit to Synctera
         await self._execute_ach_transfer(transfer_id)
 
+        # Create accounting ledger entries for the transfer
+        await self._create_accounting_entries(
+            company_id=company_id,
+            transfer_type=TransferType.ACH,
+            amount=amount,
+            fee_amount=0.0,  # ACH typically has no fee or minimal fee
+            description=description,
+            recipient_name=recipient_name,
+            transfer_id=transfer_id,
+        )
+
         await self.db.commit()
 
         return {
@@ -620,6 +637,17 @@ class TransferService:
         # This would integrate with Synctera's wire API
         # For now, mark as pending approval
 
+        # Create accounting ledger entries for the wire transfer
+        await self._create_accounting_entries(
+            company_id=company_id,
+            transfer_type=TransferType.WIRE,
+            amount=amount,
+            fee_amount=fee,
+            description=description,
+            recipient_name=recipient_name,
+            transfer_id=transfer_id,
+        )
+
         await self.db.commit()
 
         return {
@@ -757,3 +785,145 @@ class TransferService:
             })
 
         return transfers
+
+    # =========================================================================
+    # Accounting Integration - Create Ledger Entries for Transfers
+    # =========================================================================
+
+    async def _create_accounting_entries(
+        self,
+        company_id: str,
+        transfer_type: TransferType,
+        amount: float,
+        fee_amount: float,
+        description: str,
+        recipient_name: Optional[str] = None,
+        transfer_id: Optional[str] = None,
+    ) -> None:
+        """
+        Create accounting ledger entries for a completed transfer.
+
+        This integrates banking transfers with the accounting module by creating
+        ledger entries that track the financial impact of transfers.
+
+        For ACH/Wire transfers:
+        - Creates an expense entry for the transfer amount (payment to vendor/recipient)
+        - Creates an expense entry for any fees
+
+        For internal transfers:
+        - No ledger entries needed (internal movement between accounts)
+        """
+        now = datetime.utcnow()
+
+        # Internal transfers don't create ledger entries
+        # (just moving money between own accounts)
+        if transfer_type == TransferType.INTERNAL:
+            logger.debug(f"Internal transfer {transfer_id} - no ledger entry needed")
+            return
+
+        # Create ledger entry for ACH/Wire transfer amount
+        entry_id = str(uuid.uuid4())
+        entry = LedgerEntry(
+            id=entry_id,
+            company_id=company_id,
+            load_id=None,  # Not tied to a specific load
+            source="banking",  # New source type for banking transactions
+            category="expense",
+            quantity=1,
+            unit="payment",
+            amount=amount,
+            recorded_at=now,
+            metadata_json={
+                "transfer_id": transfer_id,
+                "transfer_type": transfer_type.value,
+                "recipient": recipient_name,
+                "description": description,
+            }
+        )
+        self.db.add(entry)
+
+        logger.info(
+            f"Created ledger entry {entry_id} for {transfer_type.value} transfer: "
+            f"${amount:.2f} to {recipient_name}"
+        )
+
+        # Create separate ledger entry for wire fees
+        if fee_amount > 0:
+            fee_entry_id = str(uuid.uuid4())
+            fee_entry = LedgerEntry(
+                id=fee_entry_id,
+                company_id=company_id,
+                load_id=None,
+                source="banking",
+                category="expense",
+                quantity=1,
+                unit="fee",
+                amount=fee_amount,
+                recorded_at=now,
+                metadata_json={
+                    "transfer_id": transfer_id,
+                    "transfer_type": transfer_type.value,
+                    "fee_type": "wire_fee" if transfer_type == TransferType.WIRE else "ach_fee",
+                    "description": f"Transfer fee: {description}",
+                }
+            )
+            self.db.add(fee_entry)
+
+            logger.info(
+                f"Created ledger entry {fee_entry_id} for transfer fee: ${fee_amount:.2f}"
+            )
+
+    async def record_incoming_payment(
+        self,
+        company_id: str,
+        amount: float,
+        description: str,
+        payer_name: str,
+        transfer_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+    ) -> str:
+        """
+        Record an incoming ACH payment as revenue in the ledger.
+
+        Called when a customer payment is received via ACH.
+
+        Args:
+            company_id: Company receiving payment
+            amount: Payment amount
+            description: Payment description
+            payer_name: Name of the payer
+            transfer_id: Optional banking transfer ID
+            invoice_id: Optional invoice ID being paid
+
+        Returns:
+            Ledger entry ID
+        """
+        now = datetime.utcnow()
+        entry_id = str(uuid.uuid4())
+
+        entry = LedgerEntry(
+            id=entry_id,
+            company_id=company_id,
+            load_id=None,
+            source="banking",
+            category="revenue",
+            quantity=1,
+            unit="payment",
+            amount=amount,
+            recorded_at=now,
+            metadata_json={
+                "transfer_id": transfer_id,
+                "invoice_id": invoice_id,
+                "payer": payer_name,
+                "description": description,
+                "payment_type": "ach_credit",
+            }
+        )
+        self.db.add(entry)
+        await self.db.commit()
+
+        logger.info(
+            f"Created revenue ledger entry {entry_id}: ${amount:.2f} from {payer_name}"
+        )
+
+        return entry_id

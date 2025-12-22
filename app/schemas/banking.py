@@ -272,3 +272,153 @@ class BankingApplicationUpdate(BaseModel):
     kyc_status: Optional[str] = None
     rejection_reason: Optional[str] = None
 
+
+# =============================================================================
+# Banking Statement Schemas (Synctera Integration)
+# =============================================================================
+
+
+class BankingStatementResponse(BaseModel):
+    """Response schema for a banking statement."""
+
+    id: str
+    account_id: str
+    account_name: Optional[str] = None
+    statement_date: date  # End of period date
+    period_start: date
+    period_end: date
+    opening_balance: float
+    closing_balance: float
+    total_credits: float
+    total_debits: float
+    transaction_count: int
+    pdf_url: Optional[str] = None
+    status: str  # available, generating, pending
+    synctera_id: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BankingStatementListResponse(BaseModel):
+    """Response schema for list of statements."""
+
+    statements: List[BankingStatementResponse]
+    total: int
+
+
+class StatementTransactionResponse(BaseModel):
+    """Response schema for a transaction in a statement."""
+
+    id: str
+    posted_date: datetime
+    effective_date: Optional[datetime] = None
+    description: Optional[str] = None
+    amount: float
+    dc_sign: str  # debit or credit
+    balance_after: Optional[float] = None
+    type: Optional[str] = None
+    subtype: Optional[str] = None
+
+
+# =============================================================================
+# Banking Document Schemas (Synctera Integration)
+# =============================================================================
+
+
+class BankingDocumentResponse(BaseModel):
+    """Response schema for a banking document."""
+
+    id: str
+    customer_id: Optional[str] = None
+    account_id: Optional[str] = None
+    document_type: str  # account_agreement, fee_schedule, privacy_policy, tax_1099, etc.
+    title: str
+    description: Optional[str] = None
+    file_url: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    year: Optional[int] = None  # For tax documents
+    status: str  # available, generating, pending, expired
+    expires_at: Optional[datetime] = None
+    synctera_id: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BankingDocumentListResponse(BaseModel):
+    """Response schema for list of documents."""
+
+    documents: List[BankingDocumentResponse]
+    total: int
+
+
+class BankingDocumentRequest(BaseModel):
+    """Request schema for requesting a document."""
+
+    customer_id: str
+    document_type: str
+    account_id: Optional[str] = None
+    year: Optional[int] = None  # For tax documents
+
+
+# =============================================================================
+# Banking Dispute Schemas (Synctera Integration)
+# =============================================================================
+
+
+class BankingDisputeCreate(BaseModel):
+    """Request schema for creating a dispute."""
+
+    account_id: str
+    transaction_id: str
+    reason: str  # NO_CARDHOLDER_AUTHORIZATION, FRAUD, DUPLICATE, etc.
+    reason_details: Optional[str] = Field(None, max_length=1000)
+    disputed_amount: float = Field(..., gt=0)
+    documents: Optional[List[str]] = None  # List of document URLs
+
+
+class BankingDisputeResponse(BaseModel):
+    """Response schema for a banking dispute."""
+
+    id: str
+    account_id: str
+    transaction_id: str
+    transaction_date: Optional[datetime] = None
+    transaction_amount: Optional[float] = None
+    transaction_description: Optional[str] = None
+    merchant_name: Optional[str] = None
+    reason: str
+    reason_details: Optional[str] = None
+    disputed_amount: float
+    status: str  # submitted, under_review, pending_documentation, resolved_in_favor, resolved_against, withdrawn, closed
+    lifecycle_state: Optional[str] = None  # PENDING_ACTION, CHARGEBACK, REPRESENTMENT, etc.
+    decision: Optional[str] = None  # WON, LOST, ONGOING, RESOLVED, NONE
+    credit_status: Optional[str] = None  # NONE, PROVISIONAL, FINAL
+    provisional_credit: Optional[float] = None
+    provisional_credit_date: Optional[datetime] = None
+    resolution_date: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
+    documents: Optional[List[str]] = None
+    synctera_id: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class BankingDisputeListResponse(BaseModel):
+    """Response schema for list of disputes."""
+
+    disputes: List[BankingDisputeResponse]
+    total: int
+
+
+class BankingDisputeUpdate(BaseModel):
+    """Request schema for updating a dispute."""
+
+    status: Optional[str] = None
+    documents: Optional[List[str]] = None
+    reason_details: Optional[str] = None
