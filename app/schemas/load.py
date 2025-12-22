@@ -40,6 +40,8 @@ class LoadStopCreate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
+    lat: Optional[float] = None  # GPS latitude for map display
+    lng: Optional[float] = None  # GPS longitude for map display
     scheduled_at: Optional[datetime] = None
     instructions: Optional[str] = None
     metadata: Optional[dict] = None
@@ -100,6 +102,8 @@ class LoadStopResponse(BaseModel):
     city: Optional[str]
     state: Optional[str]
     postal_code: Optional[str]
+    lat: Optional[float] = None  # GPS latitude for map display
+    lng: Optional[float] = None  # GPS longitude for map display
     scheduled_at: Optional[datetime]
     instructions: Optional[str]
 

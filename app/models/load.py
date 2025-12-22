@@ -86,6 +86,8 @@ class LoadStop(Base):
     city = Column(String, nullable=True)
     state = Column(String, nullable=True)
     postal_code = Column(String, nullable=True)
+    lat = Column(Float, nullable=True)  # GPS latitude for map display
+    lng = Column(Float, nullable=True)  # GPS longitude for map display
     scheduled_at = Column(DateTime, nullable=True)
     instructions = Column(String, nullable=True)
     metadata_json = Column("metadata", JSON, nullable=True)
