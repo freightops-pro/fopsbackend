@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Tuple, Dict, Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,6 +15,8 @@ from app.models.accounting import Customer
 from app.models.fuel import FuelTransaction
 from app.schemas.load import LoadCreate, LoadResponse, LoadExpense, LoadProfitSummary
 from app.services.event_dispatcher import emit_event, EventType
+
+logger = logging.getLogger(__name__)
 
 
 class LoadService:
@@ -56,13 +59,31 @@ class LoadService:
         return new_customer, True
 
     async def list_loads(self, company_id: str) -> List[Load]:
+        # Debug: count total loads in database
+        total_count_result = await self.db.execute(select(func.count(Load.id)))
+        total_count = total_count_result.scalar() or 0
+
+        # Debug: get distinct company_ids in loads table
+        distinct_companies_result = await self.db.execute(
+            select(Load.company_id).distinct().limit(10)
+        )
+        distinct_companies = [row[0] for row in distinct_companies_result.fetchall()]
+
+        logger.info(
+            f"[LoadService.list_loads] company_id={company_id}, "
+            f"total_loads_in_db={total_count}, "
+            f"distinct_company_ids={distinct_companies}"
+        )
+
         result = await self.db.execute(
             select(Load)
             .options(selectinload(Load.stops))
             .where(Load.company_id == company_id)
             .order_by(Load.created_at.desc())
         )
-        return list(result.scalars().all())
+        loads = list(result.scalars().all())
+        logger.info(f"[LoadService.list_loads] Returning {len(loads)} loads for company {company_id}")
+        return loads
 
     async def list_driver_loads(
         self, company_id: str, driver_id: str, status_filter: Optional[str] = None

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -20,6 +21,7 @@ from app.services.load import LoadService
 from app.services.document_processing import DocumentProcessingService
 from app.services.drayage.container_lookup_service import ContainerLookupService
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -32,6 +34,7 @@ async def _doc_service(db: AsyncSession = Depends(get_db)) -> DocumentProcessing
 
 
 async def _company_id(current_user=Depends(deps.get_current_user)) -> str:
+    logger.info(f"[loads router] user={current_user.email}, company_id={current_user.company_id}")
     return current_user.company_id
 
 
