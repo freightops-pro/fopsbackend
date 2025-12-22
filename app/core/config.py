@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     gusto_client_id: Optional[str] = None
     gusto_client_secret: Optional[str] = None
 
+    # Check Payroll Integration
+    # Sign up at: https://checkhq.com
+    # Docs: https://docs.checkhq.com
+    check_api_key: Optional[str] = None  # Bearer token for API authentication
+    check_environment: str = "sandbox"  # sandbox or production
+    check_api_base_url: str = "https://sandbox.checkhq.com"  # Use https://api.checkhq.com for production
+
     # Samsara Integration (Fleet Management & ELD)
     samsara_client_id: Optional[str] = None
     samsara_client_secret: Optional[str] = None
