@@ -18,6 +18,7 @@ from app.routers import (
     dqf,
     documents,
     dispatch,
+    drayage,
     drivers,
     equipment,
     fuel,
@@ -66,6 +67,7 @@ api_router.include_router(fleet.router, prefix="/fleet", tags=["Fleet"])
 api_router.include_router(equipment.router, prefix="/fleet", tags=["Fleet"])
 api_router.include_router(carrier_compliance.router, prefix="/fleet/carrier-compliance", tags=["Carrier Compliance"])
 api_router.include_router(ports.router, prefix="/ports", tags=["Ports"])
+api_router.include_router(drayage.router, prefix="/drayage", tags=["Drayage"])
 api_router.include_router(integrations.router, prefix="/integrations", tags=["Integrations"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_router.include_router(wex.router, prefix="/wex", tags=["WEX Fuel Cards"])
