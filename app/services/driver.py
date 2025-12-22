@@ -52,9 +52,28 @@ class DriverService:
             .where(Driver.company_id == company_id)
             .options(selectinload(Driver.incidents), selectinload(Driver.training_records))
         )
-        drivers = result.scalars().all()
+        drivers = list(result.scalars().all())
+
+        if not drivers:
+            return []
+
+        # Batch fetch all documents for all drivers in one query
+        driver_ids = [driver.id for driver in drivers]
+        docs_result = await self.db.execute(
+            select(DriverDocument).where(DriverDocument.driver_id.in_(driver_ids))
+        )
+        all_docs = list(docs_result.scalars().all())
+
+        # Group documents by driver_id
+        docs_by_driver: Dict[str, List[DriverDocument]] = {}
+        for doc in all_docs:
+            if doc.driver_id not in docs_by_driver:
+                docs_by_driver[doc.driver_id] = []
+            docs_by_driver[doc.driver_id].append(doc)
+
         responses: List[DriverComplianceResponse] = []
         for driver in drivers:
+            driver_docs = docs_by_driver.get(driver.id, [])
             responses.append(
                 DriverComplianceResponse(
                     driver=DriverResponse.model_validate(driver),
@@ -66,7 +85,7 @@ class DriverService:
                     ],
                     documents=[
                         DriverDocumentResponse.model_validate(document)
-                        for document in await self._list_documents(driver.id)
+                        for document in driver_docs
                     ],
                 )
             )

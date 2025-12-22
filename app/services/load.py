@@ -585,10 +585,45 @@ class LoadService:
     async def list_loads_with_expenses(self, company_id: str) -> List[Dict[str, Any]]:
         """List all loads with computed expenses and profit summaries."""
         loads = await self.list_loads(company_id)
-        result = []
 
+        if not loads:
+            return []
+
+        # Batch fetch all fuel transactions for this company in one query
+        load_ids = [load.id for load in loads]
+        fuel_result = await self.db.execute(
+            select(FuelTransaction).where(
+                FuelTransaction.company_id == company_id,
+                FuelTransaction.load_id.in_(load_ids),
+            ).order_by(FuelTransaction.transaction_date.desc())
+        )
+        all_fuel_txns = list(fuel_result.scalars().all())
+
+        # Group fuel transactions by load_id
+        fuel_by_load: Dict[str, List[FuelTransaction]] = {}
+        for txn in all_fuel_txns:
+            if txn.load_id:
+                if txn.load_id not in fuel_by_load:
+                    fuel_by_load[txn.load_id] = []
+                fuel_by_load[txn.load_id].append(txn)
+
+        result = []
         for load in loads:
-            expenses = await self.get_load_expenses(company_id, load.id)
+            # Convert fuel transactions to LoadExpense objects
+            expenses: List[LoadExpense] = []
+            for txn in fuel_by_load.get(load.id, []):
+                cost = float(txn.cost) if isinstance(txn.cost, Decimal) else txn.cost
+                gallons = float(txn.gallons) if isinstance(txn.gallons, Decimal) else txn.gallons
+                expenses.append(LoadExpense(
+                    id=txn.id,
+                    entry_type="FUEL",
+                    description=f"Fuel at {txn.location or 'Unknown'}" if txn.location else "Fuel purchase",
+                    amount=cost,
+                    quantity=gallons,
+                    unit="gallons",
+                    recorded_at=datetime.combine(txn.transaction_date, datetime.min.time()) if txn.transaction_date else datetime.now(),
+                ))
+
             base_rate = float(load.base_rate) if isinstance(load.base_rate, Decimal) else load.base_rate
             profit_summary = self.compute_profit_summary(base_rate, expenses)
 

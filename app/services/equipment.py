@@ -568,14 +568,101 @@ class EquipmentService:
             )
             .order_by(Equipment.unit_number)
         )
-        equipment_items = result.scalars().unique().all()
+        equipment_items = list(result.scalars().unique().all())
+
+        if not equipment_items:
+            return []
+
+        # Get truck IDs for batch loading
+        truck_ids = [
+            e.id for e in equipment_items
+            if e.equipment_type in ("TRACTOR", "TRUCK")
+        ]
+
+        # Pre-compute load expenses for all trucks in batched queries
+        load_expenses_by_truck: Dict[str, List[TruckLoadExpense]] = {}
+
+        if truck_ids:
+            # Batch fetch all loads for all trucks in one query
+            loads_result = await self.db.execute(
+                select(Load)
+                .where(
+                    Load.company_id == company_id,
+                    Load.truck_id.in_(truck_ids),
+                )
+                .order_by(Load.created_at.desc())
+            )
+            all_loads = list(loads_result.scalars().all())
+
+            # Get all load IDs for fuel transaction batch fetch
+            all_load_ids = [load.id for load in all_loads]
+
+            # Batch fetch all fuel transactions for all loads in one query
+            fuel_by_load: Dict[str, List[FuelTransaction]] = {}
+            if all_load_ids:
+                fuel_result = await self.db.execute(
+                    select(FuelTransaction).where(
+                        FuelTransaction.company_id == company_id,
+                        FuelTransaction.load_id.in_(all_load_ids),
+                    )
+                )
+                all_fuel_txns = list(fuel_result.scalars().all())
+
+                # Group fuel transactions by load_id
+                for txn in all_fuel_txns:
+                    if txn.load_id:
+                        if txn.load_id not in fuel_by_load:
+                            fuel_by_load[txn.load_id] = []
+                        fuel_by_load[txn.load_id].append(txn)
+
+            # Group loads by truck_id and compute expenses
+            loads_by_truck: Dict[str, List[Load]] = {}
+            for load in all_loads:
+                if load.truck_id:
+                    if load.truck_id not in loads_by_truck:
+                        loads_by_truck[load.truck_id] = []
+                    loads_by_truck[load.truck_id].append(load)
+
+            # Compute load expenses for each truck
+            for truck_id in truck_ids:
+                truck_loads = loads_by_truck.get(truck_id, [])
+                truck_expenses: List[TruckLoadExpense] = []
+
+                for load in truck_loads:
+                    fuel_txns = fuel_by_load.get(load.id, [])
+                    fuel_total = sum(
+                        float(txn.cost) if isinstance(txn.cost, Decimal) else txn.cost
+                        for txn in fuel_txns
+                    )
+
+                    expenses = TruckLoadExpenseBreakdown(
+                        fuel=fuel_total,
+                        detention=0,
+                        accessorial=0,
+                        other=0,
+                        total=fuel_total,
+                    )
+
+                    base_rate = float(load.base_rate) if isinstance(load.base_rate, Decimal) else load.base_rate
+                    profit = base_rate - expenses.total
+                    load_reference = f"#{load.id[:8].upper()}"
+
+                    truck_expenses.append(TruckLoadExpense(
+                        load_id=load.id,
+                        load_reference=load_reference,
+                        customer_name=load.customer_name,
+                        base_rate=base_rate,
+                        expenses=expenses,
+                        profit=profit,
+                        completed_at=load.delivery_departure_time,
+                    ))
+
+                load_expenses_by_truck[truck_id] = truck_expenses
 
         equipment_list = []
         for equipment in equipment_items:
-            # Only compute load_expenses for tractors/trucks
-            load_expenses = []
-            if equipment.equipment_type in ("TRACTOR", "TRUCK"):
-                load_expenses = await self.get_truck_load_expenses(company_id, equipment.id)
+            # Get pre-computed load expenses for trucks
+            load_expenses = load_expenses_by_truck.get(equipment.id, [])
 
             # Build response dict
             equip_dict = {
