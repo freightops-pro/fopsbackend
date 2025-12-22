@@ -134,11 +134,11 @@ async def update_employee(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
 
-@router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete employee")
+@router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, summary="Delete employee")
 async def delete_employee(
     employee_id: str,
     service: CheckService = Depends(_get_check_service),
-) -> None:
+):
     """Delete an employee from Check."""
     try:
         await service.delete_employee(employee_id)
@@ -268,11 +268,11 @@ async def update_benefit(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
 
-@router.delete("/benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete benefit")
+@router.delete("/benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, summary="Delete benefit")
 async def delete_benefit(
     benefit_id: str,
     service: CheckService = Depends(_get_check_service),
-) -> None:
+):
     """Delete a benefit."""
     try:
         await service.delete_benefit(benefit_id)
@@ -323,11 +323,11 @@ async def update_company_benefit(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
 
-@router.delete("/company-benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete company benefit")
+@router.delete("/company-benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, summary="Delete company benefit")
 async def delete_company_benefit(
     benefit_id: str,
     service: CheckService = Depends(_get_check_service),
-) -> None:
+):
     """Delete a company benefit."""
     try:
         await service.delete_company_benefit(benefit_id)
