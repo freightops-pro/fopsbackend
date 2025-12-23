@@ -43,16 +43,31 @@ async def _company_id(current_user=Depends(deps.get_current_user)) -> str:
 async def extract_from_rate_confirmation(
     rateConfirmation: UploadFile = File(...),
     company_id: str = Depends(_company_id),
-    service: DocumentProcessingService = Depends(_doc_service),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Extract load data from a rate confirmation PDF."""
+    """
+    Extract load data from a rate confirmation using Annie AI Vision.
+
+    Uses Llama 4 Scout Vision via Groq for document OCR.
+    """
     try:
-        result = await service.extract_rate_confirmation(
-            company_id=company_id,
-            file=rateConfirmation,
+        from app.services.annie_ai import AnnieAI
+
+        # Read file bytes
+        file_bytes = await rateConfirmation.read()
+        filename = rateConfirmation.filename or "document.pdf"
+
+        # Use Annie's vision OCR
+        annie = AnnieAI(db)
+        result = await annie.extract_rate_confirmation_vision(
+            file_bytes=file_bytes,
+            filename=filename
         )
+
         return result
+
     except Exception as e:
+        logger.exception(f"Rate confirmation extraction failed: {e}")
         return {
             "success": False,
             "error": str(e),

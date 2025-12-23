@@ -2,12 +2,17 @@
 
 Annie handles dispatch operations, driver assignment, load creation,
 compliance monitoring, and operational automation.
+
+Uses Llama 4 Scout Vision for document OCR via Groq.
 """
+import base64
+import io
 import json
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import pdfplumber
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,8 +20,7 @@ from app.models.load import Load, LoadStop
 from app.models.driver import Driver
 from app.models.equipment import Equipment
 from app.services.ai_agent import BaseAIAgent, AITool
-from app.services.document_processing import DocumentProcessingService
-from app.services.claude_ocr import ClaudeOCRService
+from app.core.llm_router import LLMRouter
 
 
 class AnnieAI(BaseAIAgent):
@@ -447,3 +451,212 @@ manage pickup/delivery workflows, and handle check calls autonomously."""
 
         except Exception as e:
             return {"error": str(e)}
+
+    # === Vision OCR Methods (Llama 4 Scout) ===
+
+    async def extract_rate_confirmation_vision(
+        self,
+        file_bytes: bytes,
+        filename: str
+    ) -> Dict[str, Any]:
+        """
+        Extract load data from rate confirmation using Llama 4 Scout Vision.
+
+        Uses Groq's meta-llama/llama-4-scout-17b-16e-instruct for OCR.
+
+        Args:
+            file_bytes: Raw bytes of the uploaded file (PDF or image)
+            filename: Original filename for type detection
+
+        Returns:
+            {
+                "success": bool,
+                "loadData": {...extracted fields...},
+                "confidence": {...field confidence scores...},
+                "rawText": str (if available),
+                "error": str (if failed)
+            }
+        """
+        try:
+            # Initialize LLM Router for vision
+            llm_router = LLMRouter()
+
+            # Convert document to base64 image
+            image_base64, raw_text = await self._prepare_document_for_vision(file_bytes, filename)
+
+            if not image_base64:
+                return {
+                    "success": False,
+                    "error": "Could not convert document to image for vision processing"
+                }
+
+            # Build OCR prompt
+            ocr_prompt = self._build_rate_confirmation_prompt()
+
+            # Call Llama 4 Scout Vision via Groq
+            response_text, metadata = await llm_router.generate(
+                agent_role="annie",
+                prompt=ocr_prompt,
+                system_prompt="You are Annie, an expert freight document analyzer. Extract structured data from rate confirmations with high accuracy.",
+                image_data=image_base64,
+                temperature=0.3,  # Low temp for accuracy
+                max_tokens=2000
+            )
+
+            # Parse JSON response
+            parsed_data, confidence = self._parse_ocr_response(response_text)
+
+            return {
+                "success": True,
+                "loadData": self._transform_to_frontend_format(parsed_data),
+                "confidence": confidence,
+                "rawText": raw_text,
+                "model": metadata.get("model"),
+                "provider": metadata.get("provider"),
+                "tokens_used": metadata.get("tokens_used"),
+                "cost_usd": metadata.get("cost_usd")
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def _prepare_document_for_vision(
+        self,
+        file_bytes: bytes,
+        filename: str
+    ) -> Tuple[Optional[str], str]:
+        """
+        Convert document to base64 image for vision processing.
+
+        For PDFs: Extracts text first, then converts first page to image
+        For images: Directly encodes to base64
+
+        Returns:
+            (image_base64, extracted_text)
+        """
+        lower_filename = filename.lower()
+        raw_text = ""
+
+        if lower_filename.endswith(".pdf"):
+            # First extract text from PDF
+            try:
+                text_parts = []
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_parts.append(page_text)
+                raw_text = "\n".join(text_parts)
+            except Exception as e:
+                raw_text = f"PDF text extraction failed: {e}"
+
+            # Convert PDF to image for vision
+            try:
+                from pdf2image import convert_from_bytes
+                images = convert_from_bytes(file_bytes, first_page=1, last_page=1, dpi=150)
+                if images:
+                    img_buffer = io.BytesIO()
+                    images[0].save(img_buffer, format='PNG')
+                    image_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+                    return f"data:image/png;base64,{image_base64}", raw_text
+            except ImportError:
+                # pdf2image not available, fall back to text-only
+                # If we have text, we can still process without image
+                if raw_text and not raw_text.startswith("PDF"):
+                    return None, raw_text
+                return None, raw_text
+
+        elif lower_filename.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            # Directly encode image
+            media_type = "image/jpeg" if lower_filename.endswith(('.jpg', '.jpeg')) else "image/png"
+            image_base64 = base64.b64encode(file_bytes).decode('utf-8')
+            return f"data:{media_type};base64,{image_base64}", ""
+
+        return None, ""
+
+    def _build_rate_confirmation_prompt(self) -> str:
+        """Build the OCR prompt for rate confirmation extraction."""
+        return """Analyze this freight rate confirmation document and extract the following fields into JSON format.
+
+IMPORTANT: Return ONLY valid JSON, no markdown code blocks or additional text.
+
+{
+  "customer_name": "Company name of the customer/shipper",
+  "base_rate": 1234.56,
+  "commodity": "Description of freight/commodity",
+  "equipment_type": "dry_van | reefer | flatbed | step_deck | container",
+  "weight": 12345,
+  "reference_number": "Load or reference number",
+  "pickup_location": {
+    "full_address": "Complete pickup address",
+    "city": "City",
+    "state": "State (2-letter)",
+    "postal_code": "ZIP"
+  },
+  "delivery_location": {
+    "full_address": "Complete delivery address",
+    "city": "City",
+    "state": "State (2-letter)",
+    "postal_code": "ZIP"
+  },
+  "pickup_date": "YYYY-MM-DD",
+  "delivery_date": "YYYY-MM-DD",
+  "special_instructions": "Any notes",
+  "container_number": "Container number if applicable"
+}
+
+Rules:
+- Use null for fields not found
+- Extract main line haul rate (exclude fuel/accessorials)
+- For commodity, default to "General Freight" if not specified
+- Convert dates to YYYY-MM-DD format"""
+
+    def _parse_ocr_response(self, response_text: str) -> Tuple[Dict, Dict]:
+        """Parse the JSON response from vision OCR."""
+        # Find JSON in response
+        json_start = response_text.find('{')
+        if json_start < 0:
+            return {}, {}
+
+        # Find matching closing brace
+        brace_count = 0
+        json_end = -1
+        for i in range(json_start, len(response_text)):
+            if response_text[i] == '{':
+                brace_count += 1
+            elif response_text[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i + 1
+                    break
+
+        if json_end < 0:
+            return {}, {}
+
+        json_str = response_text[json_start:json_end]
+        data = json.loads(json_str)
+
+        # Generate confidence scores (high for vision extraction)
+        confidence = {key: 0.90 for key in data.keys() if data[key] is not None}
+
+        return data, confidence
+
+    def _transform_to_frontend_format(self, parsed_data: Dict) -> Dict:
+        """Transform OCR data to match frontend expected format."""
+        pickup = parsed_data.get("pickup_location", {}) or {}
+        delivery = parsed_data.get("delivery_location", {}) or {}
+
+        return {
+            "customerName": parsed_data.get("customer_name"),
+            "rate": parsed_data.get("base_rate"),
+            "commodity": parsed_data.get("commodity"),
+            "pickupLocation": pickup.get("full_address") or f"{pickup.get('city', '')}, {pickup.get('state', '')}".strip(", "),
+            "deliveryLocation": delivery.get("full_address") or f"{delivery.get('city', '')}, {delivery.get('state', '')}".strip(", "),
+            "referenceNumber": parsed_data.get("reference_number"),
+            "pickupDate": parsed_data.get("pickup_date"),
+            "weight": parsed_data.get("weight"),
+            "processedAt": datetime.utcnow().isoformat()
+        }

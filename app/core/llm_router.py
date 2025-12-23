@@ -83,17 +83,19 @@ class LLMRouter:
         if agent_role == "annie":
             # Annie - Dispatcher (High-throughput operations)
             # Target capacity: 500 loads/month
+            # Uses Llama 4 Scout with VISION for document OCR
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.3-70b-versatile",  # Groq fallback until Scout 17B available
+                "groq_model": "llama-3.3-70b-versatile",  # Text-only tasks
+                "groq_vision_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Vision/OCR tasks
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
-                "context_window": 10_000_000,  # 10M token context
+                "context_window": 128_000,  # 128K token context
                 "cost_per_1m_tokens": 0.10,
-                "capabilities": ["vision", "10M_context", "fast_inference", "load_management"],
+                "capabilities": ["vision", "ocr", "fast_inference", "load_management"],
                 "employee_role": "AI Dispatcher",
                 "monthly_capacity": "500 loads",
-                "reasoning": "Scout 17B for high-volume dispatch: driver matching, load assignment, 10M context for full history"
+                "reasoning": "Scout 17B with vision for dispatch: driver matching, load assignment, document OCR"
             }
 
         elif agent_role == "adam":
@@ -228,7 +230,7 @@ class LLMRouter:
         if self.groq:
             try:
                 return await self._generate_groq(
-                    prompt, system_prompt, tools, config, temperature, max_tokens
+                    prompt, system_prompt, tools, config, temperature, max_tokens, image_data
                 )
             except Exception as e:
                 print(f"[LLM Router] Groq failed: {e}, falling back to Bedrock")
@@ -252,18 +254,50 @@ class LLMRouter:
         tools: list,
         config: dict,
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
+        image_data: str = None
     ) -> tuple[str, dict]:
-        """Generate using Groq (fast Llama 4 inference)."""
+        """Generate using Groq (fast Llama 4 inference).
+
+        Args:
+            image_data: Optional base64-encoded image for vision tasks.
+                        Format: "data:image/jpeg;base64,..." or just the base64 string
+        """
         messages = []
 
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
-        messages.append({"role": "user", "content": prompt})
+        # Handle vision (image) input
+        if image_data:
+            # Use vision model for image tasks
+            model = config.get("groq_vision_model", config["groq_model"])
+
+            # Build multimodal content
+            content = [
+                {"type": "text", "text": prompt}
+            ]
+
+            # Format image data properly
+            if image_data.startswith("data:"):
+                image_url = image_data
+            else:
+                # Assume JPEG if no prefix
+                image_url = f"data:image/jpeg;base64,{image_data}"
+
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            })
+
+            messages.append({"role": "user", "content": content})
+        else:
+            # Text-only request
+            model = config["groq_model"]
+            messages.append({"role": "user", "content": prompt})
 
         completion = await self.groq.chat.completions.create(
-            model=config["groq_model"],
+            model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -271,12 +305,13 @@ class LLMRouter:
         )
 
         return completion.choices[0].message.content, {
-            "model": config["model_id"],
+            "model": model,
             "provider": "groq",
             "tokens_used": completion.usage.total_tokens,
             "input_tokens": completion.usage.prompt_tokens,
             "output_tokens": completion.usage.completion_tokens,
-            "cost_usd": (completion.usage.total_tokens / 1_000_000) * config["cost_per_1m_tokens"]
+            "cost_usd": (completion.usage.total_tokens / 1_000_000) * config["cost_per_1m_tokens"],
+            "vision_used": image_data is not None
         }
 
     async def _generate_bedrock(
