@@ -61,7 +61,7 @@ class AuditLog(Base):
     status = Column(String, nullable=False, default="success")  # success, failure, blocked
 
     # Additional context
-    metadata = Column(JSON, nullable=True)
+    extra_data = Column("metadata", JSON, nullable=True)  # Named 'metadata' in DB, 'extra_data' in Python
     error_message = Column(Text, nullable=True)
 
     __table_args__ = (

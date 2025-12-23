@@ -128,7 +128,7 @@ class AuthService:
                 action=f"Login attempt on locked account: {email_lower}",
                 user_id=user.id if user else None,
                 status="blocked",
-                metadata={"reason": "account_locked", "remaining_minutes": remaining},
+                extra_data={"reason": "account_locked", "remaining_minutes": remaining},
             )
             raise ValueError(f"Account is locked. Try again in {remaining} minutes.")
 
@@ -155,7 +155,7 @@ class AuthService:
                 action=f"Failed login attempt: {email_lower}",
                 user_id=user.id if user else None,
                 status="failure",
-                metadata={"ip_address": ip_address},
+                extra_data={"ip_address": ip_address},
             )
             raise ValueError("Invalid credentials")
 
@@ -190,7 +190,7 @@ class AuthService:
             action=f"Successful login: {email_lower}",
             user_id=user.id,
             company_id=user.company_id,
-            metadata={"ip_address": ip_address, "remember_me": remember_me},
+            extra_data={"ip_address": ip_address, "remember_me": remember_me},
         )
 
         await self.db.commit()
@@ -372,7 +372,7 @@ class AuthService:
         user_id: Optional[str] = None,
         company_id: Optional[str] = None,
         status: str = "success",
-        metadata: Optional[dict] = None,
+        extra_data: Optional[dict] = None,
     ) -> None:
         """Log security event to audit log."""
         audit = AuditLog(
@@ -382,7 +382,7 @@ class AuthService:
             user_id=user_id,
             company_id=company_id,
             status=status,
-            metadata=metadata,
+            extra_data=extra_data,
         )
         self.db.add(audit)
 
