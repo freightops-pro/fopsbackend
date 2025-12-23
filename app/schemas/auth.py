@@ -20,6 +20,7 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
     verification_code: str = Field(..., min_length=3, max_length=40)
+    remember_me: bool = False
 
 
 class ChangePasswordRequest(BaseModel):
@@ -52,6 +53,7 @@ class SessionUser(BaseModel):
     roles: List[str]
     avatar_url: Optional[str] = None
     must_change_password: bool = False
+    email_verified: bool = False
 
 
 class SessionCompany(BaseModel):

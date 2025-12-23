@@ -11,6 +11,7 @@ from app.background.scheduler import shutdown_scheduler, start_scheduler, run_au
 from app.core.config import get_settings
 from app.core.db import init_database, AsyncSessionFactory
 from app.models.port import Port
+from app.middleware.security import setup_security_middleware
 
 settings = get_settings()
 
@@ -273,6 +274,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Setup security middleware (rate limiting, security headers, audit logging)
+setup_security_middleware(app)
 
 app.include_router(api_router, prefix="/api")
 

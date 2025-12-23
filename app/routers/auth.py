@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -6,7 +6,8 @@ from app.api import deps
 from app.core.db import get_db
 from app.core.config import get_settings
 from app.schemas.auth import AuthSessionResponse, ChangePasswordRequest, UserCreate, UserLogin, UserResponse
-from app.services.auth import AuthService
+from app.services.auth import AuthService, DEFAULT_TOKEN_EXPIRY_MINUTES, REMEMBER_ME_TOKEN_EXPIRY_MINUTES
+from app.middleware.security import limiter
 
 router = APIRouter()
 settings = get_settings()
@@ -15,16 +16,29 @@ logger = logging.getLogger(__name__)
 AUTH_COOKIE_NAME = "freightops_token"
 
 
-def set_auth_cookie(response: Response, token: str) -> None:
+def get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -> None:
+    """Set auth cookie with appropriate expiry based on remember_me."""
+    max_age = (
+        REMEMBER_ME_TOKEN_EXPIRY_MINUTES * 60 if remember_me
+        else DEFAULT_TOKEN_EXPIRY_MINUTES * 60
+    )
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,  # Must be False for http://127.0.0.1 in development
+        secure=settings.environment != "development",
         samesite="lax",
-        max_age=settings.access_token_expire_minutes * 60,
+        max_age=max_age,
         path="/",
-        domain=None,  # Let browser set domain automatically
+        domain=None,
     )
 
 
@@ -33,12 +47,22 @@ def clear_auth_cookie(response: Response) -> None:
 
 
 @router.post("/register", response_model=AuthSessionResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(payload: UserCreate, response: Response, db: AsyncSession = Depends(get_db)) -> AuthSessionResponse:
+@limiter.limit("5/minute")
+async def register_user(
+    request: Request,
+    payload: UserCreate,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+) -> AuthSessionResponse:
+    """
+    Register a new user and company.
+
+    Rate limited to 5 requests per minute to prevent abuse.
+    """
     service = AuthService(db)
     try:
         user, token = await service.register(payload)
         set_auth_cookie(response, token)
-        # Token is already passed to build_session, which includes it in the response
         session = await service.build_session(user, token=token)
         return session
     except ValueError as exc:
@@ -53,25 +77,39 @@ async def register_user(payload: UserCreate, response: Response, db: AsyncSessio
 
 
 @router.post("/login", response_model=AuthSessionResponse)
-async def login(payload: UserLogin, response: Response, db: AsyncSession = Depends(get_db)) -> AuthSessionResponse:
+@limiter.limit("10/minute")
+async def login(
+    request: Request,
+    payload: UserLogin,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+) -> AuthSessionResponse:
+    """
+    Authenticate user and return session.
+
+    Rate limited to 10 requests per minute to prevent brute force attacks.
+    Account is locked after 5 failed attempts.
+    """
     logger.info(f"[LOGIN] Request received for email: {payload.email}")
     service = AuthService(db)
+    ip_address = get_client_ip(request)
+
     try:
         logger.info(f"[LOGIN] Starting authentication for email: {payload.email}")
-        user, token = await service.authenticate(payload)
-        logger.info(f"[LOGIN] Authentication successful, token generated: {token[:20] if token else 'None'}... (length: {len(token) if token else 0})")
-        set_auth_cookie(response, token)
-        logger.info(f"[LOGIN] Building session for user: {user.id}")
-        # Token is already passed to build_session, which includes it in the response
+        user, token = await service.authenticate(
+            payload,
+            ip_address=ip_address,
+            remember_me=payload.remember_me
+        )
+        logger.info(f"[LOGIN] Authentication successful for user: {user.id}")
+
+        set_auth_cookie(response, token, remember_me=payload.remember_me)
         session = await service.build_session(user, token=token)
-        logger.info(f"[LOGIN] Session built successfully for user: {user.id} (email: {user.email})")
-        logger.info(f"[LOGIN] Session response - has access_token: {session.access_token is not None}, token length: {len(session.access_token) if session.access_token else 0}")
-        # Ensure token is in response - explicitly set it
+
+        # Ensure token is in response
         if not session.access_token:
-            logger.warning(f"[LOGIN] WARNING: access_token is None in session response! Setting it from token variable.")
             session.access_token = token
-        logger.info(f"[LOGIN] Final session - access_token present: {session.access_token is not None}, length: {len(session.access_token) if session.access_token else 0}")
-        logger.info(f"[LOGIN] Returning session response")
+
         return session
     except ValueError as exc:
         logger.warning(f"Login failed for email {payload.email}: {str(exc)}")
@@ -95,17 +133,22 @@ async def read_session(
     db: AsyncSession = Depends(get_db)
 ) -> AuthSessionResponse:
     service = AuthService(db)
-    # No token in response - using HTTP-only cookies for security
     return await service.build_session(current_user)
 
 
 @router.post("/change-password", status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
 async def change_password(
+    request: Request,
     payload: ChangePasswordRequest,
     current_user=Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Change user password and clear must_change_password flag."""
+    """
+    Change user password and clear must_change_password flag.
+
+    Rate limited to 3 requests per minute.
+    """
     service = AuthService(db)
     try:
         await service.change_password(current_user, payload.current_password, payload.new_password)
@@ -125,3 +168,59 @@ async def change_password(
 async def logout(response: Response) -> None:
     clear_auth_cookie(response)
 
+
+@router.get("/verify-email/{token}")
+async def verify_email(
+    token: str,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Verify user email with token from email link.
+    """
+    service = AuthService(db)
+    try:
+        user = await service.verify_email(token)
+        return {
+            "message": "Email verified successfully",
+            "email": user.email
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/hour")
+async def resend_verification(
+    request: Request,
+    current_user=Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Resend email verification link.
+
+    Rate limited to 3 requests per hour.
+    """
+    service = AuthService(db)
+    try:
+        await service.resend_verification_email(current_user)
+        return {"message": "Verification email sent"}
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/forgot-password")
+@limiter.limit("3/hour")
+async def forgot_password(
+    request: Request,
+    email: str,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Request password reset email.
+
+    Rate limited to 3 requests per hour.
+    Always returns success to prevent email enumeration.
+    """
+    service = AuthService(db)
+    await service.request_password_reset(email)
+    return {"message": "If an account exists with this email, a password reset link has been sent."}

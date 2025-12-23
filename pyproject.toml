@@ -37,6 +37,9 @@ groq = "^0.13.0"
 langgraph = "^1.0.5"
 langchain = "^1.2.0"
 langchain-core = "^1.2.1"
+slowapi = "^0.1.9"
+sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
+cryptography = "^44.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"

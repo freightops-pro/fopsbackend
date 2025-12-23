@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -24,6 +24,18 @@ class User(Base):
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
     must_change_password = Column(Boolean, nullable=False, default=False)
+
+    # Email verification
+    email_verified = Column(Boolean, nullable=False, default=False)
+    email_verification_token = Column(String, nullable=True)
+    email_verification_sent_at = Column(DateTime, nullable=True)
+
+    # Account security
+    failed_login_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    last_login_ip = Column(String, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
