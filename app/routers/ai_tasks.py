@@ -28,7 +28,7 @@ router = APIRouter()
 
 class CreateAITaskRequest(BaseModel):
     """Request to create a new AI task."""
-    agent_type: str  # annie, atlas, alex, adam, harper, fleet_manager
+    agent_type: str  # annie, adam, felix, harper, atlas
     task_description: str
     input_data: Optional[dict] = None
     priority: str = "normal"  # low, normal, high, urgent
@@ -65,7 +65,7 @@ async def create_ai_task(
     The AI agent will autonomously plan and execute the task.
     """
     # Validate agent type
-    valid_agents = ["annie", "atlas", "alex", "adam", "harper", "fleet_manager"]
+    valid_agents = ["annie", "atlas", "alex", "adam", "harper", "felix"]
     if request.agent_type not in valid_agents:
         raise HTTPException(
             status_code=400,
@@ -143,7 +143,7 @@ async def create_ai_task(
             user_id=current_user.id
         )
 
-    elif request.agent_type == "fleet_manager":
+    elif request.agent_type == "felix":
         agent = FleetManagerAI(db)
         await agent.register_tools()
 

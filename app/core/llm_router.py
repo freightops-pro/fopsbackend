@@ -4,9 +4,9 @@ LLM Model Router - Llama 4 Native Architecture for AI Employees.
 FIVE AI EMPLOYEES:
 - Annie (Dispatcher): Llama 4 Scout 17B (500 loads/month capacity)
 - Adam (Safety/Compliance Officer): Llama 4 Maverick 400B (safety-critical reasoning)
-- Fleet Manager: Llama 4 Maverick 400B (fleet ops decisions)
-- CFO Analyst: Llama 4 Maverick 400B (financial analysis)
+- Felix (Fleet Manager): Llama 4 Maverick 400B (fleet ops decisions)
 - Harper (HR/Payroll): Llama 4 Maverick 400B (payroll calculations)
+- Atlas (Supervisor): Llama 4 Scout 17B (operations monitoring)
 
 Infrastructure Model:
 - Scout 17B: High-throughput operations
@@ -26,7 +26,7 @@ from typing import Literal, Optional
 import json
 
 
-AgentRole = Literal["annie", "adam", "fleet_manager", "cfo_analyst", "harper", "atlas", "alex"]
+AgentRole = Literal["annie", "adam", "felix", "fleet_manager", "cfo_analyst", "harper", "atlas", "alex"]
 
 
 class LLMRouter:
@@ -111,8 +111,8 @@ class LLMRouter:
                 "reasoning": "Maverick 400B (MoE) for safety-critical compliance: DOT audits, HOS validation, CFR citations"
             }
 
-        elif agent_role == "fleet_manager":
-            # Fleet Manager (Fleet operations decisions)
+        elif agent_role in ("felix", "fleet_manager"):
+            # Felix / Fleet Manager (Fleet operations decisions)
             return {
                 "model_id": "llama-4-maverick-400b-instruct",
                 "groq_model": "llama-3.1-70b-versatile",
@@ -121,7 +121,7 @@ class LLMRouter:
                 "context_window": 128_000,
                 "cost_per_1m_tokens": 2.50,
                 "capabilities": ["deep_reasoning", "MoE", "fleet_optimization", "maintenance_planning", "route_planning"],
-                "employee_role": "AI Fleet Manager",
+                "employee_role": "AI Fleet Manager (Felix)",
                 "monthly_capacity": "50-500 trucks",
                 "reasoning": "Maverick 400B (MoE) for fleet decisions: maintenance schedules, fuel optimization, route planning"
             }

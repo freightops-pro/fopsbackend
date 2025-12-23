@@ -22,7 +22,7 @@ class ChatInitRequest(BaseModel):
     company_id: str
     user_id: str
     user_name: str
-    agent: str  # annie, adam, or atlas
+    agent: str  # annie, adam, felix, harper, or atlas
 
 
 class ChatMessageRequest(BaseModel):
@@ -68,6 +68,8 @@ async def initialize_chat(
     agent_names = {
         "annie": "Annie",
         "adam": "Adam",
+        "felix": "Felix",
+        "harper": "Harper",
         "atlas": "Atlas"
     }
 
