@@ -42,10 +42,20 @@ def get_client_ip(request: Request) -> str:
     return get_remote_address(request)
 
 
+def get_storage_uri() -> str:
+    """Get rate limiter storage URI with fallback to memory."""
+    redis_url = os.getenv("REDIS_URL", "")
+    # Check if it's a valid URL (not a template variable like ${SOMETHING})
+    if redis_url and redis_url.startswith(("redis://", "rediss://", "memory://")):
+        return redis_url
+    # Fallback to in-memory storage
+    return "memory://"
+
+
 limiter = Limiter(
     key_func=get_client_ip,
     default_limits=["200/minute"],
-    storage_uri=os.getenv("REDIS_URL", "memory://"),
+    storage_uri=get_storage_uri(),
 )
 
 
