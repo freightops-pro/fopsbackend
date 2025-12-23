@@ -58,7 +58,7 @@ def _to_health_item(ci: CompanyIntegration, company_name: Optional[str] = None) 
 @router.get("/integrations/health", response_model=HQIntegrationHealthResponse)
 async def get_integration_health_dashboard(
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ admin role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> HQIntegrationHealthResponse:
     """
     Get HQ-level integration health dashboard.
@@ -147,7 +147,7 @@ async def get_integration_health_dashboard(
 @router.get("/integrations/failed-syncs", response_model=FailedSyncListResponse)
 async def get_failed_syncs(
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ admin role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
     integration_type: Optional[str] = Query(None, description="Filter by integration type"),
     min_failures: int = Query(1, ge=1, description="Minimum consecutive failures"),
     limit: int = Query(50, ge=1, le=200, description="Maximum items to return"),
@@ -190,7 +190,7 @@ async def get_failed_syncs(
 async def get_company_integration_health(
     company_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ admin role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> List[IntegrationHealthItem]:
     """
     Get integration health for a specific company (HQ view).
@@ -209,7 +209,7 @@ async def get_company_integration_health(
 async def reset_integration_failures(
     connection_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ admin role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> dict:
     """
     Reset consecutive failure count for an integration (HQ admin action).
@@ -239,7 +239,7 @@ async def reset_integration_failures(
 @router.get("/billing/all-subscriptions")
 async def get_all_subscriptions(
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
     status: Optional[str] = Query(None, description="Filter by subscription status"),
     subscription_type: Optional[str] = Query(None, description="Filter by type (self_serve or contract)"),
     limit: int = Query(100, ge=1, le=500),
@@ -314,7 +314,7 @@ async def get_all_subscriptions(
 async def get_company_billing(
     company_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> billing_schemas.BillingData:
     """
     HQ Admin: Get billing data for a specific company
@@ -328,7 +328,7 @@ async def update_company_subscription_type(
     company_id: str,
     subscription_type: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> dict:
     """
     HQ Admin: Change subscription type between self_serve and contract
@@ -364,7 +364,7 @@ async def update_company_subscription_type(
 async def pause_company_subscription(
     company_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> dict:
     """
     HQ Admin: Pause a company's subscription (for non-payment, abuse, etc.)
@@ -393,7 +393,7 @@ async def pause_company_subscription(
 async def unpause_company_subscription(
     company_id: str,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(deps.get_current_user),  # TODO: Add HQ_ADMIN role check
+    _current_user=Depends(deps.require_role("HQ_ADMIN")),
 ) -> dict:
     """
     HQ Admin: Unpause a company's subscription
