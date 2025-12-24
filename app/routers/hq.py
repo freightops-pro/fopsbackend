@@ -184,6 +184,50 @@ async def get_dashboard_metrics(
     return await service.get_metrics()
 
 
+@router.get("/dashboard/recent-tenants", response_model=List[HQTenantResponse])
+async def get_recent_tenants(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQTenantResponse]:
+    """Get recently created tenants."""
+    from sqlalchemy import select
+    from app.models.hq_tenant import HQTenant
+
+    result = await db.execute(
+        select(HQTenant)
+        .order_by(HQTenant.created_at.desc())
+        .limit(5)
+    )
+    tenants = result.scalars().all()
+    return [HQTenantResponse.model_validate(t, from_attributes=True) for t in tenants]
+
+
+@router.get("/dashboard/expiring-contracts", response_model=List[HQContractResponse])
+async def get_expiring_contracts(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQContractResponse]:
+    """Get contracts expiring within 30 days."""
+    from sqlalchemy import select, and_
+    from datetime import datetime, timedelta
+    from app.models.hq_contract import HQContract, ContractStatus
+
+    thirty_days = datetime.utcnow() + timedelta(days=30)
+    result = await db.execute(
+        select(HQContract)
+        .where(
+            and_(
+                HQContract.status == ContractStatus.ACTIVE,
+                HQContract.end_date <= thirty_days
+            )
+        )
+        .order_by(HQContract.end_date.asc())
+        .limit(5)
+    )
+    contracts = result.scalars().all()
+    return [HQContractResponse.model_validate(c, from_attributes=True) for c in contracts]
+
+
 # ============================================================================
 # Employee Endpoints
 # ============================================================================
