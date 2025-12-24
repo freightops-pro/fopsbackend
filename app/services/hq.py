@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.core.security import create_access_token, hash_password, verify_password
 from app.core.password_policy import validate_password
 from app.models.company import Company
+from app.models.user import User
 from app.models.hq_employee import HQEmployee, HQRole
 from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier
 from app.models.hq_contract import HQContract, ContractStatus, ContractType
@@ -204,7 +205,9 @@ class HQTenantService:
 
     async def list_tenants(self, status: Optional[str] = None) -> List[HQTenant]:
         """List all tenants with optional status filter."""
-        query = select(HQTenant).options(selectinload(HQTenant.company))
+        query = select(HQTenant).options(
+            selectinload(HQTenant.company).selectinload(Company.users)
+        )
         if status:
             query = query.where(HQTenant.status == TenantStatus(status))
         query = query.order_by(HQTenant.created_at.desc())
@@ -215,38 +218,84 @@ class HQTenantService:
         """Get tenant by ID with company data."""
         result = await self.db.execute(
             select(HQTenant)
-            .options(selectinload(HQTenant.company))
+            .options(selectinload(HQTenant.company).selectinload(Company.users))
             .where(HQTenant.id == tenant_id)
         )
         return result.scalar_one_or_none()
 
     async def create_tenant(self, payload: HQTenantCreate) -> HQTenant:
-        """Create a new tenant record for an existing company."""
-        # Check company exists
-        company = await self.db.get(Company, payload.company_id)
-        if not company:
-            raise ValueError("Company not found")
+        """Create a new tenant with company from frontend form data."""
+        # Generate email from company name if not provided
+        company_email = payload.primary_contact_email
+        if not company_email:
+            # Create a placeholder email
+            slug = payload.company_name.lower().replace(" ", "-").replace(".", "")[:30]
+            company_email = f"{slug}@placeholder.fops.io"
 
-        # Check no existing tenant for this company
-        result = await self.db.execute(
-            select(HQTenant).where(HQTenant.company_id == payload.company_id)
+        # Check if company with same DOT number exists
+        if payload.dot_number:
+            result = await self.db.execute(
+                select(Company).where(Company.dotNumber == payload.dot_number)
+            )
+            if result.scalar_one_or_none():
+                raise ValueError(f"Company with DOT number {payload.dot_number} already exists")
+
+        # Check if company with same MC number exists
+        if payload.mc_number:
+            result = await self.db.execute(
+                select(Company).where(Company.mcNumber == payload.mc_number)
+            )
+            if result.scalar_one_or_none():
+                raise ValueError(f"Company with MC number {payload.mc_number} already exists")
+
+        # Create Company record
+        company_id = str(uuid.uuid4())
+        company = Company(
+            id=company_id,
+            name=payload.company_name,
+            legal_name=payload.legal_name,
+            email=company_email,
+            phone=payload.primary_contact_phone,
+            dotNumber=payload.dot_number,
+            mcNumber=payload.mc_number,
+            tax_id=payload.tax_id,
+            primaryContactName=payload.primary_contact_name,
+            subscriptionPlan="pro",
+            isActive=True,
         )
-        if result.scalar_one_or_none():
-            raise ValueError("Tenant already exists for this company")
+        self.db.add(company)
 
+        # Parse subscription start date
+        sub_started = None
+        if payload.subscription_start_date:
+            try:
+                sub_started = datetime.fromisoformat(payload.subscription_start_date.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass
+
+        # Create HQTenant record
         tenant = HQTenant(
             id=str(uuid.uuid4()),
-            company_id=payload.company_id,
+            company_id=company_id,
             status=TenantStatus.TRIAL,
             subscription_tier=SubscriptionTier(payload.subscription_tier),
-            monthly_rate=payload.monthly_rate,
-            billing_email=payload.billing_email,
+            monthly_rate=payload.monthly_fee,
+            setup_fee=payload.setup_fee or Decimal("0"),
+            billing_email=payload.billing_email or company_email,
+            subscription_started_at=sub_started,
             notes=payload.notes,
         )
         self.db.add(tenant)
+
         await self.db.commit()
-        await self.db.refresh(tenant)
-        return tenant
+
+        # Reload with relationships
+        result = await self.db.execute(
+            select(HQTenant)
+            .options(selectinload(HQTenant.company).selectinload(Company.users))
+            .where(HQTenant.id == tenant.id)
+        )
+        return result.scalar_one()
 
     async def update_tenant(self, tenant_id: str, payload: HQTenantUpdate) -> HQTenant:
         """Update a tenant."""
@@ -258,8 +307,10 @@ class HQTenantService:
             tenant.status = TenantStatus(payload.status)
         if payload.subscription_tier is not None:
             tenant.subscription_tier = SubscriptionTier(payload.subscription_tier)
-        if payload.monthly_rate is not None:
-            tenant.monthly_rate = payload.monthly_rate
+        if payload.monthly_fee is not None:
+            tenant.monthly_rate = payload.monthly_fee
+        if payload.setup_fee is not None:
+            tenant.setup_fee = payload.setup_fee
         if payload.billing_email is not None:
             tenant.billing_email = payload.billing_email
         if payload.notes is not None:

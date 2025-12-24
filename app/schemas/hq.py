@@ -110,47 +110,89 @@ class HQEmployeeResponse(BaseModel):
 # Tenant Schemas
 # ============================================================================
 
-TenantStatusType = Literal["active", "trial", "suspended", "cancelled"]
+TenantStatusType = Literal["active", "trial", "suspended", "cancelled", "churned", "pending_setup"]
 SubscriptionTierType = Literal["starter", "professional", "enterprise", "custom"]
 
 
+class AddressResponse(BaseModel):
+    """Address nested in tenant response."""
+    street: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
+    country: Optional[str] = None
+
+
 class HQTenantBase(BaseModel):
-    billing_email: Optional[str] = None
-    subscription_tier: SubscriptionTierType = "starter"
-    monthly_rate: Optional[Decimal] = None
+    billing_email: Optional[str] = Field(None, alias="billingEmail", serialization_alias="billingEmail")
+    subscription_tier: SubscriptionTierType = Field("starter", alias="subscriptionTier", serialization_alias="subscriptionTier")
+    monthly_fee: Optional[Decimal] = Field(None, alias="monthlyFee", serialization_alias="monthlyFee")
+    setup_fee: Optional[Decimal] = Field(Decimal("0"), alias="setupFee", serialization_alias="setupFee")
     notes: Optional[str] = None
 
+    model_config = {"populate_by_name": True}
 
-class HQTenantCreate(HQTenantBase):
-    company_id: str
+
+class HQTenantCreate(BaseModel):
+    """Schema for creating a tenant with company - matches frontend form."""
+    company_name: str = Field(..., alias="companyName")
+    legal_name: Optional[str] = Field(None, alias="legalName")
+    tax_id: Optional[str] = Field(None, alias="taxId")
+    dot_number: Optional[str] = Field(None, alias="dotNumber")
+    mc_number: Optional[str] = Field(None, alias="mcNumber")
+    subscription_tier: SubscriptionTierType = Field("starter", alias="subscriptionTier")
+    monthly_fee: Decimal = Field(..., alias="monthlyFee")
+    setup_fee: Optional[Decimal] = Field(Decimal("0"), alias="setupFee")
+    subscription_start_date: Optional[str] = Field(None, alias="subscriptionStartDate")
+    primary_contact_name: Optional[str] = Field(None, alias="primaryContactName")
+    primary_contact_email: Optional[str] = Field(None, alias="primaryContactEmail")
+    primary_contact_phone: Optional[str] = Field(None, alias="primaryContactPhone")
+    billing_email: Optional[str] = Field(None, alias="billingEmail")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
 
 
 class HQTenantUpdate(BaseModel):
     status: Optional[TenantStatusType] = None
-    subscription_tier: Optional[SubscriptionTierType] = None
-    monthly_rate: Optional[Decimal] = None
-    billing_email: Optional[str] = None
+    subscription_tier: Optional[SubscriptionTierType] = Field(None, alias="subscriptionTier")
+    monthly_fee: Optional[Decimal] = Field(None, alias="monthlyFee")
+    setup_fee: Optional[Decimal] = Field(None, alias="setupFee")
+    billing_email: Optional[str] = Field(None, alias="billingEmail")
     notes: Optional[str] = None
-    assigned_sales_rep_id: Optional[str] = None
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId")
+
+    model_config = {"populate_by_name": True}
 
 
-class HQTenantResponse(HQTenantBase):
+class HQTenantResponse(BaseModel):
+    """Full tenant response with company data - matches frontend Tenant type."""
     id: str
-    company_id: str
+    company_name: str = Field(alias="companyName", serialization_alias="companyName")
+    legal_name: Optional[str] = Field(None, alias="legalName", serialization_alias="legalName")
+    tax_id: Optional[str] = Field(None, alias="taxId", serialization_alias="taxId")
+    dot_number: Optional[str] = Field(None, alias="dotNumber", serialization_alias="dotNumber")
+    mc_number: Optional[str] = Field(None, alias="mcNumber", serialization_alias="mcNumber")
     status: TenantStatusType
-    stripe_customer_id: Optional[str] = None
-    stripe_subscription_id: Optional[str] = None
-    trial_ends_at: Optional[datetime] = None
-    subscription_started_at: Optional[datetime] = None
-    current_period_ends_at: Optional[datetime] = None
-    assigned_sales_rep_id: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    # Joined from Company
-    company_name: Optional[str] = None
-    company_email: Optional[str] = None
+    subscription_tier: SubscriptionTierType = Field(alias="subscriptionTier", serialization_alias="subscriptionTier")
+    subscription_start_date: Optional[datetime] = Field(None, alias="subscriptionStartDate", serialization_alias="subscriptionStartDate")
+    subscription_end_date: Optional[datetime] = Field(None, alias="subscriptionEndDate", serialization_alias="subscriptionEndDate")
+    monthly_fee: Decimal = Field(Decimal("0"), alias="monthlyFee", serialization_alias="monthlyFee")
+    setup_fee: Decimal = Field(Decimal("0"), alias="setupFee", serialization_alias="setupFee")
+    primary_contact_name: Optional[str] = Field(None, alias="primaryContactName", serialization_alias="primaryContactName")
+    primary_contact_email: Optional[str] = Field(None, alias="primaryContactEmail", serialization_alias="primaryContactEmail")
+    primary_contact_phone: Optional[str] = Field(None, alias="primaryContactPhone", serialization_alias="primaryContactPhone")
+    billing_email: Optional[str] = Field(None, alias="billingEmail", serialization_alias="billingEmail")
+    address: Optional[AddressResponse] = None
+    total_users: int = Field(0, alias="totalUsers", serialization_alias="totalUsers")
+    active_users: int = Field(0, alias="activeUsers", serialization_alias="activeUsers")
+    stripe_customer_id: Optional[str] = Field(None, alias="stripeCustomerId", serialization_alias="stripeCustomerId")
+    stripe_subscription_id: Optional[str] = Field(None, alias="stripeSubscriptionId", serialization_alias="stripeSubscriptionId")
+    notes: Optional[str] = None
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # ============================================================================

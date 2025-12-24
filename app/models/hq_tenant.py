@@ -42,6 +42,7 @@ class HQTenant(Base):
         default=SubscriptionTier.STARTER
     )
     monthly_rate = Column(Numeric(10, 2), nullable=True)
+    setup_fee = Column(Numeric(10, 2), nullable=True, default=0)
     billing_email = Column(String, nullable=True)
     stripe_customer_id = Column(String, nullable=True, unique=True)
     stripe_subscription_id = Column(String, nullable=True, unique=True)

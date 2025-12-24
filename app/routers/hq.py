@@ -389,6 +389,52 @@ async def delete_employee(
 # Tenant Endpoints
 # ============================================================================
 
+def _build_tenant_response(tenant) -> HQTenantResponse:
+    """Build HQTenantResponse from tenant with company data."""
+    from app.schemas.hq import AddressResponse
+    company = tenant.company
+    users = company.users if company else []
+    total_users = len(users)
+    active_users = sum(1 for u in users if getattr(u, "is_active", True))
+
+    # Build address if company has address fields
+    address = None
+    if company and (company.address_line1 or company.city):
+        address = AddressResponse(
+            street=company.address_line1,
+            city=company.city,
+            state=company.state,
+            zip=company.zip_code,
+        )
+
+    return HQTenantResponse(
+        id=tenant.id,
+        company_name=company.name if company else "Unknown",
+        legal_name=company.legal_name if company else None,
+        tax_id=company.tax_id if company else None,
+        dot_number=company.dotNumber if company else None,
+        mc_number=company.mcNumber if company else None,
+        status=tenant.status.value if hasattr(tenant.status, "value") else tenant.status,
+        subscription_tier=tenant.subscription_tier.value if hasattr(tenant.subscription_tier, "value") else tenant.subscription_tier,
+        subscription_start_date=tenant.subscription_started_at,
+        subscription_end_date=tenant.current_period_ends_at,
+        monthly_fee=tenant.monthly_rate or 0,
+        setup_fee=getattr(tenant, "setup_fee", None) or 0,
+        primary_contact_name=company.primaryContactName if company else None,
+        primary_contact_email=company.email if company else None,
+        primary_contact_phone=company.phone if company else None,
+        billing_email=tenant.billing_email,
+        address=address,
+        total_users=total_users,
+        active_users=active_users,
+        stripe_customer_id=tenant.stripe_customer_id,
+        stripe_subscription_id=tenant.stripe_subscription_id,
+        notes=tenant.notes,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+    )
+
+
 @router.get("/tenants", response_model=List[HQTenantResponse])
 async def list_tenants(
     status_filter: Optional[str] = None,
@@ -398,14 +444,7 @@ async def list_tenants(
     """List all tenants."""
     service = HQTenantService(db)
     tenants = await service.list_tenants(status=status_filter)
-    result = []
-    for t in tenants:
-        data = HQTenantResponse.model_validate(t, from_attributes=True)
-        if t.company:
-            data.company_name = t.company.name
-            data.company_email = t.company.email
-        result.append(data)
-    return result
+    return [_build_tenant_response(t) for t in tenants]
 
 
 @router.post("/tenants", response_model=HQTenantResponse, status_code=status.HTTP_201_CREATED)
@@ -414,11 +453,11 @@ async def create_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Create a new tenant."""
+    """Create a new tenant with company."""
     service = HQTenantService(db)
     try:
         tenant = await service.create_tenant(payload)
-        return HQTenantResponse.model_validate(tenant, from_attributes=True)
+        return _build_tenant_response(tenant)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -434,11 +473,7 @@ async def get_tenant(
     tenant = await service.get_tenant(tenant_id)
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    data = HQTenantResponse.model_validate(tenant, from_attributes=True)
-    if tenant.company:
-        data.company_name = tenant.company.name
-        data.company_email = tenant.company.email
-    return data
+    return _build_tenant_response(tenant)
 
 
 @router.patch("/tenants/{tenant_id}", response_model=HQTenantResponse)
@@ -452,7 +487,9 @@ async def update_tenant(
     service = HQTenantService(db)
     try:
         tenant = await service.update_tenant(tenant_id, payload)
-        return HQTenantResponse.model_validate(tenant, from_attributes=True)
+        # Reload with relationships for response
+        tenant = await service.get_tenant(tenant_id)
+        return _build_tenant_response(tenant)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
@@ -466,8 +503,9 @@ async def suspend_tenant(
     """Suspend a tenant."""
     service = HQTenantService(db)
     try:
-        tenant = await service.suspend_tenant(tenant_id)
-        return HQTenantResponse.model_validate(tenant, from_attributes=True)
+        await service.suspend_tenant(tenant_id)
+        tenant = await service.get_tenant(tenant_id)
+        return _build_tenant_response(tenant)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
@@ -481,8 +519,9 @@ async def activate_tenant(
     """Activate a tenant."""
     service = HQTenantService(db)
     try:
-        tenant = await service.activate_tenant(tenant_id)
-        return HQTenantResponse.model_validate(tenant, from_attributes=True)
+        await service.activate_tenant(tenant_id)
+        tenant = await service.get_tenant(tenant_id)
+        return _build_tenant_response(tenant)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
