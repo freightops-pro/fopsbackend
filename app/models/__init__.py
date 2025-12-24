@@ -64,3 +64,17 @@ from app.models.hq_accounting import (  # noqa: F401
     HQPayment, PaymentType, PaymentDirection,
 )
 
+# HQ HR Models
+from app.models.hq_hr import (  # noqa: F401
+    HQHREmployee, HQPayrollRun, HQPayrollItem,
+    EmploymentType, HREmployeeStatus, PayFrequency, PayrollStatus,
+)
+
+# HQ General Ledger Models
+from app.models.hq_general_ledger import (  # noqa: F401
+    HQChartOfAccounts, HQJournalEntry, HQGeneralLedgerEntry,
+    HQUsageLog, HQRecurringBilling,
+    AccountType, AccountSubtype, JournalEntryStatus,
+    UsageMetricType, BillingFrequency,
+)
+
