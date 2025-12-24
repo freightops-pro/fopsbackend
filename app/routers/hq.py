@@ -386,20 +386,19 @@ async def delete_employee(
 
 
 # ============================================================================
-# Tenant Endpoints
+# Tenant Endpoints - Query Company table directly
 # ============================================================================
 
-def _build_tenant_response(tenant) -> HQTenantResponse:
-    """Build HQTenantResponse from tenant with company data."""
+def _build_tenant_response_from_company(company) -> HQTenantResponse:
+    """Build HQTenantResponse directly from Company model."""
     from app.schemas.hq import AddressResponse
-    company = tenant.company
-    users = company.users if company else []
+    users = company.users if hasattr(company, 'users') and company.users else []
     total_users = len(users)
     active_users = sum(1 for u in users if getattr(u, "is_active", True))
 
     # Build address if company has address fields
     address = None
-    if company and (company.address_line1 or company.city):
+    if company.address_line1 or company.city:
         address = AddressResponse(
             street=company.address_line1,
             city=company.city,
@@ -407,31 +406,38 @@ def _build_tenant_response(tenant) -> HQTenantResponse:
             zip=company.zip_code,
         )
 
+    # Map subscription plan to tier
+    plan_to_tier = {"free": "starter", "starter": "starter", "pro": "professional", "enterprise": "enterprise"}
+    tier = plan_to_tier.get(company.subscriptionPlan, "professional")
+
+    # Status based on isActive
+    status = "active" if company.isActive else "suspended"
+
     return HQTenantResponse(
-        id=tenant.id,
-        company_name=company.name if company else "Unknown",
-        legal_name=company.legal_name if company else None,
-        tax_id=company.tax_id if company else None,
-        dot_number=company.dotNumber if company else None,
-        mc_number=company.mcNumber if company else None,
-        status=tenant.status.value if hasattr(tenant.status, "value") else tenant.status,
-        subscription_tier=tenant.subscription_tier.value if hasattr(tenant.subscription_tier, "value") else tenant.subscription_tier,
-        subscription_start_date=tenant.subscription_started_at,
-        subscription_end_date=tenant.current_period_ends_at,
-        monthly_fee=tenant.monthly_rate or 0,
-        setup_fee=getattr(tenant, "setup_fee", None) or 0,
-        primary_contact_name=company.primaryContactName if company else None,
-        primary_contact_email=company.email if company else None,
-        primary_contact_phone=company.phone if company else None,
-        billing_email=tenant.billing_email,
+        id=company.id,
+        company_name=company.name,
+        legal_name=company.legal_name,
+        tax_id=company.tax_id,
+        dot_number=company.dotNumber,
+        mc_number=company.mcNumber,
+        status=status,
+        subscription_tier=tier,
+        subscription_start_date=company.createdAt,
+        subscription_end_date=None,
+        monthly_fee=0,  # Would come from Stripe subscription
+        setup_fee=0,
+        primary_contact_name=company.primaryContactName,
+        primary_contact_email=company.email,
+        primary_contact_phone=company.phone,
+        billing_email=company.email,
         address=address,
         total_users=total_users,
         active_users=active_users,
-        stripe_customer_id=tenant.stripe_customer_id,
-        stripe_subscription_id=tenant.stripe_subscription_id,
-        notes=tenant.notes,
-        created_at=tenant.created_at,
-        updated_at=tenant.updated_at,
+        stripe_customer_id=None,  # Would come from subscription
+        stripe_subscription_id=None,
+        notes=company.description,
+        created_at=company.createdAt,
+        updated_at=company.updatedAt,
     )
 
 
@@ -441,10 +447,25 @@ async def list_tenants(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> List[HQTenantResponse]:
-    """List all tenants."""
-    service = HQTenantService(db)
-    tenants = await service.list_tenants(status=status_filter)
-    return [_build_tenant_response(t) for t in tenants]
+    """List all tenants (companies) directly."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+
+    query = select(Company).options(selectinload(Company.users))
+
+    # Filter by status (active/suspended based on isActive)
+    if status_filter:
+        if status_filter == "active":
+            query = query.where(Company.isActive == True)
+        elif status_filter == "suspended":
+            query = query.where(Company.isActive == False)
+
+    query = query.order_by(Company.createdAt.desc())
+    result = await db.execute(query)
+    companies = result.scalars().all()
+
+    return [_build_tenant_response_from_company(c) for c in companies]
 
 
 @router.post("/tenants", response_model=HQTenantResponse, status_code=status.HTTP_201_CREATED)
@@ -453,13 +474,46 @@ async def create_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Create a new tenant with company."""
-    service = HQTenantService(db)
-    try:
-        tenant = await service.create_tenant(payload)
-        return _build_tenant_response(tenant)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    """Create a new tenant (company) from HQ."""
+    import uuid
+    from app.models.company import Company
+
+    # Check for existing DOT/MC
+    if payload.dot_number:
+        from sqlalchemy import select
+        result = await db.execute(select(Company).where(Company.dotNumber == payload.dot_number))
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Company with DOT {payload.dot_number} already exists")
+
+    if payload.mc_number:
+        from sqlalchemy import select
+        result = await db.execute(select(Company).where(Company.mcNumber == payload.mc_number))
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Company with MC {payload.mc_number} already exists")
+
+    # Map tier to subscription plan
+    tier_to_plan = {"starter": "starter", "professional": "pro", "enterprise": "enterprise", "custom": "enterprise"}
+    plan = tier_to_plan.get(payload.subscription_tier, "pro")
+
+    company = Company(
+        id=str(uuid.uuid4()),
+        name=payload.company_name,
+        legal_name=payload.legal_name,
+        email=payload.primary_contact_email or f"{payload.company_name.lower().replace(' ', '')}@placeholder.fops.io",
+        phone=payload.primary_contact_phone,
+        dotNumber=payload.dot_number,
+        mcNumber=payload.mc_number,
+        tax_id=payload.tax_id,
+        primaryContactName=payload.primary_contact_name,
+        subscriptionPlan=plan,
+        isActive=True,
+        description=payload.notes,
+    )
+    db.add(company)
+    await db.commit()
+    await db.refresh(company)
+
+    return _build_tenant_response_from_company(company)
 
 
 @router.get("/tenants/{tenant_id}", response_model=HQTenantResponse)
@@ -468,12 +522,18 @@ async def get_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Get tenant by ID."""
-    service = HQTenantService(db)
-    tenant = await service.get_tenant(tenant_id)
-    if not tenant:
+    """Get tenant (company) by ID."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+
+    result = await db.execute(
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return _build_tenant_response(tenant)
+    return _build_tenant_response_from_company(company)
 
 
 @router.patch("/tenants/{tenant_id}", response_model=HQTenantResponse)
@@ -483,15 +543,32 @@ async def update_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Update a tenant."""
-    service = HQTenantService(db)
-    try:
-        tenant = await service.update_tenant(tenant_id, payload)
-        # Reload with relationships for response
-        tenant = await service.get_tenant(tenant_id)
-        return _build_tenant_response(tenant)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    """Update a tenant (company)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+
+    result = await db.execute(
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Update fields if provided
+    if payload.subscription_tier:
+        tier_to_plan = {"starter": "starter", "professional": "pro", "enterprise": "enterprise", "custom": "enterprise"}
+        company.subscriptionPlan = tier_to_plan.get(payload.subscription_tier, "pro")
+    if payload.billing_email:
+        company.email = payload.billing_email
+    if payload.notes is not None:
+        company.description = payload.notes
+    if payload.status:
+        company.isActive = payload.status in ("active", "trial")
+
+    await db.commit()
+    await db.refresh(company)
+    return _build_tenant_response_from_company(company)
 
 
 @router.post("/tenants/{tenant_id}/suspend", response_model=HQTenantResponse)
@@ -500,14 +577,22 @@ async def suspend_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Suspend a tenant."""
-    service = HQTenantService(db)
-    try:
-        await service.suspend_tenant(tenant_id)
-        tenant = await service.get_tenant(tenant_id)
-        return _build_tenant_response(tenant)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    """Suspend a tenant (set company.isActive = False)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+
+    result = await db.execute(
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    company.isActive = False
+    await db.commit()
+    await db.refresh(company)
+    return _build_tenant_response_from_company(company)
 
 
 @router.post("/tenants/{tenant_id}/activate", response_model=HQTenantResponse)
@@ -516,53 +601,22 @@ async def activate_tenant(
     _: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQTenantResponse:
-    """Activate a tenant."""
-    service = HQTenantService(db)
-    try:
-        await service.activate_tenant(tenant_id)
-        tenant = await service.get_tenant(tenant_id)
-        return _build_tenant_response(tenant)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-
-
-@router.post("/tenants/sync", response_model=dict)
-async def sync_tenants_from_companies(
-    _: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """
-    Create HQ tenant records for all companies that don't have one.
-    This is a one-time sync to populate the hq_tenant table from existing companies.
-    """
-    import uuid
+    """Activate a tenant (set company.isActive = True)."""
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
     from app.models.company import Company
-    from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier
 
-    # Find companies without hq_tenant records
     result = await db.execute(
-        select(Company).outerjoin(HQTenant, Company.id == HQTenant.company_id)
-        .where(HQTenant.id == None)
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
     )
-    orphan_companies = result.scalars().all()
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    created = 0
-    for company in orphan_companies:
-        tenant = HQTenant(
-            id=str(uuid.uuid4()),
-            company_id=company.id,
-            status=TenantStatus.ACTIVE if company.isActive else TenantStatus.SUSPENDED,
-            subscription_tier=SubscriptionTier.PROFESSIONAL,
-            monthly_rate=299,  # Default rate
-            billing_email=company.email,
-        )
-        db.add(tenant)
-        created += 1
-
+    company.isActive = True
     await db.commit()
-
-    return {"synced": created, "message": f"Created {created} tenant records from existing companies"}
+    await db.refresh(company)
+    return _build_tenant_response_from_company(company)
 
 
 # ============================================================================
