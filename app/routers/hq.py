@@ -1818,3 +1818,258 @@ async def get_gl_dashboard(
     except Exception as exc:
         logger.error(f"Error getting GL dashboard: {exc}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# ============================================================================
+# HR & Payroll Endpoints
+# ============================================================================
+
+from app.services.hq_hr import HQHREmployeeService, HQPayrollService
+from app.schemas.hq import (
+    HQHREmployeeCreate,
+    HQHREmployeeUpdate,
+    HQHREmployeeResponse,
+    HQPayrollRunCreate,
+    HQPayrollRunResponse,
+    HQPayrollItemResponse,
+)
+
+
+# HR Employee Endpoints
+@router.get("/hr/stats")
+async def get_hr_stats(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get HR statistics."""
+    hr_service = HQHREmployeeService(db)
+    payroll_service = HQPayrollService(db)
+
+    hr_stats = await hr_service.get_hr_stats()
+    payroll_stats = await payroll_service.get_payroll_stats()
+
+    return {**hr_stats, **payroll_stats}
+
+
+@router.get("/hr/employees", response_model=List[HQHREmployeeResponse])
+async def list_hr_employees(
+    status_filter: Optional[str] = None,
+    department: Optional[str] = None,
+    employment_type: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQHREmployeeResponse]:
+    """List all HR employees (payroll employees)."""
+    service = HQHREmployeeService(db)
+    employees = await service.list_employees(
+        status=status_filter,
+        department=department,
+        employment_type=employment_type,
+    )
+
+    result = []
+    for emp in employees:
+        resp = HQHREmployeeResponse.model_validate(emp, from_attributes=True)
+        # Add manager name if available
+        if emp.manager:
+            resp.manager_name = f"{emp.manager.first_name} {emp.manager.last_name}"
+        result.append(resp)
+    return result
+
+
+@router.post("/hr/employees", response_model=HQHREmployeeResponse, status_code=status.HTTP_201_CREATED)
+async def create_hr_employee(
+    payload: HQHREmployeeCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQHREmployeeResponse:
+    """Create a new HR employee."""
+    service = HQHREmployeeService(db)
+    try:
+        employee = await service.create_employee(payload)
+        return HQHREmployeeResponse.model_validate(employee, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/hr/employees/{employee_id}", response_model=HQHREmployeeResponse)
+async def get_hr_employee(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQHREmployeeResponse:
+    """Get HR employee by ID."""
+    service = HQHREmployeeService(db)
+    employee = await service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+    resp = HQHREmployeeResponse.model_validate(employee, from_attributes=True)
+    if employee.manager:
+        resp.manager_name = f"{employee.manager.first_name} {employee.manager.last_name}"
+    return resp
+
+
+@router.patch("/hr/employees/{employee_id}", response_model=HQHREmployeeResponse)
+async def update_hr_employee(
+    employee_id: str,
+    payload: HQHREmployeeUpdate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQHREmployeeResponse:
+    """Update an HR employee."""
+    service = HQHREmployeeService(db)
+    try:
+        employee = await service.update_employee(employee_id, payload)
+        return HQHREmployeeResponse.model_validate(employee, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/hr/employees/{employee_id}/terminate", response_model=HQHREmployeeResponse)
+async def terminate_hr_employee(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQHREmployeeResponse:
+    """Terminate an HR employee."""
+    service = HQHREmployeeService(db)
+    try:
+        employee = await service.terminate_employee(employee_id)
+        return HQHREmployeeResponse.model_validate(employee, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# Payroll Run Endpoints
+@router.get("/hr/payroll", response_model=List[HQPayrollRunResponse])
+async def list_payroll_runs(
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQPayrollRunResponse]:
+    """List all payroll runs."""
+    service = HQPayrollService(db)
+    payrolls = await service.list_payroll_runs(status=status_filter, limit=limit)
+    return [HQPayrollRunResponse.model_validate(p, from_attributes=True) for p in payrolls]
+
+
+@router.post("/hr/payroll", response_model=HQPayrollRunResponse, status_code=status.HTTP_201_CREATED)
+async def create_payroll_run(
+    payload: HQPayrollRunCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Create a new payroll run."""
+    service = HQPayrollService(db)
+    try:
+        payroll = await service.create_payroll_run(payload, current_employee.id)
+        return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/hr/payroll/{payroll_id}", response_model=HQPayrollRunResponse)
+async def get_payroll_run(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Get payroll run by ID."""
+    service = HQPayrollService(db)
+    payroll = await service.get_payroll_run(payroll_id)
+    if not payroll:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payroll run not found")
+    return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+
+
+@router.get("/hr/payroll/{payroll_id}/items", response_model=List[HQPayrollItemResponse])
+async def get_payroll_items(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQPayrollItemResponse]:
+    """Get all items for a payroll run."""
+    service = HQPayrollService(db)
+    items = await service.get_payroll_items(payroll_id)
+
+    result = []
+    for item in items:
+        resp = HQPayrollItemResponse(
+            id=item.id,
+            payroll_run_id=item.payroll_run_id,
+            employee_id=item.employee_id,
+            employee_name=f"{item.employee.first_name} {item.employee.last_name}" if item.employee else "Unknown",
+            gross_pay=item.gross_pay,
+            federal_tax=item.federal_tax,
+            state_tax=item.state_tax,
+            social_security=item.social_security,
+            medicare=item.medicare,
+            other_deductions=item.other_deductions + item.health_insurance + item.dental_insurance + item.vision_insurance + item.retirement_401k,
+            net_pay=item.net_pay,
+            hours_worked=item.regular_hours,
+            overtime_hours=item.overtime_hours,
+            check_paystub_id=item.check_paystub_id,
+        )
+        result.append(resp)
+    return result
+
+
+@router.post("/hr/payroll/{payroll_id}/submit", response_model=HQPayrollRunResponse)
+async def submit_payroll_for_approval(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Submit a payroll run for approval."""
+    service = HQPayrollService(db)
+    try:
+        payroll = await service.submit_for_approval(payroll_id)
+        return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/hr/payroll/{payroll_id}/approve", response_model=HQPayrollRunResponse)
+async def approve_payroll_run(
+    payroll_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Approve a payroll run."""
+    service = HQPayrollService(db)
+    try:
+        payroll = await service.approve_payroll(payroll_id, current_employee.id)
+        return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/hr/payroll/{payroll_id}/process", response_model=HQPayrollRunResponse)
+async def process_payroll_run(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Process an approved payroll run."""
+    service = HQPayrollService(db)
+    try:
+        payroll = await service.process_payroll(payroll_id)
+        return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/hr/payroll/{payroll_id}/cancel", response_model=HQPayrollRunResponse)
+async def cancel_payroll_run(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQPayrollRunResponse:
+    """Cancel a payroll run."""
+    service = HQPayrollService(db)
+    try:
+        payroll = await service.cancel_payroll(payroll_id)
+        return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
