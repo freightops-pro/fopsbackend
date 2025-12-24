@@ -536,6 +536,180 @@ async def get_tenant(
     return _build_tenant_response_from_company(company)
 
 
+@router.get("/tenants/{tenant_id}/detail")
+async def get_tenant_detail(
+    tenant_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed tenant profile with fleet, dispatch, and usage metrics."""
+    from decimal import Decimal
+    from sqlalchemy import select, func, Integer
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+    from app.schemas.hq import (
+        HQTenantDetailResponse,
+        TenantFleetMetrics,
+        TenantDispatchMetrics,
+        TenantUsageMetrics,
+        TenantCostBreakdown,
+        AddressResponse,
+    )
+
+    # Get company with users
+    result = await db.execute(
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Fleet metrics
+    fleet = TenantFleetMetrics()
+    try:
+        from app.models.equipment import Equipment
+        from app.models.driver import Driver
+
+        # Equipment counts
+        eq_result = await db.execute(
+            select(
+                func.count(Equipment.id).label("total"),
+                func.sum(func.cast(Equipment.status == "ACTIVE", Integer)).label("active")
+            ).where(Equipment.company_id == tenant_id)
+        )
+        eq_row = eq_result.first()
+        if eq_row:
+            fleet.total_trucks = eq_row.total or 0
+            fleet.active_trucks = eq_row.active or 0
+
+        # Could separate by equipment_type for tractors vs trailers
+        # For now, using same count
+
+        # Driver counts
+        dr_result = await db.execute(
+            select(func.count(Driver.id)).where(Driver.company_id == tenant_id)
+        )
+        fleet.total_drivers = dr_result.scalar() or 0
+        fleet.active_drivers = fleet.total_drivers  # Assume all active for now
+    except Exception:
+        pass  # Models may not exist
+
+    # Dispatch metrics
+    dispatch = TenantDispatchMetrics()
+    try:
+        from app.models.load import Load
+
+        load_result = await db.execute(
+            select(
+                func.count(Load.id).label("total"),
+                func.sum(func.cast(Load.status == "delivered", Integer)).label("completed"),
+                func.sum(func.cast(Load.status == "in_transit", Integer)).label("in_transit"),
+                func.sum(func.cast(Load.status.in_(["draft", "assigned"]), Integer)).label("pending"),
+                func.coalesce(func.sum(Load.base_rate), 0).label("revenue")
+            ).where(Load.company_id == tenant_id)
+        )
+        load_row = load_result.first()
+        if load_row:
+            dispatch.total_loads = load_row.total or 0
+            dispatch.completed_loads = load_row.completed or 0
+            dispatch.in_transit_loads = load_row.in_transit or 0
+            dispatch.pending_loads = load_row.pending or 0
+            dispatch.total_revenue = Decimal(str(load_row.revenue or 0))
+            if dispatch.total_loads > 0:
+                dispatch.avg_load_value = dispatch.total_revenue / dispatch.total_loads
+    except Exception:
+        pass  # Models may not exist
+
+    # Usage metrics (API calls)
+    usage = TenantUsageMetrics()
+    try:
+        from app.models.ai_usage import AIUsageLog
+
+        usage_result = await db.execute(
+            select(
+                func.count(AIUsageLog.id).label("total"),
+                func.sum(func.cast(AIUsageLog.operation_type == "ocr", Integer)).label("ocr"),
+                func.sum(func.cast(AIUsageLog.operation_type == "chat", Integer)).label("chat"),
+                func.sum(func.cast(AIUsageLog.operation_type == "audit", Integer)).label("audit"),
+                func.coalesce(func.sum(AIUsageLog.tokens_used), 0).label("tokens"),
+                func.coalesce(func.sum(AIUsageLog.cost_usd), 0).label("cost")
+            ).where(AIUsageLog.company_id == tenant_id)
+        )
+        usage_row = usage_result.first()
+        if usage_row:
+            usage.total_api_calls = usage_row.total or 0
+            usage.ocr_calls = usage_row.ocr or 0
+            usage.chat_calls = usage_row.chat or 0
+            usage.audit_calls = usage_row.audit or 0
+            usage.tokens_used = usage_row.tokens or 0
+            usage.estimated_cost = Decimal(str(usage_row.cost or 0))
+    except Exception:
+        pass  # Models may not exist
+
+    # Cost breakdown calculation
+    # Pricing: Base $299/mo + $10/truck + $5/driver + API usage
+    base_sub = Decimal("299")
+    truck_rate = Decimal("10")
+    driver_rate = Decimal("5")
+
+    cost = TenantCostBreakdown(
+        base_subscription=base_sub,
+        per_truck_cost=truck_rate * fleet.total_trucks,
+        per_driver_cost=driver_rate * fleet.total_drivers,
+        api_usage_cost=usage.estimated_cost,
+        total_monthly_cost=base_sub + (truck_rate * fleet.total_trucks) + (driver_rate * fleet.total_drivers) + usage.estimated_cost
+    )
+
+    # Build base tenant response
+    users = company.users if hasattr(company, 'users') and company.users else []
+    total_users = len(users)
+    active_users = sum(1 for u in users if getattr(u, "is_active", True))
+
+    address = None
+    if company.address_line1 or company.city:
+        address = AddressResponse(
+            street=company.address_line1,
+            city=company.city,
+            state=company.state,
+            zip=company.zip_code,
+        )
+
+    plan_to_tier = {"free": "starter", "starter": "starter", "pro": "professional", "enterprise": "enterprise"}
+    tier = plan_to_tier.get(company.subscriptionPlan, "professional")
+    status_val = "active" if company.isActive else "suspended"
+
+    return HQTenantDetailResponse(
+        id=company.id,
+        company_name=company.name,
+        legal_name=company.legal_name,
+        tax_id=company.tax_id,
+        dot_number=company.dotNumber,
+        mc_number=company.mcNumber,
+        status=status_val,
+        subscription_tier=tier,
+        subscription_start_date=company.createdAt,
+        subscription_end_date=None,
+        monthly_fee=cost.total_monthly_cost,
+        setup_fee=Decimal("0"),
+        primary_contact_name=company.primaryContactName,
+        primary_contact_email=company.email,
+        primary_contact_phone=company.phone,
+        billing_email=company.email,
+        address=address,
+        total_users=total_users,
+        active_users=active_users,
+        stripe_customer_id=None,
+        stripe_subscription_id=None,
+        notes=company.description,
+        created_at=company.createdAt,
+        updated_at=company.updatedAt,
+        fleet=fleet,
+        dispatch=dispatch,
+        usage=usage,
+        cost_breakdown=cost,
+    )
+
+
 @router.patch("/tenants/{tenant_id}", response_model=HQTenantResponse)
 async def update_tenant(
     tenant_id: str,

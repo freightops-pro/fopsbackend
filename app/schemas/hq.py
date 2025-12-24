@@ -195,6 +195,63 @@ class HQTenantResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class TenantUsageMetrics(BaseModel):
+    """Usage metrics for a tenant."""
+    ocr_calls: int = Field(0, alias="ocrCalls", serialization_alias="ocrCalls")
+    chat_calls: int = Field(0, alias="chatCalls", serialization_alias="chatCalls")
+    audit_calls: int = Field(0, alias="auditCalls", serialization_alias="auditCalls")
+    total_api_calls: int = Field(0, alias="totalApiCalls", serialization_alias="totalApiCalls")
+    tokens_used: int = Field(0, alias="tokensUsed", serialization_alias="tokensUsed")
+    estimated_cost: Decimal = Field(Decimal("0"), alias="estimatedCost", serialization_alias="estimatedCost")
+
+    model_config = {"populate_by_name": True}
+
+
+class TenantFleetMetrics(BaseModel):
+    """Fleet metrics for a tenant."""
+    total_trucks: int = Field(0, alias="totalTrucks", serialization_alias="totalTrucks")
+    active_trucks: int = Field(0, alias="activeTrucks", serialization_alias="activeTrucks")
+    total_trailers: int = Field(0, alias="totalTrailers", serialization_alias="totalTrailers")
+    active_trailers: int = Field(0, alias="activeTrailers", serialization_alias="activeTrailers")
+    total_drivers: int = Field(0, alias="totalDrivers", serialization_alias="totalDrivers")
+    active_drivers: int = Field(0, alias="activeDrivers", serialization_alias="activeDrivers")
+
+    model_config = {"populate_by_name": True}
+
+
+class TenantDispatchMetrics(BaseModel):
+    """Dispatch metrics for a tenant."""
+    total_loads: int = Field(0, alias="totalLoads", serialization_alias="totalLoads")
+    completed_loads: int = Field(0, alias="completedLoads", serialization_alias="completedLoads")
+    in_transit_loads: int = Field(0, alias="inTransitLoads", serialization_alias="inTransitLoads")
+    pending_loads: int = Field(0, alias="pendingLoads", serialization_alias="pendingLoads")
+    total_revenue: Decimal = Field(Decimal("0"), alias="totalRevenue", serialization_alias="totalRevenue")
+    avg_load_value: Decimal = Field(Decimal("0"), alias="avgLoadValue", serialization_alias="avgLoadValue")
+
+    model_config = {"populate_by_name": True}
+
+
+class TenantCostBreakdown(BaseModel):
+    """Cost breakdown for a tenant."""
+    base_subscription: Decimal = Field(Decimal("0"), alias="baseSubscription", serialization_alias="baseSubscription")
+    per_truck_cost: Decimal = Field(Decimal("0"), alias="perTruckCost", serialization_alias="perTruckCost")
+    per_driver_cost: Decimal = Field(Decimal("0"), alias="perDriverCost", serialization_alias="perDriverCost")
+    api_usage_cost: Decimal = Field(Decimal("0"), alias="apiUsageCost", serialization_alias="apiUsageCost")
+    total_monthly_cost: Decimal = Field(Decimal("0"), alias="totalMonthlyCost", serialization_alias="totalMonthlyCost")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantDetailResponse(HQTenantResponse):
+    """Detailed tenant response with full metrics."""
+    fleet: TenantFleetMetrics = Field(default_factory=TenantFleetMetrics)
+    dispatch: TenantDispatchMetrics = Field(default_factory=TenantDispatchMetrics)
+    usage: TenantUsageMetrics = Field(default_factory=TenantUsageMetrics)
+    cost_breakdown: TenantCostBreakdown = Field(default_factory=TenantCostBreakdown, alias="costBreakdown", serialization_alias="costBreakdown")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
 # ============================================================================
 # Contract Schemas
 # ============================================================================
