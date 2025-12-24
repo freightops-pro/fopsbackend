@@ -206,7 +206,13 @@ class AuthService:
         if not company:
             raise ValueError("Company not found for user")
 
-        roles = await self._get_user_roles(user.id)
+        # Try to get roles from RBAC tables, fall back to legacy role if tables don't exist
+        try:
+            roles = await self._get_user_roles(user.id)
+        except Exception:
+            # RBAC tables may not exist yet, use empty list to trigger fallback
+            roles = []
+
         if not roles and user.role:
             roles = [user.role.upper()]
         if not roles:
