@@ -68,7 +68,7 @@ async def get_tenant_features(
         .options(joinedload(Subscription.add_ons))
         .where(Subscription.company_id == company_id)
     )
-    subscription = sub_result.scalar_one_or_none()
+    subscription = sub_result.unique().scalar_one_or_none()
 
     if subscription:
         # Check for active add-ons
