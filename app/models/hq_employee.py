@@ -1,6 +1,6 @@
 """HQ Employee model for SaaS admin users."""
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, String, func
+from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, func
 import enum
 from typing import Set
 
@@ -124,7 +124,12 @@ class HQEmployee(Base):
     last_name = Column(String, nullable=False)
     role = Column(Enum(HQRole), nullable=False, default=HQRole.SUPPORT)
     department = Column(String, nullable=True)
+    title = Column(String, nullable=True)  # Job title
     phone = Column(String, nullable=True)
+    hire_date = Column(DateTime, nullable=True)  # Date of hire
+    salary = Column(Integer, nullable=True)  # Annual salary
+    emergency_contact = Column(String, nullable=True)  # Emergency contact name
+    emergency_phone = Column(String, nullable=True)  # Emergency contact phone
     is_active = Column(Boolean, nullable=False, default=True)
     must_change_password = Column(Boolean, nullable=False, default=False)
     last_login_at = Column(DateTime, nullable=True)

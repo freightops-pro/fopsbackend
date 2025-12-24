@@ -48,37 +48,62 @@ HQRoleType = Literal["SUPER_ADMIN", "ADMIN", "HR_MANAGER", "SALES_MANAGER", "ACC
 
 class HQEmployeeBase(BaseModel):
     email: EmailStr
-    first_name: str
-    last_name: str
+    first_name: str = Field(alias="firstName", serialization_alias="firstName")
+    last_name: str = Field(alias="lastName", serialization_alias="lastName")
     role: HQRoleType = "SUPPORT"
     department: Optional[str] = None
+    title: Optional[str] = None
     phone: Optional[str] = None
+    hire_date: Optional[datetime] = Field(None, alias="hireDate", serialization_alias="hireDate")
+    salary: Optional[int] = None
+    emergency_contact: Optional[str] = Field(None, alias="emergencyContact", serialization_alias="emergencyContact")
+    emergency_phone: Optional[str] = Field(None, alias="emergencyPhone", serialization_alias="emergencyPhone")
+
+    model_config = {"populate_by_name": True}
 
 
 class HQEmployeeCreate(HQEmployeeBase):
-    employee_number: str = Field(..., min_length=1, max_length=10)
+    employee_number: str = Field(..., min_length=1, max_length=10, alias="employeeNumber", serialization_alias="employeeNumber")
     password: str = Field(..., min_length=8)
 
 
 class HQEmployeeUpdate(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    first_name: Optional[str] = Field(None, alias="firstName")
+    last_name: Optional[str] = Field(None, alias="lastName")
     role: Optional[HQRoleType] = None
     department: Optional[str] = None
+    title: Optional[str] = None
     phone: Optional[str] = None
-    is_active: Optional[bool] = None
+    hire_date: Optional[datetime] = Field(None, alias="hireDate")
+    salary: Optional[int] = None
+    emergency_contact: Optional[str] = Field(None, alias="emergencyContact")
+    emergency_phone: Optional[str] = Field(None, alias="emergencyPhone")
+    is_active: Optional[bool] = Field(None, alias="isActive")
+
+    model_config = {"populate_by_name": True}
 
 
-class HQEmployeeResponse(HQEmployeeBase):
+class HQEmployeeResponse(BaseModel):
     id: str
-    employee_number: str
-    is_active: bool
-    must_change_password: bool
-    last_login_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    employee_number: str = Field(alias="employeeNumber", serialization_alias="employeeNumber")
+    email: EmailStr
+    first_name: str = Field(alias="firstName", serialization_alias="firstName")
+    last_name: str = Field(alias="lastName", serialization_alias="lastName")
+    role: HQRoleType
+    department: Optional[str] = None
+    title: Optional[str] = None
+    phone: Optional[str] = None
+    hire_date: Optional[datetime] = Field(None, alias="hireDate", serialization_alias="hireDate")
+    salary: Optional[int] = None
+    emergency_contact: Optional[str] = Field(None, alias="emergencyContact", serialization_alias="emergencyContact")
+    emergency_phone: Optional[str] = Field(None, alias="emergencyPhone", serialization_alias="emergencyPhone")
+    is_active: bool = Field(alias="isActive", serialization_alias="isActive")
+    must_change_password: bool = Field(alias="mustChangePassword", serialization_alias="mustChangePassword")
+    last_login_at: Optional[datetime] = Field(None, alias="lastLoginAt", serialization_alias="lastLoginAt")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # ============================================================================

@@ -142,7 +142,12 @@ class HQEmployeeService:
             last_name=payload.last_name.strip(),
             role=HQRole(payload.role),
             department=payload.department,
+            title=payload.title,
             phone=payload.phone,
+            hire_date=payload.hire_date,
+            salary=payload.salary,
+            emergency_contact=payload.emergency_contact,
+            emergency_phone=payload.emergency_phone,
         )
         self.db.add(employee)
         await self.db.commit()
@@ -163,8 +168,18 @@ class HQEmployeeService:
             employee.role = HQRole(payload.role)
         if payload.department is not None:
             employee.department = payload.department
+        if payload.title is not None:
+            employee.title = payload.title
         if payload.phone is not None:
             employee.phone = payload.phone
+        if payload.hire_date is not None:
+            employee.hire_date = payload.hire_date
+        if payload.salary is not None:
+            employee.salary = payload.salary
+        if payload.emergency_contact is not None:
+            employee.emergency_contact = payload.emergency_contact
+        if payload.emergency_phone is not None:
+            employee.emergency_phone = payload.emergency_phone
         if payload.is_active is not None:
             employee.is_active = payload.is_active
 
