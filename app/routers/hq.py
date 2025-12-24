@@ -41,6 +41,19 @@ from app.schemas.hq import (
     HQBankingAuditLogResponse,
     HQBankingOverviewStats,
     HQFraudAlertResolve,
+    # General Ledger schemas
+    HQChartOfAccountsCreate,
+    HQChartOfAccountsUpdate,
+    HQChartOfAccountsResponse,
+    HQJournalEntryCreate,
+    HQJournalEntryResponse,
+    HQAccountBalance,
+    HQProfitLossReport,
+    HQBalanceSheetReport,
+    HQTenantProfitMargin,
+    HQAIUsageLogRequest,
+    HQAICostsByTenant,
+    HQGLDashboard,
 )
 from app.services.hq import (
     HQAuthService,
@@ -849,3 +862,832 @@ async def list_banking_audit_logs(
     """List banking admin audit logs."""
     service = HQBankingService(db)
     return await service.list_audit_logs(company_id=company_id, action=action, limit=limit)
+
+
+# ============================================================================
+# Accounting Endpoints
+# ============================================================================
+
+from app.services.hq import (
+    HQCustomerService,
+    HQInvoiceService,
+    HQVendorService,
+    HQBillService,
+    HQAccountingDashboardService,
+)
+from app.schemas.hq import (
+    HQCustomerCreate,
+    HQCustomerUpdate,
+    HQCustomerResponse,
+    HQInvoiceCreate,
+    HQInvoiceUpdate,
+    HQInvoiceResponse,
+    HQVendorCreate,
+    HQVendorUpdate,
+    HQVendorResponse,
+    HQBillCreate,
+    HQBillUpdate,
+    HQBillResponse,
+    HQAccountingDashboard,
+    HQColabChatRequest,
+    HQColabChatResponse,
+    HQColabInitRequest,
+    HQColabInitResponse,
+)
+
+
+@router.get("/accounting/dashboard", response_model=HQAccountingDashboard)
+async def get_accounting_dashboard(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQAccountingDashboard:
+    """Get accounting dashboard metrics."""
+    service = HQAccountingDashboardService(db)
+    return await service.get_dashboard()
+
+
+# Customer (A/R) Endpoints
+@router.get("/accounting/customers", response_model=List[HQCustomerResponse])
+async def list_customers(
+    status_filter: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQCustomerResponse]:
+    """List all customers."""
+    service = HQCustomerService(db)
+    customers = await service.list_customers(status=status_filter)
+    return [HQCustomerResponse.model_validate(c, from_attributes=True) for c in customers]
+
+
+@router.post("/accounting/customers", response_model=HQCustomerResponse, status_code=status.HTTP_201_CREATED)
+async def create_customer(
+    payload: HQCustomerCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQCustomerResponse:
+    """Create a new customer."""
+    service = HQCustomerService(db)
+    customer = await service.create_customer(payload, current_employee.id)
+    return HQCustomerResponse.model_validate(customer, from_attributes=True)
+
+
+@router.get("/accounting/customers/{customer_id}", response_model=HQCustomerResponse)
+async def get_customer(
+    customer_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQCustomerResponse:
+    """Get customer by ID."""
+    service = HQCustomerService(db)
+    customer = await service.get_customer(customer_id)
+    if not customer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    return HQCustomerResponse.model_validate(customer, from_attributes=True)
+
+
+@router.patch("/accounting/customers/{customer_id}", response_model=HQCustomerResponse)
+async def update_customer(
+    customer_id: str,
+    payload: HQCustomerUpdate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQCustomerResponse:
+    """Update a customer."""
+    service = HQCustomerService(db)
+    try:
+        customer = await service.update_customer(customer_id, payload)
+        return HQCustomerResponse.model_validate(customer, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# Invoice (A/R) Endpoints
+@router.get("/accounting/invoices", response_model=List[HQInvoiceResponse])
+async def list_invoices(
+    customer_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQInvoiceResponse]:
+    """List all invoices."""
+    service = HQInvoiceService(db)
+    invoices = await service.list_invoices(customer_id=customer_id, status=status_filter)
+    return [HQInvoiceResponse.model_validate(inv, from_attributes=True) for inv in invoices]
+
+
+@router.post("/accounting/invoices", response_model=HQInvoiceResponse, status_code=status.HTTP_201_CREATED)
+async def create_invoice(
+    payload: HQInvoiceCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQInvoiceResponse:
+    """Create a new invoice."""
+    service = HQInvoiceService(db)
+    invoice = await service.create_invoice(payload, current_employee.id)
+    return HQInvoiceResponse.model_validate(invoice, from_attributes=True)
+
+
+@router.get("/accounting/invoices/{invoice_id}", response_model=HQInvoiceResponse)
+async def get_invoice(
+    invoice_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQInvoiceResponse:
+    """Get invoice by ID."""
+    service = HQInvoiceService(db)
+    invoice = await service.get_invoice(invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    return HQInvoiceResponse.model_validate(invoice, from_attributes=True)
+
+
+@router.patch("/accounting/invoices/{invoice_id}", response_model=HQInvoiceResponse)
+async def update_invoice(
+    invoice_id: str,
+    payload: HQInvoiceUpdate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQInvoiceResponse:
+    """Update an invoice."""
+    service = HQInvoiceService(db)
+    try:
+        invoice = await service.update_invoice(invoice_id, payload)
+        return HQInvoiceResponse.model_validate(invoice, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/accounting/invoices/{invoice_id}/send", response_model=HQInvoiceResponse)
+async def send_invoice(
+    invoice_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQInvoiceResponse:
+    """Send an invoice to customer."""
+    service = HQInvoiceService(db)
+    try:
+        invoice = await service.send_invoice(invoice_id)
+        return HQInvoiceResponse.model_validate(invoice, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# Vendor (A/P) Endpoints
+@router.get("/accounting/vendors", response_model=List[HQVendorResponse])
+async def list_vendors(
+    status_filter: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQVendorResponse]:
+    """List all vendors."""
+    service = HQVendorService(db)
+    vendors = await service.list_vendors(status=status_filter)
+    return [HQVendorResponse.model_validate(v, from_attributes=True) for v in vendors]
+
+
+@router.post("/accounting/vendors", response_model=HQVendorResponse, status_code=status.HTTP_201_CREATED)
+async def create_vendor(
+    payload: HQVendorCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQVendorResponse:
+    """Create a new vendor."""
+    service = HQVendorService(db)
+    vendor = await service.create_vendor(payload)
+    return HQVendorResponse.model_validate(vendor, from_attributes=True)
+
+
+@router.get("/accounting/vendors/{vendor_id}", response_model=HQVendorResponse)
+async def get_vendor(
+    vendor_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQVendorResponse:
+    """Get vendor by ID."""
+    service = HQVendorService(db)
+    vendor = await service.get_vendor(vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found")
+    return HQVendorResponse.model_validate(vendor, from_attributes=True)
+
+
+@router.patch("/accounting/vendors/{vendor_id}", response_model=HQVendorResponse)
+async def update_vendor(
+    vendor_id: str,
+    payload: HQVendorUpdate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQVendorResponse:
+    """Update a vendor."""
+    service = HQVendorService(db)
+    try:
+        vendor = await service.update_vendor(vendor_id, payload)
+        return HQVendorResponse.model_validate(vendor, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# Bill (A/P) Endpoints
+@router.get("/accounting/bills", response_model=List[HQBillResponse])
+async def list_bills(
+    vendor_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQBillResponse]:
+    """List all bills."""
+    service = HQBillService(db)
+    bills = await service.list_bills(vendor_id=vendor_id, status=status_filter)
+    return [HQBillResponse.model_validate(b, from_attributes=True) for b in bills]
+
+
+@router.post("/accounting/bills", response_model=HQBillResponse, status_code=status.HTTP_201_CREATED)
+async def create_bill(
+    payload: HQBillCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBillResponse:
+    """Create a new bill."""
+    service = HQBillService(db)
+    bill = await service.create_bill(payload, current_employee.id)
+    return HQBillResponse.model_validate(bill, from_attributes=True)
+
+
+@router.get("/accounting/bills/{bill_id}", response_model=HQBillResponse)
+async def get_bill(
+    bill_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBillResponse:
+    """Get bill by ID."""
+    service = HQBillService(db)
+    bill = await service.get_bill(bill_id)
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bill not found")
+    return HQBillResponse.model_validate(bill, from_attributes=True)
+
+
+@router.patch("/accounting/bills/{bill_id}", response_model=HQBillResponse)
+async def update_bill(
+    bill_id: str,
+    payload: HQBillUpdate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBillResponse:
+    """Update a bill."""
+    service = HQBillService(db)
+    try:
+        bill = await service.update_bill(bill_id, payload) if hasattr(service, 'update_bill') else None
+        if bill:
+            return HQBillResponse.model_validate(bill, from_attributes=True)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Update not implemented")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/accounting/bills/{bill_id}/approve", response_model=HQBillResponse)
+async def approve_bill(
+    bill_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBillResponse:
+    """Approve a bill for payment."""
+    service = HQBillService(db)
+    try:
+        bill = await service.approve_bill(bill_id, current_employee.id)
+        return HQBillResponse.model_validate(bill, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# ============================================================================
+# Colab AI Endpoints
+# ============================================================================
+
+from app.services.hq_colab import get_hq_colab_service
+
+
+@router.post("/colab/init", response_model=HQColabInitResponse)
+async def init_colab_chat(
+    payload: HQColabInitRequest,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+) -> HQColabInitResponse:
+    """Initialize a chat session with an HQ AI agent (Oracle, Sentinel, or Nexus)."""
+    service = get_hq_colab_service()
+    return await service.init_chat(
+        session_id=payload.session_id,
+        agent=payload.agent,
+        user_id=payload.user_id or current_employee.id,
+        user_name=payload.user_name or f"{current_employee.first_name} {current_employee.last_name}",
+    )
+
+
+@router.post("/colab/chat", response_model=HQColabChatResponse)
+async def colab_chat(
+    payload: HQColabChatRequest,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+) -> HQColabChatResponse:
+    """Chat with an HQ AI agent. Uses Llama 4 for intelligent responses."""
+    service = get_hq_colab_service()
+    return await service.chat(
+        session_id=payload.session_id,
+        agent=payload.agent,
+        message=payload.message,
+        user_id=payload.user_id or current_employee.id,
+        user_name=payload.user_name or f"{current_employee.first_name} {current_employee.last_name}",
+    )
+
+
+# ============================================================================
+# General Ledger Endpoints
+# ============================================================================
+
+from datetime import date, datetime
+from decimal import Decimal
+from app.services.hq_general_ledger import GeneralLedgerManager, LedgerLine, JournalEntryInput
+from app.services.hq_chart_of_accounts_seed import seed_chart_of_accounts, get_ai_pricing
+
+
+# Chart of Accounts Endpoints
+@router.get("/gl/accounts", response_model=List[HQChartOfAccountsResponse])
+async def list_chart_of_accounts(
+    account_type: Optional[str] = None,
+    include_inactive: bool = False,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQChartOfAccountsResponse]:
+    """List all accounts in the Chart of Accounts."""
+    from app.models.hq_general_ledger import AccountType
+    gl_manager = GeneralLedgerManager(db)
+
+    type_filter = None
+    if account_type:
+        try:
+            type_filter = AccountType(account_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid account type: {account_type}"
+            )
+
+    accounts = await gl_manager.get_chart_of_accounts(
+        account_type=type_filter,
+        include_inactive=include_inactive
+    )
+    return [HQChartOfAccountsResponse.model_validate(a, from_attributes=True) for a in accounts]
+
+
+@router.post("/gl/accounts", response_model=HQChartOfAccountsResponse, status_code=status.HTTP_201_CREATED)
+async def create_account(
+    payload: HQChartOfAccountsCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQChartOfAccountsResponse:
+    """Create a new account in the Chart of Accounts."""
+    from app.models.hq_general_ledger import AccountType, AccountSubtype
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        account_type = AccountType(payload.account_type)
+        account_subtype = AccountSubtype(payload.account_subtype) if payload.account_subtype else None
+
+        account = await gl_manager.create_account(
+            account_number=payload.account_number,
+            account_name=payload.account_name,
+            account_type=account_type,
+            account_subtype=account_subtype,
+            description=payload.description,
+            parent_account_id=payload.parent_account_id,
+            is_system=payload.is_system,
+        )
+        await db.commit()
+        return HQChartOfAccountsResponse.model_validate(account, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/gl/accounts/{account_id}/balance", response_model=HQAccountBalance)
+async def get_account_balance(
+    account_id: str,
+    as_of_date: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQAccountBalance:
+    """Get the balance for a specific account."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        date_filter = None
+        if as_of_date:
+            date_filter = datetime.fromisoformat(as_of_date).date()
+
+        balance = await gl_manager.get_account_balance(account_id, date_filter)
+        return HQAccountBalance(
+            account_id=balance.account_id,
+            account_number=balance.account_number,
+            account_name=balance.account_name,
+            account_type=balance.account_type.value,
+            debit_total=balance.debit_total,
+            credit_total=balance.credit_total,
+            balance=balance.balance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/gl/seed-accounts")
+async def seed_accounts(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Seed the Chart of Accounts with standard SaaS accounts."""
+    if current_employee.role not in ["SUPER_ADMIN", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can seed accounts"
+        )
+
+    gl_manager = GeneralLedgerManager(db)
+    count = await seed_chart_of_accounts(db, gl_manager)
+    return {"message": f"Seeded {count} accounts", "count": count}
+
+
+# Journal Entry Endpoints
+@router.post("/gl/journal-entries", response_model=HQJournalEntryResponse, status_code=status.HTTP_201_CREATED)
+async def create_journal_entry(
+    payload: HQJournalEntryCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQJournalEntryResponse:
+    """Create a new journal entry."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        lines = [
+            LedgerLine(
+                account_number=line.account_number,
+                amount=line.amount,
+                is_debit=line.is_debit,
+                memo=line.memo,
+                tenant_id=line.tenant_id,
+            )
+            for line in payload.lines
+        ]
+
+        entry_input = JournalEntryInput(
+            description=payload.description,
+            lines=lines,
+            transaction_date=payload.transaction_date,
+            reference=payload.reference,
+            source_type=payload.source_type,
+            source_id=payload.source_id,
+            tenant_id=payload.tenant_id,
+        )
+
+        journal_entry = await gl_manager.create_journal_entry(
+            entry=entry_input,
+            created_by_id=current_employee.id,
+            auto_post=payload.auto_post,
+        )
+        await db.commit()
+        return HQJournalEntryResponse.model_validate(journal_entry, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/gl/journal-entries", response_model=List[HQJournalEntryResponse])
+async def list_journal_entries(
+    status_filter: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQJournalEntryResponse]:
+    """List journal entries with optional filters."""
+    from sqlalchemy import select
+    from app.models.hq_general_ledger import HQJournalEntry, JournalEntryStatus
+
+    query = select(HQJournalEntry).order_by(HQJournalEntry.transaction_date.desc()).limit(limit)
+
+    if status_filter:
+        try:
+            status_enum = JournalEntryStatus(status_filter)
+            query = query.where(HQJournalEntry.status == status_enum)
+        except ValueError:
+            pass
+
+    if start_date:
+        start = datetime.fromisoformat(start_date)
+        query = query.where(HQJournalEntry.transaction_date >= start)
+
+    if end_date:
+        end = datetime.fromisoformat(end_date)
+        query = query.where(HQJournalEntry.transaction_date <= end)
+
+    result = await db.execute(query)
+    entries = result.scalars().all()
+    return [HQJournalEntryResponse.model_validate(e, from_attributes=True) for e in entries]
+
+
+@router.post("/gl/journal-entries/{entry_id}/post", response_model=HQJournalEntryResponse)
+async def post_journal_entry(
+    entry_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQJournalEntryResponse:
+    """Post a journal entry, making it immutable."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        entry = await gl_manager.post_journal_entry(entry_id, current_employee.id)
+        await db.commit()
+        return HQJournalEntryResponse.model_validate(entry, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/gl/journal-entries/{entry_id}/void", response_model=HQJournalEntryResponse)
+async def void_journal_entry(
+    entry_id: str,
+    reason: Optional[str] = None,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQJournalEntryResponse:
+    """Void a journal entry by creating a reversing entry."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        entry = await gl_manager.void_journal_entry(entry_id, current_employee.id, reason)
+        await db.commit()
+        return HQJournalEntryResponse.model_validate(entry, from_attributes=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# Financial Reports Endpoints
+@router.get("/gl/reports/profit-loss", response_model=HQProfitLossReport)
+async def get_profit_loss_report(
+    start_date: str,
+    end_date: str,
+    tenant_id: Optional[str] = None,
+    include_tenant_breakdown: bool = False,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQProfitLossReport:
+    """
+    Generate a Profit & Loss report.
+
+    This is the query Atlas uses to show the Monthly P&L dashboard.
+    """
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        start = datetime.fromisoformat(start_date).date()
+        end = datetime.fromisoformat(end_date).date()
+
+        report = await gl_manager.get_profit_loss_report(
+            start_date=start,
+            end_date=end,
+            tenant_id=tenant_id,
+            include_tenant_breakdown=include_tenant_breakdown,
+        )
+
+        gross_margin = (report.gross_profit / report.total_revenue * 100) if report.total_revenue > 0 else Decimal("0")
+
+        return HQProfitLossReport(
+            period_start=datetime.combine(report.period_start, datetime.min.time()),
+            period_end=datetime.combine(report.period_end, datetime.min.time()),
+            revenue=report.revenue,
+            cost_of_revenue=report.cost_of_revenue,
+            expenses=report.expenses,
+            total_revenue=report.total_revenue,
+            total_cogs=report.total_cogs,
+            gross_profit=report.gross_profit,
+            gross_margin_percent=gross_margin.quantize(Decimal("0.01")),
+            total_expenses=report.total_expenses,
+            net_income=report.net_income,
+            tenant_breakdown=report.tenant_breakdown,
+        )
+    except Exception as exc:
+        logger.error(f"Error generating P&L report: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/gl/reports/balance-sheet", response_model=HQBalanceSheetReport)
+async def get_balance_sheet(
+    as_of_date: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBalanceSheetReport:
+    """Generate a Balance Sheet report."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        report_date = datetime.fromisoformat(as_of_date).date() if as_of_date else date.today()
+
+        report = await gl_manager.get_balance_sheet(report_date)
+
+        return HQBalanceSheetReport(
+            as_of_date=datetime.combine(report.as_of_date, datetime.min.time()),
+            assets=report.assets,
+            liabilities=report.liabilities,
+            equity=report.equity,
+            total_assets=report.total_assets,
+            total_liabilities=report.total_liabilities,
+            total_equity=report.total_equity,
+        )
+    except Exception as exc:
+        logger.error(f"Error generating Balance Sheet: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/gl/reports/tenant-margin/{tenant_id}", response_model=HQTenantProfitMargin)
+async def get_tenant_profit_margin(
+    tenant_id: str,
+    start_date: str,
+    end_date: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQTenantProfitMargin:
+    """Get profit margin analysis for a specific tenant."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        start = datetime.fromisoformat(start_date).date()
+        end = datetime.fromisoformat(end_date).date()
+
+        margin = await gl_manager.get_tenant_profit_margin(tenant_id, start, end)
+
+        return HQTenantProfitMargin(
+            tenant_id=margin["tenant_id"],
+            tenant_name=margin.get("tenant_name"),
+            revenue=margin["revenue"],
+            cogs=margin["cogs"],
+            gross_profit=margin["gross_profit"],
+            gross_margin_percent=margin["gross_margin_percent"],
+        )
+    except Exception as exc:
+        logger.error(f"Error getting tenant margin: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# AI Usage & COGS Endpoints
+@router.post("/gl/ai-usage")
+async def log_ai_usage(
+    payload: HQAIUsageLogRequest,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Log AI usage and book COGS automatically."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        pricing = get_ai_pricing(payload.model)
+
+        usage_log, journal_entry = await gl_manager.log_ai_usage(
+            tenant_id=payload.tenant_id,
+            model=payload.model,
+            input_tokens=payload.input_tokens,
+            output_tokens=payload.output_tokens,
+            cost_per_1k_input=pricing["input"],
+            cost_per_1k_output=pricing["output"],
+        )
+        await db.commit()
+
+        return {
+            "usage_log_id": usage_log.id,
+            "total_tokens": payload.input_tokens + payload.output_tokens,
+            "total_cost": float(usage_log.total_cost) if usage_log.total_cost else 0,
+            "journal_entry_id": journal_entry.id if journal_entry else None,
+        }
+    except Exception as exc:
+        logger.error(f"Error logging AI usage: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.get("/gl/ai-costs", response_model=List[HQAICostsByTenant])
+async def get_ai_costs_by_tenant(
+    start_date: str,
+    end_date: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQAICostsByTenant]:
+    """Get AI costs aggregated by tenant for a period."""
+    gl_manager = GeneralLedgerManager(db)
+
+    try:
+        start = datetime.fromisoformat(start_date).date()
+        end = datetime.fromisoformat(end_date).date()
+
+        costs = await gl_manager.get_ai_costs_by_tenant(start, end)
+
+        return [
+            HQAICostsByTenant(
+                tenant_id=c["tenant_id"],
+                tenant_name=c.get("tenant_name"),
+                request_count=c["request_count"],
+                total_tokens=c["total_tokens"],
+                total_cost=c["total_cost"],
+            )
+            for c in costs
+        ]
+    except Exception as exc:
+        logger.error(f"Error getting AI costs: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+# GL Dashboard Endpoint
+@router.get("/gl/dashboard", response_model=HQGLDashboard)
+async def get_gl_dashboard(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQGLDashboard:
+    """Get General Ledger dashboard with key financial metrics."""
+    from sqlalchemy import select, func
+    from app.models.hq_general_ledger import (
+        HQChartOfAccounts, HQJournalEntry, HQUsageLog,
+        AccountType, JournalEntryStatus, UsageMetricType
+    )
+
+    gl_manager = GeneralLedgerManager(db)
+
+    # Get current month dates
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    try:
+        # Balance sheet summary
+        balance_sheet = await gl_manager.get_balance_sheet(today)
+
+        # P&L for current month
+        pl_report = await gl_manager.get_profit_loss_report(month_start, today)
+
+        # Get specific account balances
+        cash_result = await db.execute(
+            select(func.sum(HQChartOfAccounts.current_balance))
+            .where(HQChartOfAccounts.account_subtype == "cash")
+        )
+        cash_balance = cash_result.scalar() or Decimal("0")
+
+        ar_result = await db.execute(
+            select(func.sum(HQChartOfAccounts.current_balance))
+            .where(HQChartOfAccounts.account_subtype == "accounts_receivable")
+        )
+        ar_balance = ar_result.scalar() or Decimal("0")
+
+        ap_result = await db.execute(
+            select(func.sum(HQChartOfAccounts.current_balance))
+            .where(HQChartOfAccounts.account_subtype == "accounts_payable")
+        )
+        ap_balance = ap_result.scalar() or Decimal("0")
+
+        # Account count
+        accounts_count = await db.execute(
+            select(func.count(HQChartOfAccounts.id))
+            .where(HQChartOfAccounts.is_active == True)
+        )
+
+        # Posted entries count
+        entries_count = await db.execute(
+            select(func.count(HQJournalEntry.id))
+            .where(HQJournalEntry.status == JournalEntryStatus.POSTED)
+        )
+
+        # AI costs MTD
+        ai_costs_result = await db.execute(
+            select(func.sum(HQUsageLog.total_cost))
+            .where(
+                HQUsageLog.metric_type == UsageMetricType.AI_TOKENS_USED,
+                HQUsageLog.recorded_at >= month_start,
+            )
+        )
+        ai_costs_mtd = ai_costs_result.scalar() or Decimal("0")
+
+        # AI costs by model (simplified)
+        ai_by_model = {}
+
+        # Calculate gross margin
+        gross_margin = (pl_report.gross_profit / pl_report.total_revenue * 100) if pl_report.total_revenue > 0 else Decimal("0")
+
+        return HQGLDashboard(
+            total_assets=balance_sheet.total_assets,
+            total_liabilities=balance_sheet.total_liabilities,
+            total_equity=balance_sheet.total_equity,
+            cash_balance=Decimal(str(cash_balance)),
+            accounts_receivable=Decimal(str(ar_balance)),
+            accounts_payable=Decimal(str(ap_balance)),
+            current_month_revenue=pl_report.total_revenue,
+            current_month_cogs=pl_report.total_cogs,
+            current_month_gross_profit=pl_report.gross_profit,
+            current_month_expenses=pl_report.total_expenses,
+            current_month_net_income=pl_report.net_income,
+            ai_costs_mtd=Decimal(str(ai_costs_mtd)),
+            ai_costs_by_model=ai_by_model,
+            gross_margin_percent=gross_margin.quantize(Decimal("0.01")),
+            accounts_count=accounts_count.scalar() or 0,
+            posted_entries_count=entries_count.scalar() or 0,
+        )
+    except Exception as exc:
+        logger.error(f"Error getting GL dashboard: {exc}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))

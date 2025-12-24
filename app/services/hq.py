@@ -1047,3 +1047,536 @@ class HQBankingService:
             action_metadata=action_metadata,
         )
         self.db.add(log)
+
+
+# ============================================================================
+# Accounting Services
+# ============================================================================
+
+class HQCustomerService:
+    """Service for managing A/R customers."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def _generate_customer_number(self) -> str:
+        """Generate unique customer number."""
+        from app.models.hq_accounting import HQCustomer
+        result = await self.db.execute(select(func.count(HQCustomer.id)))
+        count = result.scalar() or 0
+        return f"CUST-{str(count + 1).zfill(5)}"
+
+    async def list_customers(self, status: Optional[str] = None) -> list:
+        """List all customers."""
+        from app.models.hq_accounting import HQCustomer, CustomerStatus
+        query = select(HQCustomer)
+        if status:
+            query = query.where(HQCustomer.status == CustomerStatus(status.upper()))
+        query = query.order_by(HQCustomer.name)
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def get_customer(self, customer_id: str):
+        """Get customer by ID."""
+        from app.models.hq_accounting import HQCustomer
+        return await self.db.get(HQCustomer, customer_id)
+
+    async def create_customer(self, payload, created_by_id: str = None):
+        """Create a new customer."""
+        from app.models.hq_accounting import HQCustomer, CustomerStatus, CustomerType
+
+        customer_number = await self._generate_customer_number()
+
+        customer = HQCustomer(
+            id=str(uuid.uuid4()),
+            customer_number=customer_number,
+            tenant_id=payload.tenant_id,
+            name=payload.name,
+            customer_type=CustomerType(payload.customer_type.upper()),
+            status=CustomerStatus.ACTIVE,
+            email=payload.email,
+            phone=payload.phone,
+            billing_address=payload.billing_address,
+            billing_city=payload.billing_city,
+            billing_state=payload.billing_state,
+            billing_zip=payload.billing_zip,
+            billing_country=payload.billing_country,
+            tax_id=payload.tax_id,
+            payment_terms_days=payload.payment_terms_days,
+            credit_limit=payload.credit_limit,
+            notes=payload.notes,
+        )
+        self.db.add(customer)
+        await self.db.commit()
+        await self.db.refresh(customer)
+        return customer
+
+    async def update_customer(self, customer_id: str, payload):
+        """Update a customer."""
+        from app.models.hq_accounting import HQCustomer, CustomerStatus, CustomerType
+
+        customer = await self.db.get(HQCustomer, customer_id)
+        if not customer:
+            raise ValueError("Customer not found")
+
+        if payload.name is not None:
+            customer.name = payload.name
+        if payload.customer_type is not None:
+            customer.customer_type = CustomerType(payload.customer_type.upper())
+        if payload.status is not None:
+            customer.status = CustomerStatus(payload.status.upper())
+        if payload.email is not None:
+            customer.email = payload.email
+        if payload.phone is not None:
+            customer.phone = payload.phone
+        if payload.billing_address is not None:
+            customer.billing_address = payload.billing_address
+        if payload.billing_city is not None:
+            customer.billing_city = payload.billing_city
+        if payload.billing_state is not None:
+            customer.billing_state = payload.billing_state
+        if payload.billing_zip is not None:
+            customer.billing_zip = payload.billing_zip
+        if payload.payment_terms_days is not None:
+            customer.payment_terms_days = payload.payment_terms_days
+        if payload.credit_limit is not None:
+            customer.credit_limit = payload.credit_limit
+        if payload.notes is not None:
+            customer.notes = payload.notes
+
+        await self.db.commit()
+        await self.db.refresh(customer)
+        return customer
+
+
+class HQInvoiceService:
+    """Service for managing A/R invoices."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def _generate_invoice_number(self) -> str:
+        """Generate unique invoice number."""
+        from app.models.hq_accounting import HQInvoice
+        result = await self.db.execute(select(func.count(HQInvoice.id)))
+        count = result.scalar() or 0
+        return f"INV-{datetime.utcnow().year}-{str(count + 1).zfill(5)}"
+
+    async def list_invoices(self, customer_id: Optional[str] = None, status: Optional[str] = None) -> list:
+        """List all invoices."""
+        from app.models.hq_accounting import HQInvoice, InvoiceStatus
+        query = select(HQInvoice)
+        if customer_id:
+            query = query.where(HQInvoice.customer_id == customer_id)
+        if status:
+            query = query.where(HQInvoice.status == InvoiceStatus(status.upper()))
+        query = query.order_by(HQInvoice.created_at.desc())
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def get_invoice(self, invoice_id: str):
+        """Get invoice by ID."""
+        from app.models.hq_accounting import HQInvoice
+        return await self.db.get(HQInvoice, invoice_id)
+
+    async def create_invoice(self, payload, created_by_id: str):
+        """Create a new invoice."""
+        from app.models.hq_accounting import HQInvoice, InvoiceStatus, InvoiceType
+
+        invoice_number = await self._generate_invoice_number()
+
+        # Convert line items to dict
+        line_items = [item.model_dump() for item in payload.line_items] if payload.line_items else []
+
+        invoice = HQInvoice(
+            id=str(uuid.uuid4()),
+            invoice_number=invoice_number,
+            customer_id=payload.customer_id,
+            tenant_id=payload.tenant_id,
+            contract_id=payload.contract_id,
+            invoice_type=InvoiceType(payload.invoice_type.upper()),
+            status=InvoiceStatus.DRAFT,
+            description=payload.description,
+            line_items=line_items,
+            subtotal=payload.subtotal,
+            tax_total=payload.tax_total,
+            total=payload.total,
+            balance_due=payload.total,
+            due_date=payload.due_date,
+            notes=payload.notes,
+            terms=payload.terms,
+            created_by_id=created_by_id,
+        )
+        self.db.add(invoice)
+        await self.db.commit()
+        await self.db.refresh(invoice)
+        return invoice
+
+    async def update_invoice(self, invoice_id: str, payload):
+        """Update an invoice."""
+        from app.models.hq_accounting import HQInvoice, InvoiceStatus
+
+        invoice = await self.db.get(HQInvoice, invoice_id)
+        if not invoice:
+            raise ValueError("Invoice not found")
+
+        if payload.status is not None:
+            invoice.status = InvoiceStatus(payload.status.upper())
+        if payload.description is not None:
+            invoice.description = payload.description
+        if payload.due_date is not None:
+            invoice.due_date = payload.due_date
+        if payload.notes is not None:
+            invoice.notes = payload.notes
+
+        await self.db.commit()
+        await self.db.refresh(invoice)
+        return invoice
+
+    async def send_invoice(self, invoice_id: str):
+        """Send an invoice."""
+        from app.models.hq_accounting import HQInvoice, InvoiceStatus
+
+        invoice = await self.db.get(HQInvoice, invoice_id)
+        if not invoice:
+            raise ValueError("Invoice not found")
+
+        invoice.status = InvoiceStatus.SENT
+        invoice.issued_date = datetime.utcnow()
+        await self.db.commit()
+        await self.db.refresh(invoice)
+        return invoice
+
+    async def record_payment(self, invoice_id: str, amount: Decimal, recorded_by_id: str):
+        """Record a payment against an invoice."""
+        from app.models.hq_accounting import HQInvoice, HQPayment, InvoiceStatus, PaymentType, PaymentDirection
+
+        invoice = await self.db.get(HQInvoice, invoice_id)
+        if not invoice:
+            raise ValueError("Invoice not found")
+
+        # Generate payment number
+        result = await self.db.execute(select(func.count(HQPayment.id)))
+        count = result.scalar() or 0
+        payment_number = f"PMT-{datetime.utcnow().year}-{str(count + 1).zfill(5)}"
+
+        # Create payment record
+        payment = HQPayment(
+            id=str(uuid.uuid4()),
+            payment_number=payment_number,
+            invoice_id=invoice_id,
+            payment_type=PaymentType.ACH,
+            direction=PaymentDirection.INCOMING,
+            amount=amount,
+            payment_date=datetime.utcnow(),
+            recorded_by_id=recorded_by_id,
+        )
+        self.db.add(payment)
+
+        # Update invoice
+        invoice.paid_amount = (invoice.paid_amount or Decimal("0")) + amount
+        invoice.balance_due = invoice.total - invoice.paid_amount
+
+        if invoice.balance_due <= 0:
+            invoice.status = InvoiceStatus.PAID
+            invoice.paid_date = datetime.utcnow()
+        elif invoice.paid_amount > 0:
+            invoice.status = InvoiceStatus.PARTIAL
+
+        await self.db.commit()
+        await self.db.refresh(invoice)
+        return invoice
+
+
+class HQVendorService:
+    """Service for managing A/P vendors."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def _generate_vendor_number(self) -> str:
+        """Generate unique vendor number."""
+        from app.models.hq_accounting import HQVendor
+        result = await self.db.execute(select(func.count(HQVendor.id)))
+        count = result.scalar() or 0
+        return f"VEND-{str(count + 1).zfill(5)}"
+
+    async def list_vendors(self, status: Optional[str] = None) -> list:
+        """List all vendors."""
+        from app.models.hq_accounting import HQVendor, VendorStatus
+        query = select(HQVendor)
+        if status:
+            query = query.where(HQVendor.status == VendorStatus(status.upper()))
+        query = query.order_by(HQVendor.name)
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def get_vendor(self, vendor_id: str):
+        """Get vendor by ID."""
+        from app.models.hq_accounting import HQVendor
+        return await self.db.get(HQVendor, vendor_id)
+
+    async def create_vendor(self, payload):
+        """Create a new vendor."""
+        from app.models.hq_accounting import HQVendor, VendorStatus, VendorType
+
+        vendor_number = await self._generate_vendor_number()
+
+        vendor = HQVendor(
+            id=str(uuid.uuid4()),
+            vendor_number=vendor_number,
+            name=payload.name,
+            vendor_type=VendorType(payload.vendor_type.upper()),
+            status=VendorStatus.ACTIVE,
+            email=payload.email,
+            phone=payload.phone,
+            address=payload.address,
+            city=payload.city,
+            state=payload.state,
+            zip_code=payload.zip_code,
+            country=payload.country,
+            tax_id=payload.tax_id,
+            payment_terms_days=payload.payment_terms_days,
+            default_expense_account=payload.default_expense_account,
+            bank_account_info=payload.bank_account_info,
+            notes=payload.notes,
+        )
+        self.db.add(vendor)
+        await self.db.commit()
+        await self.db.refresh(vendor)
+        return vendor
+
+    async def update_vendor(self, vendor_id: str, payload):
+        """Update a vendor."""
+        from app.models.hq_accounting import HQVendor, VendorStatus, VendorType
+
+        vendor = await self.db.get(HQVendor, vendor_id)
+        if not vendor:
+            raise ValueError("Vendor not found")
+
+        if payload.name is not None:
+            vendor.name = payload.name
+        if payload.vendor_type is not None:
+            vendor.vendor_type = VendorType(payload.vendor_type.upper())
+        if payload.status is not None:
+            vendor.status = VendorStatus(payload.status.upper())
+        if payload.email is not None:
+            vendor.email = payload.email
+        if payload.phone is not None:
+            vendor.phone = payload.phone
+        if payload.address is not None:
+            vendor.address = payload.address
+        if payload.city is not None:
+            vendor.city = payload.city
+        if payload.state is not None:
+            vendor.state = payload.state
+        if payload.zip_code is not None:
+            vendor.zip_code = payload.zip_code
+        if payload.payment_terms_days is not None:
+            vendor.payment_terms_days = payload.payment_terms_days
+        if payload.default_expense_account is not None:
+            vendor.default_expense_account = payload.default_expense_account
+        if payload.notes is not None:
+            vendor.notes = payload.notes
+
+        await self.db.commit()
+        await self.db.refresh(vendor)
+        return vendor
+
+
+class HQBillService:
+    """Service for managing A/P bills."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def _generate_bill_number(self) -> str:
+        """Generate unique bill number."""
+        from app.models.hq_accounting import HQBill
+        result = await self.db.execute(select(func.count(HQBill.id)))
+        count = result.scalar() or 0
+        return f"BILL-{datetime.utcnow().year}-{str(count + 1).zfill(5)}"
+
+    async def list_bills(self, vendor_id: Optional[str] = None, status: Optional[str] = None) -> list:
+        """List all bills."""
+        from app.models.hq_accounting import HQBill, BillStatus
+        query = select(HQBill)
+        if vendor_id:
+            query = query.where(HQBill.vendor_id == vendor_id)
+        if status:
+            query = query.where(HQBill.status == BillStatus(status.upper()))
+        query = query.order_by(HQBill.created_at.desc())
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def get_bill(self, bill_id: str):
+        """Get bill by ID."""
+        from app.models.hq_accounting import HQBill
+        return await self.db.get(HQBill, bill_id)
+
+    async def create_bill(self, payload, created_by_id: str):
+        """Create a new bill."""
+        from app.models.hq_accounting import HQBill, BillStatus, BillType
+
+        bill_number = await self._generate_bill_number()
+
+        # Convert line items to dict
+        line_items = [item.model_dump() for item in payload.line_items] if payload.line_items else []
+
+        bill = HQBill(
+            id=str(uuid.uuid4()),
+            bill_number=bill_number,
+            vendor_id=payload.vendor_id,
+            vendor_invoice_number=payload.vendor_invoice_number,
+            bill_type=BillType(payload.bill_type.upper()),
+            status=BillStatus.DRAFT,
+            description=payload.description,
+            line_items=line_items,
+            subtotal=payload.subtotal,
+            tax_total=payload.tax_total,
+            total=payload.total,
+            balance_due=payload.total,
+            bill_date=payload.bill_date,
+            due_date=payload.due_date,
+            notes=payload.notes,
+            created_by_id=created_by_id,
+        )
+        self.db.add(bill)
+        await self.db.commit()
+        await self.db.refresh(bill)
+        return bill
+
+    async def approve_bill(self, bill_id: str, approved_by_id: str):
+        """Approve a bill for payment."""
+        from app.models.hq_accounting import HQBill, BillStatus
+
+        bill = await self.db.get(HQBill, bill_id)
+        if not bill:
+            raise ValueError("Bill not found")
+        if bill.status not in [BillStatus.DRAFT, BillStatus.PENDING_APPROVAL]:
+            raise ValueError("Bill cannot be approved in current status")
+
+        bill.status = BillStatus.APPROVED
+        bill.approved_by_id = approved_by_id
+        bill.approved_at = datetime.utcnow()
+        await self.db.commit()
+        await self.db.refresh(bill)
+        return bill
+
+    async def pay_bill(self, bill_id: str, amount: Decimal, recorded_by_id: str):
+        """Record a payment for a bill."""
+        from app.models.hq_accounting import HQBill, HQPayment, BillStatus, PaymentType, PaymentDirection
+
+        bill = await self.db.get(HQBill, bill_id)
+        if not bill:
+            raise ValueError("Bill not found")
+
+        # Generate payment number
+        result = await self.db.execute(select(func.count(HQPayment.id)))
+        count = result.scalar() or 0
+        payment_number = f"PMT-{datetime.utcnow().year}-{str(count + 1).zfill(5)}"
+
+        # Create payment record
+        payment = HQPayment(
+            id=str(uuid.uuid4()),
+            payment_number=payment_number,
+            bill_id=bill_id,
+            payment_type=PaymentType.ACH,
+            direction=PaymentDirection.OUTGOING,
+            amount=amount,
+            payment_date=datetime.utcnow(),
+            recorded_by_id=recorded_by_id,
+        )
+        self.db.add(payment)
+
+        # Update bill
+        bill.paid_amount = (bill.paid_amount or Decimal("0")) + amount
+        bill.balance_due = bill.total - bill.paid_amount
+
+        if bill.balance_due <= 0:
+            bill.status = BillStatus.PAID
+            bill.paid_date = datetime.utcnow()
+        elif bill.paid_amount > 0:
+            bill.status = BillStatus.PARTIAL
+
+        await self.db.commit()
+        await self.db.refresh(bill)
+        return bill
+
+
+class HQAccountingDashboardService:
+    """Service for accounting dashboard metrics."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def get_dashboard(self):
+        """Get accounting dashboard metrics."""
+        from app.models.hq_accounting import HQInvoice, HQBill, InvoiceStatus, BillStatus
+        from app.schemas.hq import HQAccountingDashboard
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+
+        # A/R Metrics
+        ar_result = await self.db.execute(
+            select(
+                func.coalesce(func.sum(HQInvoice.balance_due), 0),
+            ).where(
+                HQInvoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE])
+            )
+        )
+        total_outstanding_ar = Decimal(str(ar_result.scalar() or 0))
+
+        # Count pending invoices
+        pending_invoices_result = await self.db.execute(
+            select(func.count(HQInvoice.id)).where(HQInvoice.status == InvoiceStatus.DRAFT)
+        )
+        pending_invoices_count = pending_invoices_result.scalar() or 0
+
+        # Count overdue invoices
+        overdue_invoices_result = await self.db.execute(
+            select(func.count(HQInvoice.id)).where(HQInvoice.status == InvoiceStatus.OVERDUE)
+        )
+        overdue_invoices_count = overdue_invoices_result.scalar() or 0
+
+        # A/P Metrics
+        ap_result = await self.db.execute(
+            select(
+                func.coalesce(func.sum(HQBill.balance_due), 0),
+            ).where(
+                HQBill.status.in_([BillStatus.APPROVED, BillStatus.PARTIAL, BillStatus.OVERDUE])
+            )
+        )
+        total_outstanding_ap = Decimal(str(ap_result.scalar() or 0))
+
+        # Count pending bills
+        pending_bills_result = await self.db.execute(
+            select(func.count(HQBill.id)).where(HQBill.status.in_([BillStatus.DRAFT, BillStatus.PENDING_APPROVAL]))
+        )
+        pending_bills_count = pending_bills_result.scalar() or 0
+
+        # Count overdue bills
+        overdue_bills_result = await self.db.execute(
+            select(func.count(HQBill.id)).where(HQBill.status == BillStatus.OVERDUE)
+        )
+        overdue_bills_count = overdue_bills_result.scalar() or 0
+
+        return HQAccountingDashboard(
+            total_outstanding_ar=total_outstanding_ar,
+            ar_current=Decimal("0"),
+            ar_30_days=Decimal("0"),
+            ar_60_days=Decimal("0"),
+            ar_90_plus_days=Decimal("0"),
+            pending_invoices_count=pending_invoices_count,
+            overdue_invoices_count=overdue_invoices_count,
+            total_outstanding_ap=total_outstanding_ap,
+            ap_current=Decimal("0"),
+            ap_30_days=Decimal("0"),
+            ap_60_days=Decimal("0"),
+            ap_90_plus_days=Decimal("0"),
+            pending_bills_count=pending_bills_count,
+            overdue_bills_count=overdue_bills_count,
+            expected_collections_30_days=Decimal("0"),
+            expected_payments_30_days=Decimal("0"),
+        )

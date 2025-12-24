@@ -489,3 +489,710 @@ class HQBankingOverviewStats(BaseModel):
 class HQFraudAlertResolve(BaseModel):
     """Request to resolve a fraud alert."""
     resolution_notes: Optional[str] = None
+
+
+# ============================================================================
+# Accounting - Customer (A/R) Schemas
+# ============================================================================
+
+CustomerStatusType = Literal["active", "inactive", "suspended"]
+CustomerTypeType = Literal["tenant", "partner", "enterprise", "other"]
+
+
+class HQCustomerBase(BaseModel):
+    """HQ customer for accounts receivable."""
+    name: str
+    customer_type: CustomerTypeType = "tenant"
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    billing_address: Optional[str] = None
+    billing_city: Optional[str] = None
+    billing_state: Optional[str] = None
+    billing_zip: Optional[str] = None
+    billing_country: str = "US"
+    tax_id: Optional[str] = None
+    payment_terms_days: int = 30
+    credit_limit: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class HQCustomerCreate(HQCustomerBase):
+    tenant_id: Optional[str] = None  # Link to HQTenant if applicable
+
+
+class HQCustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    customer_type: Optional[CustomerTypeType] = None
+    status: Optional[CustomerStatusType] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    billing_address: Optional[str] = None
+    billing_city: Optional[str] = None
+    billing_state: Optional[str] = None
+    billing_zip: Optional[str] = None
+    payment_terms_days: Optional[int] = None
+    credit_limit: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class HQCustomerResponse(HQCustomerBase):
+    id: str
+    tenant_id: Optional[str] = None
+    customer_number: str
+    status: CustomerStatusType
+    outstanding_balance: Decimal = Decimal("0")
+    total_invoiced: Decimal = Decimal("0")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Accounting - Invoice (A/R) Schemas
+# ============================================================================
+
+InvoiceStatusType = Literal["draft", "sent", "viewed", "paid", "partial", "overdue", "cancelled", "void"]
+InvoiceTypeType = Literal["subscription", "service", "setup_fee", "credit_note", "other"]
+
+
+class HQInvoiceLineItem(BaseModel):
+    """Line item for an invoice."""
+    description: str
+    quantity: Decimal = Decimal("1")
+    unit_price: Decimal
+    amount: Decimal
+    tax_rate: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
+
+
+class HQInvoiceBase(BaseModel):
+    """HQ invoice for accounts receivable."""
+    customer_id: str
+    invoice_type: InvoiceTypeType = "subscription"
+    description: Optional[str] = None
+    due_date: Optional[datetime] = None
+    line_items: List[HQInvoiceLineItem] = []
+    subtotal: Decimal
+    tax_total: Decimal = Decimal("0")
+    total: Decimal
+    notes: Optional[str] = None
+    terms: Optional[str] = None
+
+
+class HQInvoiceCreate(HQInvoiceBase):
+    tenant_id: Optional[str] = None
+    contract_id: Optional[str] = None
+
+
+class HQInvoiceUpdate(BaseModel):
+    status: Optional[InvoiceStatusType] = None
+    description: Optional[str] = None
+    due_date: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class HQInvoiceResponse(HQInvoiceBase):
+    id: str
+    tenant_id: Optional[str] = None
+    contract_id: Optional[str] = None
+    invoice_number: str
+    status: InvoiceStatusType
+    issued_date: Optional[datetime] = None
+    paid_date: Optional[datetime] = None
+    paid_amount: Decimal = Decimal("0")
+    balance_due: Decimal
+    stripe_invoice_id: Optional[str] = None
+    created_by_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    # Joined fields
+    customer_name: Optional[str] = None
+    tenant_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Accounting - Vendor (A/P) Schemas
+# ============================================================================
+
+VendorStatusType = Literal["active", "inactive", "pending_approval"]
+VendorTypeType = Literal["service", "supplier", "contractor", "utility", "other"]
+
+
+class HQVendorBase(BaseModel):
+    """HQ vendor for accounts payable."""
+    name: str
+    vendor_type: VendorTypeType = "service"
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: str = "US"
+    tax_id: Optional[str] = None
+    payment_terms_days: int = 30
+    default_expense_account: Optional[str] = None
+    bank_account_info: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class HQVendorCreate(HQVendorBase):
+    pass
+
+
+class HQVendorUpdate(BaseModel):
+    name: Optional[str] = None
+    vendor_type: Optional[VendorTypeType] = None
+    status: Optional[VendorStatusType] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    payment_terms_days: Optional[int] = None
+    default_expense_account: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class HQVendorResponse(HQVendorBase):
+    id: str
+    vendor_number: str
+    status: VendorStatusType
+    outstanding_balance: Decimal = Decimal("0")
+    total_paid: Decimal = Decimal("0")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Accounting - Bill (A/P) Schemas
+# ============================================================================
+
+BillStatusType = Literal["draft", "pending_approval", "approved", "paid", "partial", "overdue", "cancelled", "void"]
+BillTypeType = Literal["expense", "service", "utility", "subscription", "other"]
+
+
+class HQBillLineItem(BaseModel):
+    """Line item for a bill."""
+    description: str
+    quantity: Decimal = Decimal("1")
+    unit_price: Decimal
+    amount: Decimal
+    expense_account: Optional[str] = None
+
+
+class HQBillBase(BaseModel):
+    """HQ bill for accounts payable."""
+    vendor_id: str
+    bill_type: BillTypeType = "expense"
+    vendor_invoice_number: Optional[str] = None
+    description: Optional[str] = None
+    bill_date: datetime
+    due_date: Optional[datetime] = None
+    line_items: List[HQBillLineItem] = []
+    subtotal: Decimal
+    tax_total: Decimal = Decimal("0")
+    total: Decimal
+    notes: Optional[str] = None
+
+
+class HQBillCreate(HQBillBase):
+    pass
+
+
+class HQBillUpdate(BaseModel):
+    status: Optional[BillStatusType] = None
+    description: Optional[str] = None
+    due_date: Optional[datetime] = None
+    notes: Optional[str] = None
+
+
+class HQBillApprove(BaseModel):
+    pass
+
+
+class HQBillResponse(HQBillBase):
+    id: str
+    bill_number: str
+    status: BillStatusType
+    approved_by_id: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    paid_date: Optional[datetime] = None
+    paid_amount: Decimal = Decimal("0")
+    balance_due: Decimal
+    created_by_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    # Joined fields
+    vendor_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Accounting - Payment Schemas
+# ============================================================================
+
+PaymentTypeType = Literal["check", "ach", "wire", "credit_card", "other"]
+PaymentDirectionType = Literal["incoming", "outgoing"]
+
+
+class HQPaymentBase(BaseModel):
+    """Payment record for tracking A/R and A/P payments."""
+    payment_type: PaymentTypeType
+    direction: PaymentDirectionType
+    amount: Decimal
+    payment_date: datetime
+    reference_number: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class HQPaymentCreate(HQPaymentBase):
+    invoice_id: Optional[str] = None  # For incoming payments
+    bill_id: Optional[str] = None  # For outgoing payments
+
+
+class HQPaymentResponse(HQPaymentBase):
+    id: str
+    invoice_id: Optional[str] = None
+    bill_id: Optional[str] = None
+    payment_number: str
+    stripe_payment_id: Optional[str] = None
+    synctera_transaction_id: Optional[str] = None
+    recorded_by_id: Optional[str] = None
+    created_at: datetime
+    # Joined fields
+    customer_name: Optional[str] = None
+    vendor_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Accounting Dashboard Schemas
+# ============================================================================
+
+class HQAccountingDashboard(BaseModel):
+    """Accounting dashboard metrics."""
+    # A/R Metrics
+    total_outstanding_ar: Decimal
+    ar_current: Decimal
+    ar_30_days: Decimal
+    ar_60_days: Decimal
+    ar_90_plus_days: Decimal
+    pending_invoices_count: int
+    overdue_invoices_count: int
+    # A/P Metrics
+    total_outstanding_ap: Decimal
+    ap_current: Decimal
+    ap_30_days: Decimal
+    ap_60_days: Decimal
+    ap_90_plus_days: Decimal
+    pending_bills_count: int
+    overdue_bills_count: int
+    # Cash Flow
+    expected_collections_30_days: Decimal
+    expected_payments_30_days: Decimal
+
+
+# ============================================================================
+# HR & Payroll Schemas (Check Integration)
+# ============================================================================
+
+EmploymentType = Literal["full_time", "part_time", "contractor", "intern"]
+EmployeeStatusType = Literal["active", "terminated", "on_leave", "onboarding"]
+PayFrequency = Literal["weekly", "biweekly", "semimonthly", "monthly"]
+
+
+class HQHREmployeeBase(BaseModel):
+    """HQ employee for HR/Payroll (different from HQEmployee admin users)."""
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    employment_type: EmploymentType = "full_time"
+    department: Optional[str] = None
+    job_title: Optional[str] = None
+    manager_id: Optional[str] = None
+    hire_date: Optional[datetime] = None
+    pay_frequency: PayFrequency = "biweekly"
+    annual_salary: Optional[Decimal] = None
+    hourly_rate: Optional[Decimal] = None
+    # Address
+    address_line1: Optional[str] = None
+    address_line2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
+
+class HQHREmployeeCreate(HQHREmployeeBase):
+    ssn_last_four: Optional[str] = None  # Last 4 for verification only
+    date_of_birth: Optional[datetime] = None
+
+
+class HQHREmployeeUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    employment_type: Optional[EmploymentType] = None
+    status: Optional[EmployeeStatusType] = None
+    department: Optional[str] = None
+    job_title: Optional[str] = None
+    manager_id: Optional[str] = None
+    pay_frequency: Optional[PayFrequency] = None
+    annual_salary: Optional[Decimal] = None
+    hourly_rate: Optional[Decimal] = None
+
+
+class HQHREmployeeResponse(HQHREmployeeBase):
+    id: str
+    employee_number: str
+    status: EmployeeStatusType
+    check_employee_id: Optional[str] = None  # Check payroll ID
+    termination_date: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    # Joined fields
+    manager_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class HQPayrollRunBase(BaseModel):
+    """Payroll run for processing employee payments."""
+    pay_period_start: datetime
+    pay_period_end: datetime
+    pay_date: datetime
+    description: Optional[str] = None
+
+
+PayrollStatusType = Literal["draft", "pending_approval", "approved", "processing", "completed", "failed", "cancelled"]
+
+
+class HQPayrollRunCreate(HQPayrollRunBase):
+    employee_ids: Optional[List[str]] = None  # If None, all active employees
+
+
+class HQPayrollRunResponse(HQPayrollRunBase):
+    id: str
+    payroll_number: str
+    status: PayrollStatusType
+    check_payroll_id: Optional[str] = None  # Check payroll ID
+    total_gross: Decimal = Decimal("0")
+    total_taxes: Decimal = Decimal("0")
+    total_deductions: Decimal = Decimal("0")
+    total_net: Decimal = Decimal("0")
+    employee_count: int = 0
+    approved_by_id: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    processed_at: Optional[datetime] = None
+    created_by_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HQPayrollItemResponse(BaseModel):
+    """Individual employee payroll item within a payroll run."""
+    id: str
+    payroll_run_id: str
+    employee_id: str
+    employee_name: str
+    gross_pay: Decimal
+    federal_tax: Decimal = Decimal("0")
+    state_tax: Decimal = Decimal("0")
+    social_security: Decimal = Decimal("0")
+    medicare: Decimal = Decimal("0")
+    other_deductions: Decimal = Decimal("0")
+    net_pay: Decimal
+    hours_worked: Optional[Decimal] = None
+    overtime_hours: Optional[Decimal] = None
+    check_paystub_id: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# HQ Colab AI Schemas
+# ============================================================================
+
+HQAgentType = Literal["oracle", "sentinel", "nexus"]
+
+
+class HQColabChatRequest(BaseModel):
+    """Request to chat with HQ AI agents."""
+    session_id: str
+    agent: HQAgentType
+    message: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+
+
+class HQColabChatResponse(BaseModel):
+    """Response from HQ AI agent."""
+    response: str
+    agent: HQAgentType
+    reasoning: Optional[str] = None
+    tools_used: Optional[List[str]] = None
+    confidence: Optional[float] = None
+    task_id: Optional[str] = None
+
+
+class HQColabInitRequest(BaseModel):
+    """Initialize an HQ Colab chat session."""
+    session_id: str
+    agent: HQAgentType
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+
+
+class HQColabInitResponse(BaseModel):
+    """Response from initializing HQ Colab chat."""
+    message: str
+    agent: HQAgentType
+
+
+# ============================================================================
+# General Ledger Schemas
+# ============================================================================
+
+AccountTypeType = Literal["asset", "liability", "equity", "revenue", "cost_of_revenue", "expense"]
+AccountSubtypeType = Literal[
+    "cash", "accounts_receivable", "prepaid_expense", "fixed_asset",
+    "accounts_payable", "credit_card", "deferred_revenue", "payroll_liability",
+    "retained_earnings", "owner_equity",
+    "saas_revenue", "service_revenue", "other_income",
+    "ai_compute", "hosting", "payment_processing",
+    "payroll", "marketing", "software", "professional_services", "office", "other_expense"
+]
+JournalEntryStatusType = Literal["draft", "posted", "void"]
+
+
+class HQChartOfAccountsBase(BaseModel):
+    """Chart of Accounts entry."""
+    account_number: str
+    account_name: str
+    account_type: AccountTypeType
+    account_subtype: Optional[AccountSubtypeType] = None
+    description: Optional[str] = None
+    parent_account_id: Optional[str] = None
+
+
+class HQChartOfAccountsCreate(HQChartOfAccountsBase):
+    is_system: bool = False
+
+
+class HQChartOfAccountsUpdate(BaseModel):
+    account_name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class HQChartOfAccountsResponse(HQChartOfAccountsBase):
+    id: str
+    is_active: bool
+    is_system: bool
+    current_balance: Decimal
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HQJournalEntryLineCreate(BaseModel):
+    """Single line in a journal entry."""
+    account_number: str
+    amount: Decimal
+    is_debit: bool
+    memo: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class HQJournalEntryCreate(BaseModel):
+    """Create a journal entry with lines."""
+    description: str
+    lines: List[HQJournalEntryLineCreate]
+    transaction_date: Optional[datetime] = None
+    reference: Optional[str] = None
+    source_type: Optional[str] = None
+    source_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    auto_post: bool = False
+
+
+class HQJournalEntryResponse(BaseModel):
+    """Journal entry with lines."""
+    id: str
+    entry_number: str
+    reference: Optional[str] = None
+    transaction_date: datetime
+    description: str
+    status: JournalEntryStatusType
+    source_type: Optional[str] = None
+    source_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    total_debits: Decimal
+    total_credits: Decimal
+    created_by_id: Optional[str] = None
+    posted_by_id: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    voided_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HQGLEntryResponse(BaseModel):
+    """General Ledger entry line."""
+    id: str
+    journal_entry_id: str
+    debit_account_id: Optional[str] = None
+    credit_account_id: Optional[str] = None
+    amount: Decimal
+    memo: Optional[str] = None
+    tenant_id: Optional[str] = None
+    created_at: datetime
+    # Joined fields
+    account_number: Optional[str] = None
+    account_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class HQAccountBalance(BaseModel):
+    """Account balance summary."""
+    account_id: str
+    account_number: str
+    account_name: str
+    account_type: AccountTypeType
+    debit_total: Decimal
+    credit_total: Decimal
+    balance: Decimal
+
+
+# ============================================================================
+# Financial Reports Schemas
+# ============================================================================
+
+class HQProfitLossReport(BaseModel):
+    """Monthly P&L report."""
+    period_start: datetime
+    period_end: datetime
+    revenue: dict  # account_name: amount
+    cost_of_revenue: dict
+    expenses: dict
+    total_revenue: Decimal
+    total_cogs: Decimal
+    gross_profit: Decimal
+    gross_margin_percent: Decimal
+    total_expenses: Decimal
+    net_income: Decimal
+    tenant_breakdown: Optional[dict] = None
+
+
+class HQBalanceSheetReport(BaseModel):
+    """Balance sheet report."""
+    as_of_date: datetime
+    assets: dict
+    liabilities: dict
+    equity: dict
+    total_assets: Decimal
+    total_liabilities: Decimal
+    total_equity: Decimal
+
+
+class HQTenantProfitMargin(BaseModel):
+    """Per-tenant profit margin analysis."""
+    tenant_id: str
+    tenant_name: Optional[str] = None
+    revenue: Decimal
+    cogs: Decimal
+    gross_profit: Decimal
+    gross_margin_percent: Decimal
+
+
+# ============================================================================
+# Usage Metering Schemas (AI COGS)
+# ============================================================================
+
+UsageMetricTypeType = Literal[
+    "active_trucks", "active_drivers", "payroll_employees",
+    "ai_tokens_used", "ai_requests", "storage_gb", "api_calls"
+]
+
+
+class HQUsageLogCreate(BaseModel):
+    """Log AI or resource usage."""
+    tenant_id: str
+    metric_type: UsageMetricTypeType
+    metric_value: Decimal
+    unit_cost: Optional[Decimal] = None
+    ai_metadata: Optional[dict] = None
+
+
+class HQUsageLogResponse(BaseModel):
+    """Usage log entry."""
+    id: str
+    tenant_id: str
+    metric_type: UsageMetricTypeType
+    metric_value: Decimal
+    unit_cost: Optional[Decimal] = None
+    total_cost: Optional[Decimal] = None
+    ai_metadata: Optional[dict] = None
+    recorded_at: datetime
+    created_at: datetime
+    # Joined
+    tenant_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class HQAIUsageLogRequest(BaseModel):
+    """Request to log AI usage."""
+    tenant_id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+
+
+class HQAICostsByTenant(BaseModel):
+    """AI costs aggregated by tenant."""
+    tenant_id: str
+    tenant_name: Optional[str] = None
+    request_count: int
+    total_tokens: int
+    total_cost: Decimal
+
+
+class HQGLDashboard(BaseModel):
+    """General Ledger dashboard metrics."""
+    # Balance Sheet Summary
+    total_assets: Decimal
+    total_liabilities: Decimal
+    total_equity: Decimal
+    cash_balance: Decimal
+    accounts_receivable: Decimal
+    accounts_payable: Decimal
+    # P&L Summary (current month)
+    current_month_revenue: Decimal
+    current_month_cogs: Decimal
+    current_month_gross_profit: Decimal
+    current_month_expenses: Decimal
+    current_month_net_income: Decimal
+    # AI COGS breakdown
+    ai_costs_mtd: Decimal
+    ai_costs_by_model: dict
+    # Metrics
+    gross_margin_percent: Decimal
+    accounts_count: int
+    posted_entries_count: int

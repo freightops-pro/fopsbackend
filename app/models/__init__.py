@@ -52,3 +52,15 @@ from app.models.hq_payout import HQPayout, PayoutStatus  # noqa: F401
 from app.models.hq_system_module import HQSystemModule, ModuleStatus  # noqa: F401
 from app.models.hq_banking import HQFraudAlert, HQBankingAuditLog, FraudAlertSeverity, FraudAlertStatus, BankingAuditAction  # noqa: F401
 
+# Billing Models
+from app.models.billing import Subscription, SubscriptionAddOn, PaymentMethod, StripeInvoice, StripeWebhookEvent  # noqa: F401
+
+# HQ Accounting Models
+from app.models.hq_accounting import (  # noqa: F401
+    HQCustomer, CustomerStatus, CustomerType,
+    HQInvoice, InvoiceStatus, InvoiceType,
+    HQVendor, VendorStatus, VendorType,
+    HQBill, BillStatus, BillType,
+    HQPayment, PaymentType, PaymentDirection,
+)
+

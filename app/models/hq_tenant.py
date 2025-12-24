@@ -60,3 +60,4 @@ class HQTenant(Base):
     quotes = relationship("HQQuote", back_populates="tenant", cascade="all, delete-orphan")
     credits = relationship("HQCredit", back_populates="tenant", cascade="all, delete-orphan")
     payouts = relationship("HQPayout", back_populates="tenant", cascade="all, delete-orphan")
+    customer = relationship("HQCustomer", back_populates="tenant", uselist=False)
