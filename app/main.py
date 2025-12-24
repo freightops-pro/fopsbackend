@@ -275,6 +275,51 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+
+# Exception handlers to ensure CORS headers on errors
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions with proper CORS headers."""
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and origin in settings.backend_cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions with proper CORS headers."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and origin in settings.backend_cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=headers,
+    )
+
+
 # Setup security middleware (rate limiting, security headers, audit logging)
 setup_security_middleware(app)
 
