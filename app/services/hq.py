@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.password_policy import validate_password
 from app.models.company import Company
 from app.models.hq_employee import HQEmployee, HQRole
 from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier
@@ -113,6 +114,11 @@ class HQEmployeeService:
 
     async def create_employee(self, payload: HQEmployeeCreate) -> HQEmployee:
         """Create a new HQ employee."""
+        # Validate password strength
+        is_valid, errors = validate_password(payload.password, payload.email)
+        if not is_valid:
+            raise ValueError(f"Password does not meet requirements: {'; '.join(errors)}")
+
         # Check for existing email
         result = await self.db.execute(
             select(HQEmployee).where(HQEmployee.email == payload.email.lower())

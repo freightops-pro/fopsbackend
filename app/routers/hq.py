@@ -114,13 +114,58 @@ async def get_current_hq_employee(
     return employee
 
 
+def require_hq_role(*allowed_roles: str):
+    """
+    Dependency that requires the HQ employee to have one of the specified roles.
+
+    Usage:
+        @router.get("/admin-only")
+        async def admin_endpoint(employee = Depends(require_hq_role("SUPER_ADMIN", "ADMIN"))):
+            ...
+    """
+    from app.models.hq_employee import HQRole
+
+    async def dependency(
+        request: Request,
+        token: Annotated[str | None, Depends(hq_oauth2_scheme)],
+        db: AsyncSession = Depends(get_db),
+    ) -> HQEmployee:
+        employee = await get_current_hq_employee(request, token, db)
+
+        # Convert role enum to string for comparison
+        employee_role = employee.role.value if isinstance(employee.role, HQRole) else employee.role
+
+        if employee_role not in allowed_roles:
+            logger.warning(
+                f"HQ Role denied: employee={employee.email}, role={employee_role}, required={allowed_roles}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Required role: {', '.join(allowed_roles)}"
+            )
+
+        return employee
+
+    return dependency
+
+
+def require_hq_admin():
+    """Shortcut for requiring SUPER_ADMIN or ADMIN role."""
+    return require_hq_role("SUPER_ADMIN", "ADMIN")
+
+
+def require_hq_super_admin():
+    """Shortcut for requiring SUPER_ADMIN role only."""
+    return require_hq_role("SUPER_ADMIN")
+
+
 def set_hq_auth_cookie(response: Response, token: str) -> None:
-    """Set HQ authentication cookie."""
+    """Set HQ authentication cookie with secure settings."""
     response.set_cookie(
         key=HQ_AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,
+        secure=settings.environment != "development",  # HTTPS only in production
         samesite="lax",
         max_age=settings.access_token_expire_minutes * 60,
         path="/",
