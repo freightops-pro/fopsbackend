@@ -526,6 +526,45 @@ async def activate_tenant(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+@router.post("/tenants/sync", response_model=dict)
+async def sync_tenants_from_companies(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Create HQ tenant records for all companies that don't have one.
+    This is a one-time sync to populate the hq_tenant table from existing companies.
+    """
+    import uuid
+    from sqlalchemy import select
+    from app.models.company import Company
+    from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier
+
+    # Find companies without hq_tenant records
+    result = await db.execute(
+        select(Company).outerjoin(HQTenant, Company.id == HQTenant.company_id)
+        .where(HQTenant.id == None)
+    )
+    orphan_companies = result.scalars().all()
+
+    created = 0
+    for company in orphan_companies:
+        tenant = HQTenant(
+            id=str(uuid.uuid4()),
+            company_id=company.id,
+            status=TenantStatus.ACTIVE if company.isActive else TenantStatus.SUSPENDED,
+            subscription_tier=SubscriptionTier.PROFESSIONAL,
+            monthly_rate=299,  # Default rate
+            billing_email=company.email,
+        )
+        db.add(tenant)
+        created += 1
+
+    await db.commit()
+
+    return {"synced": created, "message": f"Created {created} tenant records from existing companies"}
+
+
 # ============================================================================
 # Contract Endpoints
 # ============================================================================
