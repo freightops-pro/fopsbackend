@@ -20,6 +20,8 @@ from app.models.hq_quote import HQQuote, QuoteStatus
 from app.models.hq_credit import HQCredit, CreditType, CreditStatus
 from app.models.hq_payout import HQPayout, PayoutStatus
 from app.models.hq_system_module import HQSystemModule, ModuleStatus
+from app.models.hq_banking import HQFraudAlert, HQBankingAuditLog, FraudAlertSeverity, FraudAlertStatus, BankingAuditAction
+from app.models.banking import BankingCustomer, BankingAccount, BankingCard
 from app.schemas.hq import (
     HQLoginRequest,
     HQSessionUser,
@@ -37,6 +39,10 @@ from app.schemas.hq import (
     HQPayoutCreate,
     HQSystemModuleUpdate,
     HQDashboardMetrics,
+    HQBankingCompanyResponse,
+    HQFraudAlertResponse,
+    HQBankingAuditLogResponse,
+    HQBankingOverviewStats,
 )
 
 
@@ -725,3 +731,319 @@ class HQDashboardService:
             pending_credits_count=pending_credits_count,
             expiring_contracts_count=expiring_contracts_count,
         )
+
+
+class HQBankingService:
+    """Service for HQ banking admin operations (Synctera integration)."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def get_overview_stats(self) -> HQBankingOverviewStats:
+        """Get banking overview statistics for HQ dashboard."""
+        # Total companies with banking
+        total_result = await self.db.execute(
+            select(func.count(BankingCustomer.id))
+        )
+        total_companies = total_result.scalar() or 0
+
+        # Active companies
+        active_result = await self.db.execute(
+            select(func.count(BankingCustomer.id)).where(
+                BankingCustomer.status == "active"
+            )
+        )
+        active_companies = active_result.scalar() or 0
+
+        # Frozen companies
+        frozen_result = await self.db.execute(
+            select(func.count(BankingCustomer.id)).where(
+                BankingCustomer.status == "frozen"
+            )
+        )
+        frozen_companies = frozen_result.scalar() or 0
+
+        # Pending KYB
+        pending_kyb_result = await self.db.execute(
+            select(func.count(BankingCustomer.id)).where(
+                BankingCustomer.kyb_status.in_(["pending", "pending_review"])
+            )
+        )
+        pending_kyb = pending_kyb_result.scalar() or 0
+
+        # Total balance across all accounts
+        balance_result = await self.db.execute(
+            select(func.coalesce(func.sum(BankingAccount.available_balance), 0))
+        )
+        total_balance = Decimal(str(balance_result.scalar() or 0))
+
+        # Pending fraud alerts
+        pending_alerts_result = await self.db.execute(
+            select(func.count(HQFraudAlert.id)).where(
+                HQFraudAlert.status == FraudAlertStatus.PENDING.value
+            )
+        )
+        pending_fraud_alerts = pending_alerts_result.scalar() or 0
+
+        # Fraud alerts today
+        from datetime import date
+        today_alerts_result = await self.db.execute(
+            select(func.count(HQFraudAlert.id)).where(
+                func.date(HQFraudAlert.created_at) == date.today()
+            )
+        )
+        fraud_alerts_today = today_alerts_result.scalar() or 0
+
+        return HQBankingOverviewStats(
+            total_companies=total_companies,
+            active_companies=active_companies,
+            frozen_companies=frozen_companies,
+            pending_kyb=pending_kyb,
+            total_balance=total_balance,
+            pending_fraud_alerts=pending_fraud_alerts,
+            fraud_alerts_today=fraud_alerts_today,
+        )
+
+    async def list_companies(self, status: Optional[str] = None) -> List[HQBankingCompanyResponse]:
+        """List companies with banking status."""
+        query = select(BankingCustomer).options(selectinload(BankingCustomer.accounts))
+        if status:
+            query = query.where(BankingCustomer.status == status)
+        query = query.order_by(BankingCustomer.created_at.desc())
+
+        result = await self.db.execute(query)
+        customers = result.scalars().all()
+
+        responses = []
+        for customer in customers:
+            # Get company info
+            company = await self.db.get(Company, customer.company_id)
+
+            # Count accounts and cards
+            account_count = len(customer.accounts) if customer.accounts else 0
+            card_count = 0
+            total_balance = Decimal("0")
+            available_balance = Decimal("0")
+
+            for account in (customer.accounts or []):
+                total_balance += account.balance or Decimal("0")
+                available_balance += account.available_balance or Decimal("0")
+                # Count cards
+                cards_result = await self.db.execute(
+                    select(func.count(BankingCard.id)).where(BankingCard.account_id == account.id)
+                )
+                card_count += cards_result.scalar() or 0
+
+            # Count fraud alerts for this company
+            alerts_result = await self.db.execute(
+                select(func.count(HQFraudAlert.id)).where(
+                    and_(
+                        HQFraudAlert.company_id == customer.company_id,
+                        HQFraudAlert.status == FraudAlertStatus.PENDING.value
+                    )
+                )
+            )
+            fraud_alert_count = alerts_result.scalar() or 0
+
+            responses.append(HQBankingCompanyResponse(
+                id=customer.id,
+                tenant_id=customer.company_id,
+                company_name=company.name if company else "Unknown",
+                status=customer.status or "pending",
+                kyb_status=customer.kyb_status or "not_started",
+                synctera_business_id=customer.synctera_business_id,
+                synctera_customer_id=customer.external_id,
+                account_count=account_count,
+                card_count=card_count,
+                total_balance=total_balance,
+                available_balance=available_balance,
+                fraud_alert_count=fraud_alert_count,
+                last_activity_at=customer.updated_at,
+                created_at=customer.created_at,
+                updated_at=customer.updated_at,
+            ))
+
+        return responses
+
+    async def freeze_company(self, company_id: str, employee_id: str, ip_address: Optional[str] = None) -> None:
+        """Freeze a company's banking access."""
+        result = await self.db.execute(
+            select(BankingCustomer).where(BankingCustomer.company_id == company_id)
+        )
+        customer = result.scalar_one_or_none()
+        if not customer:
+            raise ValueError("Banking customer not found")
+
+        customer.status = "frozen"
+        await self._log_action(
+            company_id=company_id,
+            action=BankingAuditAction.ACCOUNT_FROZEN.value,
+            description=f"Account frozen by HQ admin",
+            employee_id=employee_id,
+            ip_address=ip_address,
+        )
+        await self.db.commit()
+
+    async def unfreeze_company(self, company_id: str, employee_id: str, ip_address: Optional[str] = None) -> None:
+        """Unfreeze a company's banking access."""
+        result = await self.db.execute(
+            select(BankingCustomer).where(BankingCustomer.company_id == company_id)
+        )
+        customer = result.scalar_one_or_none()
+        if not customer:
+            raise ValueError("Banking customer not found")
+
+        customer.status = "active"
+        await self._log_action(
+            company_id=company_id,
+            action=BankingAuditAction.ACCOUNT_UNFROZEN.value,
+            description=f"Account unfrozen by HQ admin",
+            employee_id=employee_id,
+            ip_address=ip_address,
+        )
+        await self.db.commit()
+
+    async def list_fraud_alerts(self, status: Optional[str] = None) -> List[HQFraudAlertResponse]:
+        """List fraud alerts."""
+        query = select(HQFraudAlert)
+        if status:
+            query = query.where(HQFraudAlert.status == status)
+        query = query.order_by(HQFraudAlert.created_at.desc())
+
+        result = await self.db.execute(query)
+        alerts = result.scalars().all()
+
+        responses = []
+        for alert in alerts:
+            company = await self.db.get(Company, alert.company_id)
+            responses.append(HQFraudAlertResponse(
+                id=alert.id,
+                company_id=alert.company_id,
+                company_name=company.name if company else "Unknown",
+                alert_type=alert.alert_type,
+                amount=alert.amount,
+                description=alert.description,
+                severity=alert.severity,
+                status=alert.status,
+                transaction_id=alert.transaction_id,
+                card_id=alert.card_id,
+                account_id=alert.account_id,
+                synctera_alert_id=alert.synctera_alert_id,
+                resolved_by=alert.resolved_by,
+                resolved_at=alert.resolved_at,
+                resolution_notes=alert.resolution_notes,
+                created_at=alert.created_at,
+                updated_at=alert.updated_at,
+            ))
+
+        return responses
+
+    async def approve_fraud_alert(
+        self, alert_id: str, employee_id: str, notes: Optional[str] = None, ip_address: Optional[str] = None
+    ) -> HQFraudAlert:
+        """Approve a fraud alert (allow the transaction)."""
+        alert = await self.db.get(HQFraudAlert, alert_id)
+        if not alert:
+            raise ValueError("Fraud alert not found")
+        if alert.status != FraudAlertStatus.PENDING.value:
+            raise ValueError("Alert is not pending")
+
+        alert.status = FraudAlertStatus.APPROVED.value
+        alert.resolved_by = employee_id
+        alert.resolved_at = datetime.utcnow()
+        alert.resolution_notes = notes
+
+        await self._log_action(
+            company_id=alert.company_id,
+            action=BankingAuditAction.FRAUD_APPROVED.value,
+            description=f"Fraud alert approved: {alert.alert_type}",
+            employee_id=employee_id,
+            ip_address=ip_address,
+            action_metadata={"alert_id": alert_id, "amount": str(alert.amount)},
+        )
+        await self.db.commit()
+        await self.db.refresh(alert)
+        return alert
+
+    async def block_fraud_alert(
+        self, alert_id: str, employee_id: str, notes: Optional[str] = None, ip_address: Optional[str] = None
+    ) -> HQFraudAlert:
+        """Block a fraud alert (reject the transaction)."""
+        alert = await self.db.get(HQFraudAlert, alert_id)
+        if not alert:
+            raise ValueError("Fraud alert not found")
+        if alert.status != FraudAlertStatus.PENDING.value:
+            raise ValueError("Alert is not pending")
+
+        alert.status = FraudAlertStatus.BLOCKED.value
+        alert.resolved_by = employee_id
+        alert.resolved_at = datetime.utcnow()
+        alert.resolution_notes = notes
+
+        await self._log_action(
+            company_id=alert.company_id,
+            action=BankingAuditAction.FRAUD_BLOCKED.value,
+            description=f"Fraud alert blocked: {alert.alert_type}",
+            employee_id=employee_id,
+            ip_address=ip_address,
+            action_metadata={"alert_id": alert_id, "amount": str(alert.amount)},
+        )
+        await self.db.commit()
+        await self.db.refresh(alert)
+        return alert
+
+    async def list_audit_logs(self, limit: int = 100) -> List[HQBankingAuditLogResponse]:
+        """List banking audit logs."""
+        query = (
+            select(HQBankingAuditLog)
+            .options(selectinload(HQBankingAuditLog.performer))
+            .order_by(HQBankingAuditLog.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(query)
+        logs = result.scalars().all()
+
+        responses = []
+        for log in logs:
+            company_name = None
+            if log.company_id:
+                company = await self.db.get(Company, log.company_id)
+                company_name = company.name if company else None
+
+            performer_name = f"{log.performer.first_name} {log.performer.last_name}" if log.performer else "Unknown"
+
+            responses.append(HQBankingAuditLogResponse(
+                id=log.id,
+                company_id=log.company_id,
+                company_name=company_name,
+                action=log.action,
+                description=log.description,
+                performed_by=log.performed_by,
+                performed_by_name=performer_name,
+                ip_address=log.ip_address,
+                action_metadata=log.action_metadata,
+                created_at=log.created_at,
+            ))
+
+        return responses
+
+    async def _log_action(
+        self,
+        action: str,
+        description: str,
+        employee_id: str,
+        company_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        action_metadata: Optional[dict] = None,
+    ) -> None:
+        """Log a banking admin action."""
+        log = HQBankingAuditLog(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            action=action,
+            description=description,
+            performed_by=employee_id,
+            ip_address=ip_address,
+            action_metadata=action_metadata,
+        )
+        self.db.add(log)

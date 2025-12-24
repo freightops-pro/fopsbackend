@@ -50,4 +50,5 @@ from app.models.hq_quote import HQQuote, QuoteStatus  # noqa: F401
 from app.models.hq_credit import HQCredit, CreditType, CreditStatus  # noqa: F401
 from app.models.hq_payout import HQPayout, PayoutStatus  # noqa: F401
 from app.models.hq_system_module import HQSystemModule, ModuleStatus  # noqa: F401
+from app.models.hq_banking import HQFraudAlert, HQBankingAuditLog, FraudAlertSeverity, FraudAlertStatus, BankingAuditAction  # noqa: F401
 

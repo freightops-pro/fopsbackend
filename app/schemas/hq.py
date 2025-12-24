@@ -400,3 +400,92 @@ class HQExpiringContract(BaseModel):
     contract_number: str
     end_date: datetime
     monthly_value: Decimal
+
+
+# ============================================================================
+# Banking Admin Schemas (Synctera Integration)
+# ============================================================================
+
+BankingCompanyStatusType = Literal["active", "under_review", "frozen", "closed"]
+KYBStatusType = Literal["not_started", "pending_review", "approved", "rejected", "requires_info"]
+FraudAlertSeverityType = Literal["low", "medium", "high", "critical"]
+FraudAlertStatusType = Literal["pending", "investigating", "approved", "blocked", "resolved"]
+BankingAuditActionType = Literal[
+    "account_frozen", "account_unfrozen", "kyb_approved", "kyb_rejected",
+    "fraud_approved", "fraud_blocked", "card_suspended", "card_terminated",
+    "payout_initiated", "transfer_approved"
+]
+
+
+class HQBankingCompanyResponse(BaseModel):
+    """Company with banking status for HQ admin view."""
+    id: str
+    tenant_id: str
+    company_name: str
+    status: BankingCompanyStatusType
+    kyb_status: KYBStatusType
+    synctera_business_id: Optional[str] = None
+    synctera_customer_id: Optional[str] = None
+    account_count: int = 0
+    card_count: int = 0
+    total_balance: Decimal = Decimal("0")
+    available_balance: Decimal = Decimal("0")
+    fraud_alert_count: int = 0
+    last_activity_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class HQFraudAlertResponse(BaseModel):
+    """Fraud alert from Synctera for HQ review."""
+    id: str
+    company_id: str
+    company_name: str
+    alert_type: str
+    amount: Decimal
+    description: Optional[str] = None
+    severity: FraudAlertSeverityType
+    status: FraudAlertStatusType
+    transaction_id: Optional[str] = None
+    card_id: Optional[str] = None
+    account_id: Optional[str] = None
+    synctera_alert_id: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HQBankingAuditLogResponse(BaseModel):
+    """Audit log entry for banking admin actions."""
+    id: str
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    action: BankingAuditActionType
+    description: str
+    performed_by: str
+    performed_by_name: str
+    ip_address: Optional[str] = None
+    action_metadata: Optional[dict] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class HQBankingOverviewStats(BaseModel):
+    """Banking overview statistics for HQ dashboard."""
+    total_companies: int
+    active_companies: int
+    frozen_companies: int
+    pending_kyb: int
+    total_balance: Decimal
+    pending_fraud_alerts: int
+    fraud_alerts_today: int
+
+
+class HQFraudAlertResolve(BaseModel):
+    """Request to resolve a fraud alert."""
+    resolution_notes: Optional[str] = None

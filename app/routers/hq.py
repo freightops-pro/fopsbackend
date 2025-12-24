@@ -36,6 +36,11 @@ from app.schemas.hq import (
     HQSystemModuleUpdate,
     HQSystemModuleResponse,
     HQDashboardMetrics,
+    HQBankingCompanyResponse,
+    HQFraudAlertResponse,
+    HQBankingAuditLogResponse,
+    HQBankingOverviewStats,
+    HQFraudAlertResolve,
 )
 from app.services.hq import (
     HQAuthService,
@@ -47,6 +52,7 @@ from app.services.hq import (
     HQPayoutService,
     HQSystemModuleService,
     HQDashboardService,
+    HQBankingService,
 )
 
 router = APIRouter()
@@ -694,3 +700,152 @@ async def activate_module(
         return HQSystemModuleResponse.model_validate(module, from_attributes=True)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# ============================================================================
+# Banking Admin Endpoints (Synctera Integration)
+# ============================================================================
+
+@router.get("/banking/stats", response_model=HQBankingOverviewStats)
+async def get_banking_stats(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBankingOverviewStats:
+    """Get banking overview statistics for HQ dashboard."""
+    service = HQBankingService(db)
+    return await service.get_overview_stats()
+
+
+@router.get("/banking/companies", response_model=List[HQBankingCompanyResponse])
+async def list_banking_companies(
+    status_filter: Optional[str] = None,
+    kyb_status: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQBankingCompanyResponse]:
+    """List all companies with banking status."""
+    service = HQBankingService(db)
+    return await service.list_companies(status=status_filter, kyb_status=kyb_status)
+
+
+@router.get("/banking/companies/{company_id}", response_model=HQBankingCompanyResponse)
+async def get_banking_company(
+    company_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBankingCompanyResponse:
+    """Get company banking details."""
+    service = HQBankingService(db)
+    companies = await service.list_companies()
+    for company in companies:
+        if company.id == company_id:
+            return company
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+
+@router.post("/banking/companies/{company_id}/freeze", response_model=HQBankingCompanyResponse)
+async def freeze_company_banking(
+    company_id: str,
+    request: Request,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBankingCompanyResponse:
+    """Freeze a company's banking access."""
+    service = HQBankingService(db)
+    try:
+        ip_address = request.client.host if request.client else None
+        return await service.freeze_company(company_id, current_employee.id, ip_address)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/banking/companies/{company_id}/unfreeze", response_model=HQBankingCompanyResponse)
+async def unfreeze_company_banking(
+    company_id: str,
+    request: Request,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQBankingCompanyResponse:
+    """Unfreeze a company's banking access."""
+    service = HQBankingService(db)
+    try:
+        ip_address = request.client.host if request.client else None
+        return await service.unfreeze_company(company_id, current_employee.id, ip_address)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/banking/fraud-alerts", response_model=List[HQFraudAlertResponse])
+async def list_fraud_alerts(
+    status_filter: Optional[str] = None,
+    severity: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQFraudAlertResponse]:
+    """List fraud alerts from Synctera."""
+    service = HQBankingService(db)
+    return await service.list_fraud_alerts(status=status_filter, severity=severity)
+
+
+@router.get("/banking/fraud-alerts/{alert_id}", response_model=HQFraudAlertResponse)
+async def get_fraud_alert(
+    alert_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQFraudAlertResponse:
+    """Get fraud alert details."""
+    service = HQBankingService(db)
+    alerts = await service.list_fraud_alerts()
+    for alert in alerts:
+        if alert.id == alert_id:
+            return alert
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fraud alert not found")
+
+
+@router.post("/banking/fraud-alerts/{alert_id}/approve", response_model=HQFraudAlertResponse)
+async def approve_fraud_alert(
+    alert_id: str,
+    payload: Optional[HQFraudAlertResolve] = None,
+    request: Request = None,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQFraudAlertResponse:
+    """Approve a fraud alert (allow transaction)."""
+    service = HQBankingService(db)
+    try:
+        ip_address = request.client.host if request and request.client else None
+        notes = payload.resolution_notes if payload else None
+        return await service.approve_fraud_alert(alert_id, current_employee.id, ip_address, notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/banking/fraud-alerts/{alert_id}/block", response_model=HQFraudAlertResponse)
+async def block_fraud_alert(
+    alert_id: str,
+    payload: Optional[HQFraudAlertResolve] = None,
+    request: Request = None,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQFraudAlertResponse:
+    """Block a fraud alert (reject transaction)."""
+    service = HQBankingService(db)
+    try:
+        ip_address = request.client.host if request and request.client else None
+        notes = payload.resolution_notes if payload else None
+        return await service.block_fraud_alert(alert_id, current_employee.id, ip_address, notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/banking/audit-logs", response_model=List[HQBankingAuditLogResponse])
+async def list_banking_audit_logs(
+    company_id: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 100,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> List[HQBankingAuditLogResponse]:
+    """List banking admin audit logs."""
+    service = HQBankingService(db)
+    return await service.list_audit_logs(company_id=company_id, action=action, limit=limit)
