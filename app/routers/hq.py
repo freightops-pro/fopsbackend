@@ -159,6 +159,44 @@ def require_hq_super_admin():
     return require_hq_role("SUPER_ADMIN")
 
 
+def require_hq_permission(*required_permissions: str):
+    """
+    Dependency that requires specific HQ permissions.
+
+    Usage:
+        @router.get("/gl/accounts")
+        async def list_accounts(employee = Depends(require_hq_permission("view_gl"))):
+            ...
+    """
+    from app.models.hq_employee import HQRole, HQPermission, has_hq_permission
+
+    async def dependency(
+        request: Request,
+        token: Annotated[str | None, Depends(hq_oauth2_scheme)],
+        db: AsyncSession = Depends(get_db),
+    ) -> HQEmployee:
+        employee = await get_current_hq_employee(request, token, db)
+
+        # Check if employee has any of the required permissions
+        for perm_str in required_permissions:
+            try:
+                permission = HQPermission(perm_str)
+                if has_hq_permission(employee.role, permission):
+                    return employee
+            except ValueError:
+                continue
+
+        logger.warning(
+            f"HQ Permission denied: employee={employee.email}, role={employee.role.value}, required={required_permissions}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied"
+        )
+
+    return dependency
+
+
 def set_hq_auth_cookie(response: Response, token: str) -> None:
     """Set HQ authentication cookie with secure settings."""
     response.set_cookie(
