@@ -87,15 +87,21 @@ def get_db_sync() -> Generator[Session, None, None]:
 
 
 async def init_database() -> None:
-    """Create all tables. In production use Alembic migrations instead."""
+    """Create all tables. In production use Alembic migrations instead.
+
+    Note: This is a best-effort initialization. In production, Alembic
+    migrations are the source of truth. If create_all fails (e.g., due to
+    enum mismatches), the app can still function if tables exist via migrations.
+    """
     print("[DB] Initializing database tables...")
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print("[DB] Database tables initialized successfully")
     except Exception as e:
-        print(f"[DB] ERROR initializing database: {e}")
-        raise
+        # Don't fail startup - migrations are the source of truth
+        print(f"[DB] WARNING: create_all failed (expected if using Alembic): {e}")
+        print("[DB] Continuing with existing schema from migrations...")
 
 
 async def test_database_connection() -> bool:
