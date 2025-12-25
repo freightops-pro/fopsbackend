@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     check_api_key: Optional[str] = None  # Bearer token for API authentication
     check_environment: str = "sandbox"  # sandbox or production
     check_api_base_url: str = "https://sandbox.checkhq.com"  # Use https://api.checkhq.com for production
+    check_hq_company_id: Optional[str] = None  # HQ's own Check company ID for internal payroll
 
     # Samsara Integration (Fleet Management & ELD)
     samsara_client_id: Optional[str] = None

@@ -77,8 +77,16 @@ class HQHREmployee(Base):
     phone = Column(String(50), nullable=True)
 
     # Employment details
-    employment_type = Column(Enum(EmploymentType), default=EmploymentType.FULL_TIME, nullable=False)
-    status = Column(Enum(HREmployeeStatus), default=HREmployeeStatus.ONBOARDING, nullable=False)
+    employment_type = Column(
+        Enum(EmploymentType, values_callable=lambda x: [e.value for e in x]),
+        default=EmploymentType.FULL_TIME,
+        nullable=False
+    )
+    status = Column(
+        Enum(HREmployeeStatus, values_callable=lambda x: [e.value for e in x]),
+        default=HREmployeeStatus.ONBOARDING,
+        nullable=False
+    )
     department = Column(String(100), nullable=True)
     job_title = Column(String(100), nullable=True)
     manager_id = Column(String(36), ForeignKey("hq_hr_employee.id"), nullable=True)
@@ -87,7 +95,11 @@ class HQHREmployee(Base):
     termination_date = Column(DateTime, nullable=True)
 
     # Compensation
-    pay_frequency = Column(Enum(PayFrequency), default=PayFrequency.BIWEEKLY, nullable=False)
+    pay_frequency = Column(
+        Enum(PayFrequency, values_callable=lambda x: [e.value for e in x]),
+        default=PayFrequency.BIWEEKLY,
+        nullable=False
+    )
     annual_salary = Column(Numeric(12, 2), nullable=True)
     hourly_rate = Column(Numeric(8, 2), nullable=True)
 
@@ -125,7 +137,11 @@ class HQPayrollRun(Base):
     id = Column(String(36), primary_key=True)
     payroll_number = Column(String(20), unique=True, nullable=False)
 
-    status = Column(Enum(PayrollStatus), default=PayrollStatus.DRAFT, nullable=False)
+    status = Column(
+        Enum(PayrollStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PayrollStatus.DRAFT,
+        nullable=False
+    )
 
     pay_period_start = Column(DateTime, nullable=False)
     pay_period_end = Column(DateTime, nullable=False)

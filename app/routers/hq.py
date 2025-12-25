@@ -2379,3 +2379,210 @@ async def cancel_payroll_run(
         return HQPayrollRunResponse.model_validate(payroll, from_attributes=True)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# ============================================================================
+# HR - Check HQ Integration Endpoints
+# ============================================================================
+
+@router.post("/hr/employees/{employee_id}/sync-to-check")
+async def sync_employee_to_check(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Sync an HR employee to Check payroll system."""
+    from app.services.check import CheckService
+
+    hr_service = HQHREmployeeService(db)
+    employee = await hr_service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    # Get HQ's Check company ID from settings
+    check_company_id = settings.check_hq_company_id
+    if not check_company_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Check HQ company not configured"
+        )
+
+    check_service = CheckService(company_check_id=check_company_id)
+
+    try:
+        # Create employee in Check
+        check_data = {
+            "first_name": employee.first_name,
+            "last_name": employee.last_name,
+            "email": employee.email,
+            "phone": employee.phone,
+            "start_date": employee.hire_date.isoformat() if employee.hire_date else None,
+            "residence": {
+                "line1": employee.address_line1,
+                "line2": employee.address_line2,
+                "city": employee.city,
+                "state": employee.state,
+                "postal_code": employee.zip_code,
+                "country": "US",
+            } if employee.address_line1 else None,
+        }
+
+        if employee.check_employee_id:
+            # Update existing
+            result = await check_service.update_employee(employee.check_employee_id, check_data)
+        else:
+            # Create new
+            result = await check_service.create_employee(check_data)
+            employee.check_employee_id = result.get("id")
+            await db.commit()
+
+        return {"status": "synced", "check_employee_id": employee.check_employee_id}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.get("/hr/employees/{employee_id}/check-status")
+async def get_employee_check_status(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get Check payroll status for an employee."""
+    from app.services.check import CheckService
+
+    hr_service = HQHREmployeeService(db)
+    employee = await hr_service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if not employee.check_employee_id:
+        return {"synced": False, "check_employee_id": None, "onboarding_status": None}
+
+    check_company_id = settings.check_hq_company_id
+    if not check_company_id:
+        return {"synced": False, "check_employee_id": None, "onboarding_status": None}
+
+    check_service = CheckService(company_check_id=check_company_id)
+
+    try:
+        check_employee = await check_service.get_employee(employee.check_employee_id)
+        return {
+            "synced": True,
+            "check_employee_id": employee.check_employee_id,
+            "onboarding_status": check_employee.get("onboarding", {}).get("status"),
+            "payment_method": check_employee.get("payment_method", {}).get("type"),
+            "bank_account_linked": check_employee.get("payment_method", {}).get("bank_account") is not None,
+        }
+    except Exception as e:
+        return {"synced": False, "check_employee_id": employee.check_employee_id, "error": str(e)}
+
+
+@router.get("/hr/employees/{employee_id}/onboarding-link")
+async def get_employee_onboarding_link(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get Check onboarding link for an employee."""
+    from app.services.check import CheckService
+
+    hr_service = HQHREmployeeService(db)
+    employee = await hr_service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if not employee.check_employee_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee not synced to Check")
+
+    check_company_id = settings.check_hq_company_id
+    if not check_company_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Check HQ company not configured")
+
+    check_service = CheckService(company_check_id=check_company_id)
+
+    try:
+        # Get onboarding link from Check
+        result = await check_service._request(
+            "POST",
+            f"/employees/{employee.check_employee_id}/onboarding_link"
+        )
+        return {"url": result.get("url")}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/hr/employees/{employee_id}/resend-onboarding")
+async def resend_employee_onboarding(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Resend onboarding email to employee."""
+    from app.services.check import CheckService
+
+    hr_service = HQHREmployeeService(db)
+    employee = await hr_service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if not employee.check_employee_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee not synced to Check")
+
+    check_company_id = settings.check_hq_company_id
+    if not check_company_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Check HQ company not configured")
+
+    check_service = CheckService(company_check_id=check_company_id)
+
+    try:
+        await check_service._request(
+            "POST",
+            f"/employees/{employee.check_employee_id}/onboarding/resend"
+        )
+        return {"status": "sent"}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ============================================================================
+# HR - Onboarding Endpoints
+# ============================================================================
+
+@router.get("/hr/onboarding")
+async def list_onboarding_employees(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all employees in onboarding status."""
+    hr_service = HQHREmployeeService(db)
+    employees = await hr_service.list_employees(status="onboarding")
+
+    result = []
+    for emp in employees:
+        resp = HQHREmployeeResponse.model_validate(emp, from_attributes=True)
+        result.append(resp)
+    return result
+
+
+@router.post("/hr/employees/{employee_id}/complete-onboarding")
+async def complete_employee_onboarding(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+):
+    """Mark employee onboarding as complete and set status to active."""
+    from app.models.hq_hr import HREmployeeStatus
+
+    hr_service = HQHREmployeeService(db)
+    employee = await hr_service.get_employee(employee_id)
+    if not employee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    if employee.status != HREmployeeStatus.ONBOARDING:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee is not in onboarding status")
+
+    employee.status = HREmployeeStatus.ACTIVE
+    await db.commit()
+    await db.refresh(employee)
+
+    return HQHREmployeeResponse.model_validate(employee, from_attributes=True)
