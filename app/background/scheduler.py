@@ -92,6 +92,26 @@ async def run_full_lead_pipeline() -> None:
 
     This is fully autonomous - no human intervention needed for low-risk leads.
     """
+    # Wait for database to be fully initialized (migrations complete)
+    from sqlalchemy import text
+    import asyncio
+
+    for attempt in range(30):  # Wait up to 30 seconds
+        try:
+            async with AsyncSessionFactory() as session:
+                # Check if the state column exists on hq_lead (added by migration)
+                result = await session.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_name = 'hq_lead' AND column_name = 'state'")
+                )
+                if result.scalar_one_or_none():
+                    break  # Migrations are complete
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    else:
+        logger.warning("autonomous_pipeline_skipped", extra={"reason": "Database migrations not complete after 30s"})
+        return
+
     logger.info("autonomous_pipeline_start", extra={"message": "Starting full autonomous lead pipeline"})
 
     try:
