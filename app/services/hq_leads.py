@@ -582,9 +582,8 @@ Extract all sales leads from this content and return as JSON array."""
                 if not company_name:
                     continue
 
-                # Skip if already exists
+                # Skip if already exists (silently - don't count as error)
                 if company_name.lower().strip() in existing_names:
-                    errors.append({"index": idx, "company": company_name, "error": "Already exists"})
                     continue
 
                 # Determine assigned sales rep
@@ -646,14 +645,14 @@ Extract all sales leads from this content and return as JSON array."""
                     source=LeadSource.FMCSA,
                     status=LeadStatus.NEW,
                     estimated_mrr=estimated_mrr,
-                    estimated_trucks=None,  # Dataset doesn't include truck count
+                    estimated_trucks=str(power_units) if power_units else None,
                     estimated_drivers=None,
                     state=phy_state,
                     dot_number=dot_number,
                     mc_number=mc_number,
-                    carrier_type=carrier_type,
+                    carrier_type=carrier_operation,
                     assigned_sales_rep_id=rep_id,
-                    notes=f"DOT#: {dot_number}\nMC#: {mc_number}\nCarrier Type: {carrier_type}\nAddress: {address}\nSource: FMCSA Census",
+                    notes=f"DOT#: {dot_number}\nFleet Size: {power_units} trucks\nAdded: {add_date}\nAddress: {address}\nSource: FMCSA Census",
                     created_by_id=created_by_id,
                 )
 
