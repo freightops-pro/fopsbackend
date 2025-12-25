@@ -34,7 +34,19 @@ class Settings(BaseSettings):
         if not raw or not raw.strip():
             return []
 
-        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        origins = []
+        for origin in raw.split(","):
+            origin = origin.strip()
+            if origin:
+                # Normalize protocol to lowercase (Https -> https, Http -> http)
+                if origin.lower().startswith("https://"):
+                    origin = "https://" + origin[8:]
+                elif origin.lower().startswith("http://"):
+                    origin = "http://" + origin[7:]
+                # Upgrade http to https for Railway domains (they always use https)
+                if ".up.railway.app" in origin and origin.startswith("http://"):
+                    origin = "https://" + origin[7:]
+                origins.append(origin)
         return origins
 
     database_url: str  # Required - no default, must be set in .env
