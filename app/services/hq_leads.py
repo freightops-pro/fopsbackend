@@ -464,11 +464,9 @@ Extract all sales leads from this content and return as JSON array."""
         # Excludes broker-only entities (no broker_stat requirement)
         where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A')")
 
-        # Authority age filter - filter by add_date (when carrier was added to census)
-        if authority_days:
-            from datetime import datetime, timedelta
-            cutoff_date = (datetime.utcnow() - timedelta(days=authority_days)).strftime("%Y-%m-%dT00:00:00")
-            where_conditions.append(f"`add_date` >= '{cutoff_date}'")
+        # Note: authority_days parameter is accepted but not used
+        # The FMCSA dataset (6eyk-hxee) doesn't have an authority date field
+        # Future: Use a different FMCSA dataset with authority dates if available
 
         # Build the SoQL query
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
