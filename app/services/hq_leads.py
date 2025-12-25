@@ -463,8 +463,6 @@ Extract all sales leads from this content and return as JSON array."""
         # Motor carriers ONLY - must have common or contract authority (for-hire trucking)
         # Excludes broker-only entities (no broker_stat requirement)
         where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A')")
-        # Exclude passenger carriers
-        where_conditions.append("(`passenger` IS NULL OR `passenger` != 'Y')")
 
         # Authority age filter - filter by add_date (when carrier was added to census)
         if authority_days:
@@ -504,12 +502,25 @@ Extract all sales leads from this content and return as JSON array."""
                         return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:500]}"}]
                     data = await response.json()
                     # v3 API returns data in a specific structure
-                    carriers = data if isinstance(data, list) else data.get("rows", data.get("data", []))
+                    # Check for error in response
+                    if isinstance(data, dict) and data.get("error"):
+                        return [], [{"error": f"FMCSA API error: {data.get('message', data.get('error'))}"}]
+                    # Parse carriers from response
+                    if isinstance(data, list):
+                        carriers = data
+                    elif isinstance(data, dict):
+                        carriers = data.get("rows", data.get("data", data.get("results", [])))
+                    else:
+                        carriers = []
+
+                    import logging
+                    logging.info(f"FMCSA API returned {len(carriers)} carriers")
         except Exception as e:
-            return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}"}]
+            import traceback
+            return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}", "traceback": traceback.format_exc()}]
 
         if not carriers:
-            return [], [{"error": "No carriers found matching criteria"}]
+            return [], [{"error": f"No carriers found matching criteria. Query: {soql_query}"}]
 
         # Get sales reps for round-robin assignment if needed
         sales_reps = []
