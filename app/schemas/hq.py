@@ -633,6 +633,34 @@ class HQLeadImportResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class HQLeadFMCSAImportRequest(BaseModel):
+    """Request to import leads from FMCSA Census data."""
+    state: Optional[str] = Field(None, min_length=2, max_length=2)
+    min_trucks: int = Field(5, ge=1, alias="minTrucks")
+    max_trucks: int = Field(500, ge=1, alias="maxTrucks")
+    limit: int = Field(50, ge=1, le=200)
+    assign_to_sales_rep_id: Optional[str] = Field(None, alias="assignToSalesRepId")
+    auto_assign_round_robin: bool = Field(False, alias="autoAssignRoundRobin")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadEnrichRequest(BaseModel):
+    """Request to enrich leads with AI-found contact info."""
+    lead_ids: List[str] = Field(..., alias="leadIds", min_length=1, max_length=50)
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadEnrichResponse(BaseModel):
+    """Response from AI lead enrichment."""
+    enriched_leads: List["HQLeadResponse"] = Field(alias="enrichedLeads", serialization_alias="enrichedLeads")
+    errors: List[dict] = []
+    total_enriched: int = Field(alias="totalEnriched", serialization_alias="totalEnriched")
+
+    model_config = {"populate_by_name": True}
+
+
 # ============================================================================
 # CRM Opportunity Schemas
 # ============================================================================

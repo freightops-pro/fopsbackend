@@ -2,6 +2,7 @@
 
 import json
 import uuid
+import aiohttp
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Tuple
@@ -18,6 +19,10 @@ from app.schemas.hq import (
     HQOpportunityResponse
 )
 from app.core.llm_router import LLMRouter
+
+# FMCSA Census Data (Socrata API)
+# Dataset: FMCSA Motor Carrier Census
+FMCSA_CENSUS_API = "https://data.transportation.gov/resource/az4n-8mr4.json"
 
 
 class HQLeadService:
@@ -411,6 +416,336 @@ Extract all sales leads from this content and return as JSON array."""
                 lead_responses.append(lead_response)
 
         return lead_responses, errors
+
+    async def import_leads_from_fmcsa(
+        self,
+        state: Optional[str],
+        min_trucks: int,
+        max_trucks: int,
+        limit: int,
+        assign_to_sales_rep_id: Optional[str],
+        created_by_id: str,
+        auto_assign_round_robin: bool = False
+    ) -> Tuple[List[HQLeadResponse], List[dict]]:
+        """
+        Import leads from FMCSA Motor Carrier Census data.
+
+        Args:
+            state: Two-letter state code (e.g., "TX", "CA") or None for all states
+            min_trucks: Minimum number of power units (trucks)
+            max_trucks: Maximum number of power units
+            limit: Maximum number of leads to import
+            assign_to_sales_rep_id: Specific sales rep to assign all leads to
+            created_by_id: User creating the leads
+            auto_assign_round_robin: If True, distribute leads among sales reps
+
+        Returns:
+            Tuple of (created_leads, errors)
+        """
+        # Build SoQL query for FMCSA data
+        # Fields: legal_name, dba_name, physical_address, physical_city, physical_state,
+        #         physical_zip, telephone, email_address, tot_pwr_units, tot_drivers
+        query_parts = [
+            f"tot_pwr_units >= {min_trucks}",
+            f"tot_pwr_units <= {max_trucks}",
+            "entity_type = 'CARRIER'",
+            "oper_auth_status = 'A'",  # Active operating authority
+        ]
+
+        if state:
+            query_parts.append(f"physical_state = '{state.upper()}'")
+
+        where_clause = " AND ".join(query_parts)
+        url = f"{FMCSA_CENSUS_API}?$where={where_clause}&$limit={limit}&$order=tot_pwr_units DESC"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status != 200:
+                        return [], [{"error": f"FMCSA API returned status {response.status}"}]
+                    carriers = await response.json()
+        except Exception as e:
+            return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}"}]
+
+        if not carriers:
+            return [], [{"error": "No carriers found matching criteria"}]
+
+        # Get sales reps for round-robin assignment if needed
+        sales_reps = []
+        if auto_assign_round_robin and not assign_to_sales_rep_id:
+            result = await self.db.execute(
+                select(HQEmployee)
+                .where(HQEmployee.role == HQRole.SALES_MANAGER)
+                .where(HQEmployee.is_active == True)
+            )
+            sales_reps = result.scalars().all()
+
+        # Check for existing leads by company name to avoid duplicates
+        existing_names = set()
+        result = await self.db.execute(
+            select(HQLead.company_name)
+        )
+        for row in result.scalars().all():
+            if row:
+                existing_names.add(row.lower().strip())
+
+        created_leads = []
+        errors = []
+        rep_index = 0
+
+        for idx, carrier in enumerate(carriers):
+            try:
+                # Get company name (prefer DBA, fall back to legal name)
+                company_name = carrier.get("dba_name") or carrier.get("legal_name")
+                if not company_name:
+                    continue
+
+                # Skip if already exists
+                if company_name.lower().strip() in existing_names:
+                    errors.append({"index": idx, "company": company_name, "error": "Already exists"})
+                    continue
+
+                # Determine assigned sales rep
+                if assign_to_sales_rep_id:
+                    rep_id = assign_to_sales_rep_id
+                elif sales_reps:
+                    rep_id = sales_reps[rep_index % len(sales_reps)].id
+                    rep_index += 1
+                else:
+                    rep_id = created_by_id
+
+                # Calculate estimated MRR based on fleet size
+                trucks = int(carrier.get("tot_pwr_units", 0) or 0)
+                if trucks <= 10:
+                    estimated_mrr = Decimal("299")
+                elif trucks <= 50:
+                    estimated_mrr = Decimal("599")
+                else:
+                    estimated_mrr = Decimal("999")
+
+                # Build address for notes
+                address_parts = [
+                    carrier.get("physical_address", ""),
+                    carrier.get("physical_city", ""),
+                    carrier.get("physical_state", ""),
+                    carrier.get("physical_zip", ""),
+                ]
+                address = ", ".join(p for p in address_parts if p)
+
+                # Create lead
+                lead_number = await self._generate_lead_number()
+                lead = HQLead(
+                    id=str(uuid.uuid4()),
+                    lead_number=lead_number,
+                    company_name=company_name,
+                    contact_name=None,  # FMCSA doesn't provide contact names
+                    contact_email=carrier.get("email_address"),
+                    contact_phone=carrier.get("telephone"),
+                    contact_title=None,
+                    source=LeadSource.OTHER,  # Could add "government_data" source
+                    status=LeadStatus.NEW,
+                    estimated_mrr=estimated_mrr,
+                    estimated_trucks=str(trucks),
+                    estimated_drivers=str(carrier.get("tot_drivers", "")),
+                    assigned_sales_rep_id=rep_id,
+                    notes=f"DOT#: {carrier.get('dot_number', 'N/A')}\nMC#: {carrier.get('mc_mx_ff_number', 'N/A')}\nAddress: {address}\nDrivers: {carrier.get('tot_drivers', 'N/A')}\nSource: FMCSA Census",
+                    created_by_id=created_by_id,
+                )
+
+                self.db.add(lead)
+                await self.db.flush()
+                created_leads.append(lead.id)
+                existing_names.add(company_name.lower().strip())
+
+            except Exception as e:
+                errors.append({"index": idx, "company": carrier.get("legal_name"), "error": str(e)})
+
+        # Commit all leads
+        await self.db.commit()
+
+        # Fetch full lead responses
+        lead_responses = []
+        for lead_id in created_leads:
+            lead_response = await self.get_lead(lead_id)
+            if lead_response:
+                lead_responses.append(lead_response)
+
+        return lead_responses, errors
+
+    async def enrich_lead_with_ai(
+        self,
+        lead_id: str,
+    ) -> Optional[HQLeadResponse]:
+        """
+        Use AI to search for and enrich a lead with contact information.
+
+        The AI will search for:
+        - Owner/Decision maker names
+        - Email addresses
+        - Phone numbers
+        - LinkedIn profiles
+        - Additional company info
+
+        Args:
+            lead_id: ID of the lead to enrich
+
+        Returns:
+            Updated lead response or None if not found
+        """
+        # Get the lead
+        result = await self.db.execute(
+            select(HQLead).where(HQLead.id == lead_id)
+        )
+        lead = result.scalar_one_or_none()
+        if not lead:
+            return None
+
+        llm = LLMRouter()
+
+        system_prompt = """You are a business intelligence researcher specializing in the trucking and freight industry.
+
+Your task is to find contact information for a trucking company. Search your knowledge for:
+1. Owner/CEO/President name
+2. Operations Manager or Fleet Manager name
+3. Business email addresses
+4. Business phone numbers
+5. Any relevant LinkedIn profile URLs
+6. Additional company details (years in business, specialties, etc.)
+
+IMPORTANT:
+- Only provide information you are confident about
+- For trucking companies, look for DOT/MC registration info
+- Check industry directories, LinkedIn, company websites
+- If you cannot find specific contact info, indicate that
+- Return ONLY valid JSON, no markdown or explanations
+
+Return format (JSON object):
+{
+  "contact_name": "John Smith",
+  "contact_title": "Owner",
+  "contact_email": "john@company.com",
+  "contact_phone": "555-123-4567",
+  "linkedin_url": "https://linkedin.com/in/johnsmith",
+  "additional_contacts": [
+    {"name": "Jane Doe", "title": "Fleet Manager", "email": "jane@company.com"}
+  ],
+  "notes": "Founded in 2010, specializes in refrigerated freight. Active on LinkedIn.",
+  "confidence": "high"
+}
+
+If no additional information found, return:
+{
+  "contact_name": null,
+  "notes": "No additional contact information found",
+  "confidence": "low"
+}"""
+
+        user_prompt = f"""Find contact information for this trucking company:
+
+Company Name: {lead.company_name}
+Current Phone: {lead.contact_phone or 'Unknown'}
+Current Email: {lead.contact_email or 'Unknown'}
+Location: Check notes below
+Fleet Size: {lead.estimated_trucks or 'Unknown'} trucks
+Notes: {lead.notes or 'None'}
+
+Search for the owner, key decision makers, and their contact details."""
+
+        try:
+            response, metadata = await llm.generate(
+                agent_role="alex",  # Sales and Analytics agent
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=2048
+            )
+
+            # Parse the JSON response
+            response_text = response.strip()
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                response_text = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
+
+            enrichment_data = json.loads(response_text)
+
+            # Update lead with found information
+            updated = False
+
+            if enrichment_data.get("contact_name") and not lead.contact_name:
+                lead.contact_name = enrichment_data["contact_name"]
+                updated = True
+
+            if enrichment_data.get("contact_title") and not lead.contact_title:
+                lead.contact_title = enrichment_data["contact_title"]
+                updated = True
+
+            if enrichment_data.get("contact_email") and not lead.contact_email:
+                lead.contact_email = enrichment_data["contact_email"]
+                updated = True
+
+            if enrichment_data.get("contact_phone") and not lead.contact_phone:
+                lead.contact_phone = enrichment_data["contact_phone"]
+                updated = True
+
+            # Append enrichment notes
+            enrichment_notes = []
+            if enrichment_data.get("linkedin_url"):
+                enrichment_notes.append(f"LinkedIn: {enrichment_data['linkedin_url']}")
+
+            if enrichment_data.get("additional_contacts"):
+                for contact in enrichment_data["additional_contacts"]:
+                    enrichment_notes.append(
+                        f"Alt Contact: {contact.get('name', 'N/A')} ({contact.get('title', 'N/A')}) - {contact.get('email', 'N/A')}"
+                    )
+
+            if enrichment_data.get("notes"):
+                enrichment_notes.append(f"AI Notes: {enrichment_data['notes']}")
+
+            if enrichment_notes:
+                new_notes = "\n".join(enrichment_notes)
+                if lead.notes:
+                    lead.notes = f"{lead.notes}\n\n--- AI Enrichment ---\n{new_notes}"
+                else:
+                    lead.notes = f"--- AI Enrichment ---\n{new_notes}"
+                updated = True
+
+            if updated:
+                await self.db.commit()
+
+            return await self.get_lead(lead_id)
+
+        except Exception as e:
+            # Log error but don't fail - just return the lead as-is
+            print(f"[Lead Enrichment] Failed to enrich lead {lead_id}: {str(e)}")
+            return await self.get_lead(lead_id)
+
+    async def enrich_leads_batch(
+        self,
+        lead_ids: List[str],
+    ) -> Tuple[List[HQLeadResponse], List[dict]]:
+        """
+        Enrich multiple leads with AI-found contact information.
+
+        Args:
+            lead_ids: List of lead IDs to enrich
+
+        Returns:
+            Tuple of (enriched_leads, errors)
+        """
+        enriched_leads = []
+        errors = []
+
+        for lead_id in lead_ids:
+            try:
+                result = await self.enrich_lead_with_ai(lead_id)
+                if result:
+                    enriched_leads.append(result)
+                else:
+                    errors.append({"lead_id": lead_id, "error": "Lead not found"})
+            except Exception as e:
+                errors.append({"lead_id": lead_id, "error": str(e)})
+
+        return enriched_leads, errors
 
     def _to_response(self, lead: HQLead) -> HQLeadResponse:
         """Convert lead model to response schema."""

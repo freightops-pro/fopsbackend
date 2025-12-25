@@ -61,6 +61,9 @@ from app.schemas.hq import (
     HQLeadConvert,
     HQLeadImportRequest,
     HQLeadImportResponse,
+    HQLeadFMCSAImportRequest,
+    HQLeadEnrichRequest,
+    HQLeadEnrichResponse,
     HQOpportunityCreate,
     HQOpportunityUpdate,
     HQOpportunityResponse,
@@ -3025,6 +3028,81 @@ async def import_leads_ai(
         total_parsed=len(leads_created) + len(errors),
         total_created=len(leads_created),
     )
+
+
+@router.post("/leads/import-fmcsa", response_model=HQLeadImportResponse)
+async def import_leads_from_fmcsa(
+    data: HQLeadFMCSAImportRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import leads from FMCSA Motor Carrier Census data.
+
+    Fetches active carriers from government open data based on fleet size and state filters.
+    Automatically skips companies that already exist as leads.
+    """
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    leads_created, errors = await lead_service.import_leads_from_fmcsa(
+        state=data.state,
+        min_trucks=data.min_trucks,
+        max_trucks=data.max_trucks,
+        limit=data.limit,
+        assign_to_sales_rep_id=data.assign_to_sales_rep_id,
+        created_by_id=current_employee.id,
+        auto_assign_round_robin=data.auto_assign_round_robin,
+    )
+
+    return HQLeadImportResponse(
+        leads_created=leads_created,
+        errors=errors,
+        total_parsed=len(leads_created) + len(errors),
+        total_created=len(leads_created),
+    )
+
+
+@router.post("/leads/enrich", response_model=HQLeadEnrichResponse)
+async def enrich_leads_with_ai(
+    data: HQLeadEnrichRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Use AI to find and add contact information to leads.
+
+    The AI will search for owner names, emails, phone numbers, and other details
+    for the specified leads and update them with found information.
+    """
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    enriched_leads, errors = await lead_service.enrich_leads_batch(data.lead_ids)
+
+    return HQLeadEnrichResponse(
+        enriched_leads=enriched_leads,
+        errors=errors,
+        total_enriched=len(enriched_leads),
+    )
+
+
+@router.post("/leads/{lead_id}/enrich", response_model=HQLeadResponse)
+async def enrich_single_lead(
+    lead_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Use AI to find and add contact information to a single lead.
+    """
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    result = await lead_service.enrich_lead_with_ai(lead_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    return result
 
 
 # ============================================================================

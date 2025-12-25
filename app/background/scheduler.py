@@ -17,6 +17,7 @@ from app.background.motive_sync_jobs import (
     sync_motive_drivers_job,
     sync_motive_fuel_job,
 )
+from app.background.hq_sync_jobs import sync_fmcsa_leads, ai_nurture_leads
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -93,6 +94,10 @@ def start_scheduler() -> None:
     automation_scheduler.add_job(sync_motive_vehicles_job, "interval", minutes=15, id="motive-sync-vehicles", max_instances=1, coalesce=True)
     automation_scheduler.add_job(sync_motive_drivers_job, "interval", minutes=30, id="motive-sync-drivers", max_instances=1, coalesce=True)
     automation_scheduler.add_job(sync_motive_fuel_job, "interval", minutes=60, id="motive-sync-fuel", max_instances=1, coalesce=True)
+    # FMCSA lead sync - runs every 30 minutes to keep lead pool fresh
+    automation_scheduler.add_job(sync_fmcsa_leads, "interval", minutes=30, id="fmcsa-lead-sync", max_instances=1, coalesce=True)
+    # AI Lead Nurturing - runs every 15 minutes to qualify and prepare outreach
+    automation_scheduler.add_job(ai_nurture_leads, "interval", minutes=15, id="ai-lead-nurture", max_instances=1, coalesce=True)
     automation_scheduler.start()
     logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes})
 
