@@ -413,3 +413,91 @@ class HQEmailService:
             select(HQEmailConfig).order_by(HQEmailConfig.name)
         )
         return list(result.scalars().all())
+
+    # =========================================================================
+    # Automated Outreach (for AI-driven emails)
+    # =========================================================================
+
+    async def send_outreach_email(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        lead_id: str,
+    ) -> bool:
+        """
+        Send an automated outreach email (called by AI pipeline).
+
+        This is used for Level 2 autonomy - AI-drafted emails that were
+        auto-approved for low-risk leads.
+
+        Args:
+            to_email: Recipient email
+            subject: Email subject
+            body: Email body
+            lead_id: Associated lead ID
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        # Get the default email config
+        config = await self._get_default_email_config()
+        if not config:
+            logger.warning("No email config for outreach - skipping send")
+            return False
+
+        # Get lead for activity logging
+        result = await self.db.execute(
+            select(HQLead).where(HQLead.id == lead_id)
+        )
+        lead = result.scalar_one_or_none()
+        if not lead:
+            logger.warning(f"Lead {lead_id} not found for outreach")
+            return False
+
+        message_id = f"<{uuid.uuid4()}@freightops.com>"
+        thread_id = f"outreach-{lead_id}-{uuid.uuid4().hex[:8]}"
+
+        try:
+            await self._send_via_provider(
+                config=config,
+                to_email=to_email,
+                subject=subject,
+                body=body,
+                message_id=message_id,
+            )
+
+            # Log the activity
+            activity = HQLeadActivity(
+                id=str(uuid.uuid4()),
+                lead_id=lead_id,
+                activity_type=ActivityType.EMAIL_SENT,
+                subject=subject,
+                content=body,
+                email_from=config.from_email,
+                email_to=to_email,
+                email_message_id=message_id,
+                email_thread_id=thread_id,
+                email_status="sent",
+                created_by_id="system",  # Automated
+                metadata={
+                    "automated": True,
+                    "agent": "scout",
+                    "from_name": config.from_name,
+                }
+            )
+            self.db.add(activity)
+
+            # Update lead
+            lead.last_contacted_at = datetime.utcnow()
+            from app.models.hq_lead import LeadStatus
+            if lead.status == LeadStatus.NEW:
+                lead.status = LeadStatus.CONTACTED
+
+            await self.db.commit()
+            logger.info(f"Auto-sent outreach to {to_email} for lead {lead.company_name}")
+            return True
+
+        except Exception as e:
+            logger.exception(f"Failed to send outreach email: {e}")
+            return False

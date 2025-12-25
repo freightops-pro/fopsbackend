@@ -83,6 +83,100 @@ async def cleanup_completed_load_tracking() -> None:
             logger.exception("Container tracking cleanup job failed", extra={"error": str(exc)})
 
 
+async def run_full_lead_pipeline() -> None:
+    """
+    Run the complete autonomous lead pipeline:
+    1. Sync FMCSA leads
+    2. AI qualification and outreach drafting
+    3. Auto-send emails for low-risk leads
+
+    This is fully autonomous - no human intervention needed for low-risk leads.
+    """
+    logger.info("autonomous_pipeline_start", extra={"message": "Starting full autonomous lead pipeline"})
+
+    try:
+        # Step 1: Sync new leads from FMCSA
+        await sync_fmcsa_leads()
+
+        # Step 2: AI qualify and draft outreach (this handles auto-execution)
+        await ai_nurture_leads()
+
+        # Step 3: Auto-send approved emails
+        await auto_send_approved_outreach()
+
+        logger.info("autonomous_pipeline_complete", extra={"message": "Full autonomous pipeline completed"})
+    except Exception as exc:
+        logger.exception("autonomous_pipeline_failed", extra={"error": str(exc)})
+
+
+async def auto_send_approved_outreach() -> None:
+    """
+    Automatically send outreach emails that were auto-approved.
+
+    For Level 2 autonomy:
+    - Low risk actions (small fleets) = auto-send immediately
+    - Medium/High risk = wait in approval queue for human review
+    """
+    from app.models.hq_ai_queue import HQAIQueueAction, AIActionStatus, AIActionType
+    from app.services.hq_email import HQEmailService
+    from sqlalchemy import select, and_
+
+    async with AsyncSessionFactory() as session:
+        # Find auto-executed outreach actions that haven't been processed
+        result = await session.execute(
+            select(HQAIQueueAction)
+            .where(
+                and_(
+                    HQAIQueueAction.action_type == AIActionType.LEAD_OUTREACH,
+                    HQAIQueueAction.status == AIActionStatus.AUTO_EXECUTED,
+                    HQAIQueueAction.executed_at.is_(None),  # Not yet sent
+                )
+            )
+            .limit(20)
+        )
+        actions = result.scalars().all()
+
+        if not actions:
+            return
+
+        email_service = HQEmailService(session)
+        sent_count = 0
+
+        for action in actions:
+            try:
+                entity_data = action.entity_data or {}
+                email_to = entity_data.get("email_to")
+                subject = entity_data.get("subject")
+
+                if not email_to or not subject:
+                    continue
+
+                # Extract body from draft_content (format: "Subject: ...\n\n<body>")
+                body = action.draft_content or ""
+                if "\n\n" in body:
+                    body = body.split("\n\n", 1)[1]
+
+                # Send the email
+                await email_service.send_outreach_email(
+                    to_email=email_to,
+                    subject=subject,
+                    body=body,
+                    lead_id=action.entity_id,
+                )
+
+                # Mark as executed
+                from datetime import datetime
+                action.executed_at = datetime.utcnow()
+                sent_count += 1
+
+            except Exception as exc:
+                logger.warning(f"Failed to auto-send outreach for action {action.id}: {str(exc)}")
+
+        if sent_count > 0:
+            await session.commit()
+            logger.info("auto_outreach_sent", extra={"sent_count": sent_count})
+
+
 def start_scheduler() -> None:
     if automation_scheduler.running:
         return
@@ -94,12 +188,15 @@ def start_scheduler() -> None:
     automation_scheduler.add_job(sync_motive_vehicles_job, "interval", minutes=15, id="motive-sync-vehicles", max_instances=1, coalesce=True)
     automation_scheduler.add_job(sync_motive_drivers_job, "interval", minutes=30, id="motive-sync-drivers", max_instances=1, coalesce=True)
     automation_scheduler.add_job(sync_motive_fuel_job, "interval", minutes=60, id="motive-sync-fuel", max_instances=1, coalesce=True)
-    # FMCSA lead sync - runs every 30 minutes to keep lead pool fresh
-    automation_scheduler.add_job(sync_fmcsa_leads, "interval", minutes=30, id="fmcsa-lead-sync", max_instances=1, coalesce=True)
-    # AI Lead Nurturing - runs every 15 minutes to qualify and prepare outreach
-    automation_scheduler.add_job(ai_nurture_leads, "interval", minutes=15, id="ai-lead-nurture", max_instances=1, coalesce=True)
+
+    # Autonomous Lead Pipeline - runs every 30 minutes (FMCSA sync + AI + auto-send)
+    automation_scheduler.add_job(run_full_lead_pipeline, "interval", minutes=30, id="autonomous-lead-pipeline", max_instances=1, coalesce=True)
+
+    # Run immediately on startup (after 10 seconds to let app initialize)
+    automation_scheduler.add_job(run_full_lead_pipeline, "date", run_date=None, id="startup-lead-pipeline")
+
     automation_scheduler.start()
-    logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes})
+    logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes, "autonomous_pipeline": True})
 
 
 def shutdown_scheduler() -> None:
