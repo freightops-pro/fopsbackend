@@ -1,7 +1,7 @@
 """Add lead activities, email templates, and email config tables
 
 Revision ID: 20251225_lead_act
-Revises:
+Revises: 20251225_000004
 Create Date: 2025-12-25
 
 """
@@ -19,87 +19,99 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Create enum types if they don't exist
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE activitytype AS ENUM (
+                'note', 'email_sent', 'email_received', 'call', 'meeting',
+                'follow_up', 'status_change', 'ai_action'
+            );
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+    """)
+
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE followupstatus AS ENUM (
+                'pending', 'due', 'completed', 'snoozed', 'cancelled'
+            );
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+    """)
+
     # Create hq_lead_activities table
-    op.create_table(
-        'hq_lead_activities',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('lead_id', sa.String(36), sa.ForeignKey('hq_lead.id'), nullable=False, index=True),
-        sa.Column('activity_type', sa.Enum(
-            'note', 'email_sent', 'email_received', 'call', 'meeting',
-            'follow_up', 'status_change', 'ai_action',
-            name='activitytype'
-        ), nullable=False),
-        sa.Column('subject', sa.String(500), nullable=True),
-        sa.Column('content', sa.Text, nullable=True),
-        # Email fields
-        sa.Column('email_from', sa.String(255), nullable=True),
-        sa.Column('email_to', sa.String(255), nullable=True),
-        sa.Column('email_cc', sa.Text, nullable=True),
-        sa.Column('email_message_id', sa.String(255), nullable=True),
-        sa.Column('email_thread_id', sa.String(255), nullable=True),
-        sa.Column('email_status', sa.String(50), nullable=True),
-        # Follow-up fields
-        sa.Column('follow_up_date', sa.DateTime, nullable=True),
-        sa.Column('follow_up_status', sa.Enum(
-            'pending', 'due', 'completed', 'snoozed', 'cancelled',
-            name='followupstatus'
-        ), nullable=True),
-        sa.Column('follow_up_completed_at', sa.DateTime, nullable=True),
-        # Call fields
-        sa.Column('call_duration_seconds', sa.String(50), nullable=True),
-        sa.Column('call_outcome', sa.String(100), nullable=True),
-        # Meta
-        sa.Column('metadata', sa.JSON, nullable=True),
-        sa.Column('created_by_id', sa.String(36), sa.ForeignKey('hq_employee.id'), nullable=True),
-        sa.Column('is_pinned', sa.Boolean, default=False),
-        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime, nullable=True, onupdate=sa.func.now()),
-    )
-    op.create_index('ix_hq_lead_activities_lead_id', 'hq_lead_activities', ['lead_id'])
-    op.create_index('ix_hq_lead_activities_activity_type', 'hq_lead_activities', ['activity_type'])
-    op.create_index('ix_hq_lead_activities_follow_up_date', 'hq_lead_activities', ['follow_up_date'])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS hq_lead_activities (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            lead_id VARCHAR(36) NOT NULL REFERENCES hq_lead(id),
+            activity_type activitytype NOT NULL,
+            subject VARCHAR(500),
+            content TEXT,
+            email_from VARCHAR(255),
+            email_to VARCHAR(255),
+            email_cc TEXT,
+            email_message_id VARCHAR(255),
+            email_thread_id VARCHAR(255),
+            email_status VARCHAR(50),
+            follow_up_date TIMESTAMP,
+            follow_up_status followupstatus,
+            follow_up_completed_at TIMESTAMP,
+            call_duration_seconds VARCHAR(50),
+            call_outcome VARCHAR(100),
+            metadata JSON,
+            created_by_id VARCHAR(36) REFERENCES hq_employee(id),
+            is_pinned BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_hq_lead_activities_lead_id ON hq_lead_activities(lead_id);
+        CREATE INDEX IF NOT EXISTS ix_hq_lead_activities_activity_type ON hq_lead_activities(activity_type);
+        CREATE INDEX IF NOT EXISTS ix_hq_lead_activities_follow_up_date ON hq_lead_activities(follow_up_date);
+    """)
 
     # Create hq_email_templates table
-    op.create_table(
-        'hq_email_templates',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('name', sa.String(255), nullable=False),
-        sa.Column('subject', sa.String(500), nullable=False),
-        sa.Column('body', sa.Text, nullable=False),
-        sa.Column('category', sa.String(100), nullable=True),
-        sa.Column('is_global', sa.Boolean, default=True),
-        sa.Column('created_by_id', sa.String(36), sa.ForeignKey('hq_employee.id'), nullable=True),
-        sa.Column('variables', sa.JSON, nullable=True),
-        sa.Column('times_used', sa.String(50), default='0'),
-        sa.Column('is_active', sa.Boolean, default=True),
-        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime, nullable=True, onupdate=sa.func.now()),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS hq_email_templates (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            subject VARCHAR(500) NOT NULL,
+            body TEXT NOT NULL,
+            category VARCHAR(100),
+            is_global BOOLEAN DEFAULT TRUE,
+            created_by_id VARCHAR(36) REFERENCES hq_employee(id),
+            variables JSON,
+            times_used VARCHAR(50) DEFAULT '0',
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        );
+    """)
 
     # Create hq_email_config table
-    op.create_table(
-        'hq_email_config',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('name', sa.String(255), nullable=False),
-        sa.Column('provider', sa.String(50), nullable=False),
-        sa.Column('config', sa.JSON, nullable=False),
-        sa.Column('from_email', sa.String(255), nullable=False),
-        sa.Column('from_name', sa.String(255), nullable=True),
-        sa.Column('reply_to', sa.String(255), nullable=True),
-        sa.Column('is_default', sa.Boolean, default=False),
-        sa.Column('is_active', sa.Boolean, default=True),
-        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime, nullable=True, onupdate=sa.func.now()),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS hq_email_config (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            provider VARCHAR(50) NOT NULL,
+            config JSON NOT NULL,
+            from_email VARCHAR(255) NOT NULL,
+            from_name VARCHAR(255),
+            reply_to VARCHAR(255),
+            is_default BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        );
+    """)
 
 
 def downgrade() -> None:
-    op.drop_table('hq_email_config')
-    op.drop_table('hq_email_templates')
-    op.drop_index('ix_hq_lead_activities_follow_up_date', table_name='hq_lead_activities')
-    op.drop_index('ix_hq_lead_activities_activity_type', table_name='hq_lead_activities')
-    op.drop_index('ix_hq_lead_activities_lead_id', table_name='hq_lead_activities')
-    op.drop_table('hq_lead_activities')
+    op.execute("DROP TABLE IF EXISTS hq_email_config")
+    op.execute("DROP TABLE IF EXISTS hq_email_templates")
+    op.execute("DROP TABLE IF EXISTS hq_lead_activities")
 
     # Drop enums
     op.execute("DROP TYPE IF EXISTS followupstatus")

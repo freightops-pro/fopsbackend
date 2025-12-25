@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create enum types for AI queue
+    # Create enum types for AI queue (with IF NOT EXISTS equivalent)
     op.execute("""
         DO $$ BEGIN
             CREATE TYPE aiactiontype AS ENUM (
@@ -50,78 +50,72 @@ def upgrade() -> None:
     """)
 
     # Create hq_ai_actions table
-    op.create_table(
-        'hq_ai_actions',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('action_type', sa.Enum('lead_outreach', 'lead_qualification', 'rate_negotiation',
-                                          'load_acceptance', 'driver_assignment', 'compliance_alert',
-                                          'invoice_approval', name='aiactiontype', create_type=False), nullable=False),
-        sa.Column('risk_level', sa.Enum('low', 'medium', 'high', 'critical', name='aiactionrisk', create_type=False),
-                  nullable=False, server_default='medium'),
-        sa.Column('status', sa.Enum('pending', 'approved', 'approved_with_edits', 'rejected', 'auto_executed', 'expired',
-                                     name='aiactionstatus', create_type=False), nullable=False, server_default='pending'),
-        sa.Column('agent_name', sa.String(50), nullable=False),
-        sa.Column('title', sa.String(255), nullable=False),
-        sa.Column('description', sa.Text, nullable=True),
-        sa.Column('draft_content', sa.Text, nullable=True),
-        sa.Column('ai_reasoning', sa.Text, nullable=True),
-        sa.Column('entity_type', sa.String(50), nullable=True),
-        sa.Column('entity_id', sa.String(36), nullable=True),
-        sa.Column('entity_name', sa.String(255), nullable=True),
-        sa.Column('risk_factors', sa.JSON, nullable=True),
-        sa.Column('entity_data', sa.JSON, nullable=True),
-        sa.Column('assigned_to_id', sa.String(36), sa.ForeignKey('hq_employee.id'), nullable=True),
-        sa.Column('reviewed_by_id', sa.String(36), sa.ForeignKey('hq_employee.id'), nullable=True),
-        sa.Column('reviewed_at', sa.DateTime, nullable=True),
-        sa.Column('human_edits', sa.Text, nullable=True),
-        sa.Column('rejection_reason', sa.Text, nullable=True),
-        sa.Column('was_edited', sa.Boolean, default=False),
-        sa.Column('edit_similarity_score', sa.Integer, nullable=True),
-        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
-        sa.Column('expires_at', sa.DateTime, nullable=True),
-        sa.Column('executed_at', sa.DateTime, nullable=True),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS hq_ai_actions (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            action_type aiactiontype NOT NULL,
+            risk_level aiactionrisk NOT NULL DEFAULT 'medium',
+            status aiactionstatus NOT NULL DEFAULT 'pending',
+            agent_name VARCHAR(50) NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            draft_content TEXT,
+            ai_reasoning TEXT,
+            entity_type VARCHAR(50),
+            entity_id VARCHAR(36),
+            entity_name VARCHAR(255),
+            risk_factors JSON,
+            entity_data JSON,
+            assigned_to_id VARCHAR(36) REFERENCES hq_employee(id),
+            reviewed_by_id VARCHAR(36) REFERENCES hq_employee(id),
+            reviewed_at TIMESTAMP,
+            human_edits TEXT,
+            rejection_reason TEXT,
+            was_edited BOOLEAN DEFAULT FALSE,
+            edit_similarity_score INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP,
+            executed_at TIMESTAMP
+        );
 
-    # Create indexes for hq_ai_actions
-    op.create_index('ix_hq_ai_actions_status', 'hq_ai_actions', ['status'])
-    op.create_index('ix_hq_ai_actions_agent_name', 'hq_ai_actions', ['agent_name'])
-    op.create_index('ix_hq_ai_actions_entity_id', 'hq_ai_actions', ['entity_id'])
+        CREATE INDEX IF NOT EXISTS ix_hq_ai_actions_status ON hq_ai_actions(status);
+        CREATE INDEX IF NOT EXISTS ix_hq_ai_actions_agent_name ON hq_ai_actions(agent_name);
+        CREATE INDEX IF NOT EXISTS ix_hq_ai_actions_entity_id ON hq_ai_actions(entity_id);
+    """)
 
     # Create hq_ai_autonomy_rules table
-    op.create_table(
-        'hq_ai_autonomy_rules',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('action_type', sa.Enum('lead_outreach', 'lead_qualification', 'rate_negotiation',
-                                          'load_acceptance', 'driver_assignment', 'compliance_alert',
-                                          'invoice_approval', name='aiactiontype', create_type=False), nullable=False),
-        sa.Column('agent_name', sa.String(50), nullable=False),
-        sa.Column('name', sa.String(255), nullable=False),
-        sa.Column('description', sa.Text, nullable=True),
-        sa.Column('condition_field', sa.String(100), nullable=False),
-        sa.Column('condition_operator', sa.String(20), nullable=False),
-        sa.Column('condition_value', sa.String(255), nullable=False),
-        sa.Column('resulting_risk', sa.Enum('low', 'medium', 'high', 'critical', name='aiactionrisk', create_type=False), nullable=False),
-        sa.Column('is_active', sa.Boolean, default=True),
-        sa.Column('priority', sa.Integer, default=0),
-        sa.Column('total_actions', sa.Integer, default=0),
-        sa.Column('approved_without_edits', sa.Integer, default=0),
-        sa.Column('approved_with_edits', sa.Integer, default=0),
-        sa.Column('rejected', sa.Integer, default=0),
-        sa.Column('auto_promote_threshold', sa.Integer, default=95),
-        sa.Column('is_level_3_enabled', sa.Boolean, default=False),
-        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_at', sa.DateTime, nullable=True, onupdate=sa.func.now()),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS hq_ai_autonomy_rules (
+            id VARCHAR(36) NOT NULL PRIMARY KEY,
+            action_type aiactiontype NOT NULL,
+            agent_name VARCHAR(50) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            condition_field VARCHAR(100) NOT NULL,
+            condition_operator VARCHAR(20) NOT NULL,
+            condition_value VARCHAR(255) NOT NULL,
+            resulting_risk aiactionrisk NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE,
+            priority INTEGER DEFAULT 0,
+            total_actions INTEGER DEFAULT 0,
+            approved_without_edits INTEGER DEFAULT 0,
+            approved_with_edits INTEGER DEFAULT 0,
+            rejected INTEGER DEFAULT 0,
+            auto_promote_threshold INTEGER DEFAULT 95,
+            is_level_3_enabled BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        );
 
-    # Create indexes for hq_ai_autonomy_rules
-    op.create_index('ix_hq_ai_autonomy_rules_action_type', 'hq_ai_autonomy_rules', ['action_type'])
-    op.create_index('ix_hq_ai_autonomy_rules_agent_name', 'hq_ai_autonomy_rules', ['agent_name'])
+        CREATE INDEX IF NOT EXISTS ix_hq_ai_autonomy_rules_action_type ON hq_ai_autonomy_rules(action_type);
+        CREATE INDEX IF NOT EXISTS ix_hq_ai_autonomy_rules_agent_name ON hq_ai_autonomy_rules(agent_name);
+    """)
 
 
 def downgrade() -> None:
     # Drop tables
-    op.drop_table('hq_ai_autonomy_rules')
-    op.drop_table('hq_ai_actions')
+    op.execute("DROP TABLE IF EXISTS hq_ai_autonomy_rules")
+    op.execute("DROP TABLE IF EXISTS hq_ai_actions")
 
     # Drop enum types
     op.execute('DROP TYPE IF EXISTS aiactionstatus')
