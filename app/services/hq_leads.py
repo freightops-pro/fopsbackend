@@ -21,9 +21,9 @@ from app.schemas.hq import (
 from app.core.llm_router import LLMRouter
 
 # FMCSA Census Data - Socrata v3 API with SoQL
-# Dataset: Carrier - All With History (6eyk-hxee)
-# Docs: https://dev.socrata.com/foundry/data.transportation.gov/6eyk-hxee
-FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/6eyk-hxee/query.json"
+# Dataset: Company Census File (az4n-8mr2) - has add_date, power_units, etc.
+# Docs: https://catalog.data.gov/dataset/motor-carrier-registrations-census-files
+FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/az4n-8mr2/query.json"
 
 import os
 FMCSA_APP_TOKEN = os.getenv("FMCSA_APP_TOKEN", "")
@@ -453,24 +453,28 @@ Extract all sales leads from this content and return as JSON array."""
         # Dataset fields: LEGAL_NAME, DBA_NAME, BUS_STREET_PO, BUS_CITY, BUS_STATE_CODE,
         #                 BUS_ZIP_CODE, BUS_TELNO, DOT_NUMBER, DOCKET_NUMBER
 
-        # Build SoQL WHERE clause
+        # Build SoQL WHERE clause for Company Census File (az4n-8mr2)
         where_conditions = []
 
-        # State filter (using BUS_STATE_CODE)
+        # State filter (using phy_state - physical address state)
         if state:
-            where_conditions.append(f"`bus_state_code` = '{state.upper()}'")
+            where_conditions.append(f"`phy_state` = '{state.upper()}'")
 
-        # Motor carriers ONLY - must have common or contract authority (for-hire trucking)
-        # Excludes broker-only entities (no broker_stat requirement)
-        where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A')")
+        # Active carriers only
+        where_conditions.append("`status_code` = 'A'")
 
-        # Note: authority_days parameter is accepted but not used
-        # The FMCSA dataset (6eyk-hxee) doesn't have an authority date field
-        # Future: Use a different FMCSA dataset with authority dates if available
+        # Authority age filter - add_date is in YYYYMMDD format
+        if authority_days:
+            from datetime import datetime, timedelta
+            cutoff_date = (datetime.utcnow() - timedelta(days=authority_days)).strftime("%Y%m%d")
+            where_conditions.append(f"`add_date` >= '{cutoff_date}'")
 
         # Build the SoQL query
+        # Note: power_units filtering is done client-side since SoQL doesn't support CAST
+        # Request more records than limit to account for filtering
+        query_limit = limit * 3 if (min_trucks or max_trucks) else limit
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-        soql_query = f"SELECT * WHERE {where_clause} ORDER BY `legal_name` ASC LIMIT {limit}"
+        soql_query = f"SELECT * WHERE {where_clause} ORDER BY `add_date` DESC LIMIT {query_limit}"
 
         # v3 API uses POST with JSON body containing the query
         query_payload = {
@@ -519,6 +523,25 @@ Extract all sales leads from this content and return as JSON array."""
 
         if not carriers:
             return [], [{"error": f"No carriers found matching criteria. Query: {soql_query}"}]
+
+        # Client-side filtering for power_units (fleet size)
+        # SoQL doesn't support CAST, so we filter here
+        if min_trucks or max_trucks:
+            filtered_carriers = []
+            for c in carriers:
+                try:
+                    units = int(c.get("power_units", 0) or 0)
+                except (ValueError, TypeError):
+                    units = 0
+                if min_trucks and units < min_trucks:
+                    continue
+                if max_trucks and units > max_trucks:
+                    continue
+                filtered_carriers.append(c)
+            carriers = filtered_carriers[:limit]  # Apply original limit after filtering
+
+        if not carriers:
+            return [], [{"error": "No carriers found matching fleet size criteria"}]
 
         # Get sales reps for round-robin assignment if needed
         sales_reps = []
@@ -573,35 +596,42 @@ Extract all sales leads from this content and return as JSON array."""
                 else:
                     rep_id = created_by_id
 
-                # This dataset doesn't have power unit count, estimate based on carrier type
-                # Default to medium-sized carrier pricing
-                estimated_mrr = Decimal("599")
+                # Get power units (fleet size) from this dataset
+                power_units_str = get_field("power_units") or "0"
+                try:
+                    power_units = int(power_units_str)
+                except ValueError:
+                    power_units = 0
 
-                # Build address for notes
+                # Calculate estimated MRR based on fleet size
+                if power_units <= 5:
+                    estimated_mrr = Decimal("299")
+                elif power_units <= 20:
+                    estimated_mrr = Decimal("599")
+                elif power_units <= 50:
+                    estimated_mrr = Decimal("999")
+                else:
+                    estimated_mrr = Decimal("1499")
+
+                # Build address for notes (Company Census File uses phy_ fields)
                 address_parts = [
-                    get_field("bus_street_po") or "",
-                    get_field("bus_city") or "",
-                    get_field("bus_state_code") or "",
-                    get_field("bus_zip_code") or "",
+                    get_field("phy_street") or "",
+                    get_field("phy_city") or "",
+                    get_field("phy_state") or "",
+                    get_field("phy_zip") or "",
                 ]
                 address = ", ".join(p for p in address_parts if p)
 
-                # Get other fields from this dataset
+                # Get other fields from Company Census File dataset
                 dot_number = get_field("dot_number") or ""
-                mc_number = get_field("docket_number") or ""  # DOCKET_NUMBER is the MC/MX number
-                telephone = get_field("bus_telno")
-                email = None  # This dataset doesn't have email
-                phy_state = get_field("bus_state_code") or ""
+                mc_number = ""  # This dataset doesn't have MC number
+                telephone = get_field("phone")
+                email = get_field("email_address")  # This dataset has email!
+                phy_state = get_field("phy_state") or ""
 
-                # Determine carrier type based on status fields
-                carrier_types = []
-                if get_field("common_stat") == "A":
-                    carrier_types.append("Common Carrier")
-                if get_field("contract_stat") == "A":
-                    carrier_types.append("Contract Carrier")
-                if get_field("broker_stat") == "A":
-                    carrier_types.append("Broker")
-                carrier_type = ", ".join(carrier_types) if carrier_types else "Motor Carrier"
+                # Get carrier operation type
+                carrier_operation = get_field("carrier_operation") or "Motor Carrier"
+                add_date = get_field("add_date") or ""
 
                 # Create lead
                 lead_number = await self._generate_lead_number()
