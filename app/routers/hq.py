@@ -413,6 +413,19 @@ def _build_tenant_response_from_company(company) -> HQTenantResponse:
     # Status based on isActive
     status = "active" if company.isActive else "suspended"
 
+    # Get Stripe data from subscription relationship
+    subscription = getattr(company, 'subscription', None)
+    stripe_customer_id = None
+    stripe_subscription_id = None
+    monthly_fee = 0
+    subscription_end_date = None
+
+    if subscription:
+        stripe_customer_id = subscription.stripe_customer_id
+        stripe_subscription_id = subscription.stripe_subscription_id
+        monthly_fee = float(subscription.total_monthly_cost) if subscription.total_monthly_cost else 0
+        subscription_end_date = subscription.current_period_end
+
     return HQTenantResponse(
         id=company.id,
         company_name=company.name,
@@ -423,8 +436,8 @@ def _build_tenant_response_from_company(company) -> HQTenantResponse:
         status=status,
         subscription_tier=tier,
         subscription_start_date=company.createdAt,
-        subscription_end_date=None,
-        monthly_fee=0,  # Would come from Stripe subscription
+        subscription_end_date=subscription_end_date,
+        monthly_fee=monthly_fee,
         setup_fee=0,
         primary_contact_name=company.primaryContactName,
         primary_contact_email=company.email,
@@ -433,8 +446,8 @@ def _build_tenant_response_from_company(company) -> HQTenantResponse:
         address=address,
         total_users=total_users,
         active_users=active_users,
-        stripe_customer_id=None,  # Would come from subscription
-        stripe_subscription_id=None,
+        stripe_customer_id=stripe_customer_id,
+        stripe_subscription_id=stripe_subscription_id,
         notes=company.description,
         created_at=company.createdAt,
         updated_at=company.updatedAt,
@@ -452,7 +465,10 @@ async def list_tenants(
     from sqlalchemy.orm import selectinload
     from app.models.company import Company
 
-    query = select(Company).options(selectinload(Company.users))
+    query = select(Company).options(
+        selectinload(Company.users),
+        selectinload(Company.subscription),  # Load Stripe subscription data
+    )
 
     # Filter by status (active/suspended based on isActive)
     if status_filter:
@@ -791,6 +807,251 @@ async def activate_tenant(
     await db.commit()
     await db.refresh(company)
     return _build_tenant_response_from_company(company)
+
+
+@router.post("/tenants/{tenant_id}/deactivate", response_model=HQTenantResponse)
+async def deactivate_tenant(
+    tenant_id: str,
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db)
+) -> HQTenantResponse:
+    """Permanently deactivate a tenant (set status to churned). Requires admin role."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
+
+    result = await db.execute(
+        select(Company).options(selectinload(Company.users)).where(Company.id == tenant_id)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    company.isActive = False
+    # Set subscription end date to now
+    from datetime import datetime
+    company.subscription_end_date = datetime.utcnow()
+    await db.commit()
+    await db.refresh(company)
+    return _build_tenant_response_from_company(company)
+
+
+@router.get("/tenants/{tenant_id}/payments")
+async def get_tenant_payments(
+    tenant_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> list:
+    """Get payment history for a tenant from Stripe invoices."""
+    from sqlalchemy import select, desc
+    from app.models.company import Company
+
+    # First verify tenant exists
+    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Get payments from Stripe invoices
+    try:
+        from app.models.billing import StripeInvoice
+        result = await db.execute(
+            select(StripeInvoice)
+            .where(StripeInvoice.company_id == tenant_id)
+            .order_by(desc(StripeInvoice.invoice_created_at))
+        )
+        invoices = result.scalars().all()
+        return [
+            {
+                "id": str(inv.id),
+                "tenantId": tenant_id,
+                "type": "subscription",
+                "amount": float(inv.amount_paid) if inv.amount_paid else float(inv.amount_due),
+                "description": f"Invoice #{inv.invoice_number}" if inv.invoice_number else "Subscription Payment",
+                "stripePaymentIntentId": inv.stripe_invoice_id,
+                "status": inv.status,
+                "createdAt": inv.invoice_created_at.isoformat() if inv.invoice_created_at else None,
+            }
+            for inv in invoices
+        ]
+    except ImportError:
+        # Billing model doesn't exist, return empty
+        return []
+
+
+@router.get("/tenants/{tenant_id}/credits")
+async def get_tenant_credits(
+    tenant_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> list:
+    """Get credits for a tenant."""
+    from sqlalchemy import select, desc
+    from app.models.company import Company
+
+    # First verify tenant exists
+    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Get credits from HQ credit service
+    service = HQCreditService(db)
+    credits = await service.list_credits(tenant_id=tenant_id)
+    return [HQCreditResponse.model_validate(c, from_attributes=True) for c in credits]
+
+
+@router.post("/tenants/{tenant_id}/credits", response_model=HQCreditResponse, status_code=status.HTTP_201_CREATED)
+async def add_tenant_credit(
+    tenant_id: str,
+    payload: HQCreditCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> HQCreditResponse:
+    """Add a credit to a tenant's account."""
+    from sqlalchemy import select
+    from app.models.company import Company
+
+    # Verify tenant exists
+    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Ensure tenant_id is set in payload
+    payload_dict = payload.model_dump()
+    payload_dict["tenant_id"] = tenant_id
+
+    service = HQCreditService(db)
+    credit = await service.create_credit(HQCreditCreate(**payload_dict), current_employee.id)
+    return HQCreditResponse.model_validate(credit, from_attributes=True)
+
+
+@router.get("/tenants/{tenant_id}/addons")
+async def get_tenant_addons(
+    tenant_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> list:
+    """Get add-ons enabled for a tenant."""
+    from sqlalchemy import select
+    from app.models.company import Company
+
+    # First verify tenant exists
+    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Try to get add-ons from company integrations or company settings
+    try:
+        from app.models.integration import CompanyIntegration, Integration
+        from sqlalchemy.orm import selectinload
+
+        # Get integrations for this company that represent add-ons
+        addon_keys = ["payroll", "port", "banking", "fuel_cards"]
+        result = await db.execute(
+            select(CompanyIntegration)
+            .options(selectinload(CompanyIntegration.integration))
+            .where(CompanyIntegration.company_id == tenant_id)
+        )
+        integrations = result.scalars().all()
+
+        addons = []
+        addon_config = {
+            "payroll": {"name": "Payroll Integration", "description": "Enable Check HQ payroll processing", "monthlyFee": 99},
+            "container_tracking": {"name": "Container Tracking", "description": "Enable container tracking and visibility for drayage operations", "monthlyFee": 149},
+        }
+
+        for key, config in addon_config.items():
+            # Check if this integration exists and is active
+            matching = [i for i in integrations if i.integration and i.integration.integration_key == key]
+            enabled = any(i.status == "active" for i in matching)
+            addons.append({
+                "key": key,
+                "name": config["name"],
+                "description": config["description"],
+                "enabled": enabled,
+                "monthlyFee": config["monthlyFee"],
+            })
+
+        return addons
+    except ImportError:
+        # Return default disabled add-ons
+        return [
+            {"key": "payroll", "name": "Payroll Integration", "description": "Enable Check HQ payroll processing", "enabled": False, "monthlyFee": 99},
+            {"key": "container_tracking", "name": "Container Tracking", "description": "Enable container tracking and visibility for drayage operations", "enabled": False, "monthlyFee": 149},
+        ]
+
+
+@router.patch("/tenants/{tenant_id}/addons/{addon_key}")
+async def toggle_tenant_addon(
+    tenant_id: str,
+    addon_key: str,
+    payload: dict,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Enable or disable an add-on for a tenant."""
+    from sqlalchemy import select
+    from app.models.company import Company
+
+    # Verify tenant exists
+    result = await db.execute(select(Company).where(Company.id == tenant_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    enabled = payload.get("enabled", False)
+
+    try:
+        from app.models.integration import CompanyIntegration, Integration
+        from sqlalchemy.orm import selectinload
+
+        # Find the integration by key
+        result = await db.execute(
+            select(Integration).where(Integration.integration_key == addon_key)
+        )
+        integration = result.scalar_one_or_none()
+
+        if not integration:
+            # Create the integration if it doesn't exist
+            integration = Integration(
+                integration_key=addon_key,
+                name=addon_key.replace("_", " ").title(),
+                integration_type="addon",
+                is_active=True,
+            )
+            db.add(integration)
+            await db.flush()
+
+        # Find or create company integration
+        result = await db.execute(
+            select(CompanyIntegration)
+            .where(
+                CompanyIntegration.company_id == tenant_id,
+                CompanyIntegration.integration_id == integration.id
+            )
+        )
+        company_integration = result.scalar_one_or_none()
+
+        if company_integration:
+            company_integration.status = "active" if enabled else "inactive"
+        else:
+            company_integration = CompanyIntegration(
+                company_id=tenant_id,
+                integration_id=integration.id,
+                status="active" if enabled else "inactive",
+            )
+            db.add(company_integration)
+
+        await db.commit()
+
+        return {"key": addon_key, "enabled": enabled}
+
+    except ImportError as e:
+        logger.error(f"Failed to toggle addon: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Add-on management not available")
 
 
 # ============================================================================
