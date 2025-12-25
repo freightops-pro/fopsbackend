@@ -45,7 +45,7 @@ class HQLeadActivity(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Which lead this activity belongs to
-    lead_id = Column(String(36), ForeignKey("hq_leads.id"), nullable=False, index=True)
+    lead_id = Column(String(36), ForeignKey("hq_lead.id"), nullable=False, index=True)
 
     # Activity type
     activity_type = Column(Enum(ActivityType), nullable=False)
@@ -75,7 +75,7 @@ class HQLeadActivity(Base):
     metadata = Column(JSON, nullable=True)  # Additional context (AI analysis, etc.)
 
     # Who created this activity
-    created_by_id = Column(String(36), ForeignKey("hq_employees.id"), nullable=True)
+    created_by_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)
 
     # Is this pinned/important?
     is_pinned = Column(Boolean, default=False)
@@ -110,7 +110,7 @@ class HQEmailTemplate(Base):
 
     # Who can use this template
     is_global = Column(Boolean, default=True)  # Available to all sales reps
-    created_by_id = Column(String(36), ForeignKey("hq_employees.id"), nullable=True)
+    created_by_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)
 
     # Template variables (placeholders)
     # e.g., ["company_name", "contact_name", "fleet_size"]
