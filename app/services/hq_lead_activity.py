@@ -331,7 +331,7 @@ class HQLeadActivityService:
             subject=f"Status changed: {old_status} → {new_status}",
             content=reason,
             created_by_id=changed_by_id,
-            metadata={
+            extra_data={
                 "old_status": old_status,
                 "new_status": new_status,
             }
@@ -362,7 +362,7 @@ class HQLeadActivityService:
             activity_type=ActivityType.AI_ACTION,
             subject=f"AI: {action_type}",
             content=description,
-            metadata={
+            extra_data={
                 "action_type": action_type,
                 "ai_reasoning": ai_reasoning,
                 "was_auto_executed": was_auto_executed,

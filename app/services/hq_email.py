@@ -104,7 +104,7 @@ class HQEmailService:
             email_thread_id=thread_id,
             email_status=email_status,
             created_by_id=sent_by_id,
-            metadata={
+            extra_data={
                 "template_id": template_id,
                 "from_name": config.from_name,
             }
@@ -480,7 +480,7 @@ class HQEmailService:
                 email_thread_id=thread_id,
                 email_status="sent",
                 created_by_id="system",  # Automated
-                metadata={
+                extra_data={
                     "automated": True,
                     "agent": "scout",
                     "from_name": config.from_name,

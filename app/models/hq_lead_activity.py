@@ -71,8 +71,8 @@ class HQLeadActivity(Base):
     call_duration_seconds = Column(String(50), nullable=True)
     call_outcome = Column(String(100), nullable=True)  # connected, voicemail, no_answer
 
-    # Metadata
-    metadata = Column(JSON, nullable=True)  # Additional context (AI analysis, etc.)
+    # Extra data/context
+    extra_data = Column(JSON, nullable=True)  # Additional context (AI analysis, etc.)
 
     # Who created this activity
     created_by_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)
