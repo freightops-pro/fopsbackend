@@ -460,7 +460,7 @@ class HQAIQueueService:
         ]
 
         for rule_data in rules:
-            # Check if rule already exists
+            # Check if rule already exists (use scalars().first() to avoid MultipleResultsFound)
             result = await self.db.execute(
                 select(HQAIAutonomyRule).where(
                     and_(
@@ -469,7 +469,8 @@ class HQAIQueueService:
                     )
                 ).limit(1)
             )
-            if result.scalar_one_or_none():
+            existing = result.scalars().first()
+            if existing:
                 continue
 
             rule = HQAIAutonomyRule(**rule_data)
