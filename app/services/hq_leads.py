@@ -430,7 +430,8 @@ Extract all sales leads from this content and return as JSON array."""
         limit: int,
         assign_to_sales_rep_id: Optional[str],
         created_by_id: str,
-        auto_assign_round_robin: bool = False
+        auto_assign_round_robin: bool = False,
+        authority_days: Optional[int] = None
     ) -> Tuple[List[HQLeadResponse], List[dict]]:
         """
         Import leads from FMCSA Motor Carrier Census data using Socrata SODA API.
@@ -443,6 +444,7 @@ Extract all sales leads from this content and return as JSON array."""
             assign_to_sales_rep_id: Specific sales rep to assign all leads to
             created_by_id: User creating the leads
             auto_assign_round_robin: If True, distribute leads among sales reps
+            authority_days: Only include carriers with authority granted in the last N days
 
         Returns:
             Tuple of (created_leads, errors)
@@ -458,8 +460,17 @@ Extract all sales leads from this content and return as JSON array."""
         if state:
             where_conditions.append(f"`bus_state_code` = '{state.upper()}'")
 
-        # Active carriers - check common/contract/broker status
-        where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A' OR `broker_stat` = 'A')")
+        # Motor carriers ONLY - must have common or contract authority (for-hire trucking)
+        # Excludes broker-only entities (no broker_stat requirement)
+        where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A')")
+        # Exclude passenger carriers
+        where_conditions.append("(`passenger` IS NULL OR `passenger` != 'Y')")
+
+        # Authority age filter - filter by add_date (when carrier was added to census)
+        if authority_days:
+            from datetime import datetime, timedelta
+            cutoff_date = (datetime.utcnow() - timedelta(days=authority_days)).strftime("%Y-%m-%dT00:00:00")
+            where_conditions.append(f"`add_date` >= '{cutoff_date}'")
 
         # Build the SoQL query
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"

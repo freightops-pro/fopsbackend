@@ -3069,6 +3069,7 @@ async def import_leads_from_fmcsa(
         assign_to_sales_rep_id=data.assign_to_sales_rep_id,
         created_by_id=current_employee.id,
         auto_assign_round_robin=data.auto_assign_round_robin,
+        authority_days=data.authority_days,
     )
 
     return HQLeadImportResponse(

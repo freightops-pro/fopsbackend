@@ -645,6 +645,7 @@ class HQLeadFMCSAImportRequest(BaseModel):
     min_trucks: int = Field(5, ge=1, alias="minTrucks")
     max_trucks: int = Field(500, ge=1, alias="maxTrucks")
     limit: int = Field(50, ge=1, le=200)
+    authority_days: Optional[int] = Field(None, ge=1, le=365, alias="authorityDays")
     assign_to_sales_rep_id: Optional[str] = Field(None, alias="assignToSalesRepId")
     auto_assign_round_robin: bool = Field(False, alias="autoAssignRoundRobin")
 
