@@ -739,90 +739,117 @@ class HQDashboardService:
     async def get_metrics(self) -> HQDashboardMetrics:
         """Get dashboard metrics."""
         from datetime import timedelta
+        from app.models.company import Company
+        from app.models.billing import Subscription
 
-        # Total tenants
-        total_result = await self.db.execute(select(func.count(HQTenant.id)))
+        # Total tenants (companies)
+        total_result = await self.db.execute(select(func.count(Company.id)))
         total_tenants = total_result.scalar() or 0
 
-        # Active tenants
+        # Active tenants (isActive = True)
         active_result = await self.db.execute(
-            select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.ACTIVE)
+            select(func.count(Company.id)).where(Company.isActive == True)
         )
         active_tenants = active_result.scalar() or 0
 
-        # Trial tenants
+        # Trial tenants (subscriptionPlan = 'free' or 'starter')
         trial_result = await self.db.execute(
-            select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.TRIAL)
+            select(func.count(Company.id)).where(
+                and_(Company.isActive == True, Company.subscriptionPlan.in_(["free", "starter"]))
+            )
         )
         trial_tenants = trial_result.scalar() or 0
 
-        # Churned tenants
+        # Churned tenants (isActive = False)
         churned_result = await self.db.execute(
-            select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.CHURNED)
+            select(func.count(Company.id)).where(Company.isActive == False)
         )
         churned_tenants = churned_result.scalar() or 0
 
-        # MRR (sum of active tenant monthly rates)
-        mrr_result = await self.db.execute(
-            select(func.coalesce(func.sum(HQTenant.monthly_rate), 0)).where(
-                HQTenant.status == TenantStatus.ACTIVE
+        # MRR (sum from Subscription table for active companies)
+        try:
+            mrr_result = await self.db.execute(
+                select(func.coalesce(func.sum(Subscription.total_monthly_cost), 0))
+                .select_from(Subscription)
+                .join(Company, Company.id == Subscription.company_id)
+                .where(Company.isActive == True)
             )
-        )
-        mrr = Decimal(str(mrr_result.scalar() or 0))
+            mrr = Decimal(str(mrr_result.scalar() or 0))
+        except Exception:
+            mrr = Decimal("0")
 
         # ARR
         arr = mrr * 12
 
-        # Pending payouts
-        pending_payouts_result = await self.db.execute(
-            select(
-                func.count(HQPayout.id),
-                func.coalesce(func.sum(HQPayout.amount), 0)
-            ).where(HQPayout.status == PayoutStatus.PENDING)
-        )
-        pending_row = pending_payouts_result.one()
-        pending_payouts_count = pending_row[0] or 0
-        pending_payouts_amount = Decimal(str(pending_row[1] or 0))
+        # Initialize HQ-specific metrics (may not exist yet)
+        pending_payouts_count = 0
+        pending_payouts_amount = Decimal("0")
+        open_contracts = 0
+        expiring_contracts = 0
+        pending_quotes = 0
+        total_credits_outstanding = Decimal("0")
+        hq_employee_count = 0
 
-        # Open contracts (active)
-        open_contracts_result = await self.db.execute(
-            select(func.count(HQContract.id)).where(HQContract.status == ContractStatus.ACTIVE)
-        )
-        open_contracts = open_contracts_result.scalar() or 0
+        # Try to get HQ-specific metrics (tables may not exist)
+        try:
+            pending_payouts_result = await self.db.execute(
+                select(
+                    func.count(HQPayout.id),
+                    func.coalesce(func.sum(HQPayout.amount), 0)
+                ).where(HQPayout.status == PayoutStatus.PENDING)
+            )
+            pending_row = pending_payouts_result.one()
+            pending_payouts_count = pending_row[0] or 0
+            pending_payouts_amount = Decimal(str(pending_row[1] or 0))
+        except Exception:
+            pass
 
-        # Expiring contracts (next 30 days)
-        expiring_result = await self.db.execute(
-            select(func.count(HQContract.id)).where(
-                and_(
-                    HQContract.status == ContractStatus.ACTIVE,
-                    HQContract.end_date <= datetime.utcnow() + timedelta(days=30),
-                    HQContract.end_date >= datetime.utcnow(),
+        try:
+            open_contracts_result = await self.db.execute(
+                select(func.count(HQContract.id)).where(HQContract.status == ContractStatus.ACTIVE)
+            )
+            open_contracts = open_contracts_result.scalar() or 0
+
+            expiring_result = await self.db.execute(
+                select(func.count(HQContract.id)).where(
+                    and_(
+                        HQContract.status == ContractStatus.ACTIVE,
+                        HQContract.end_date <= datetime.utcnow() + timedelta(days=30),
+                        HQContract.end_date >= datetime.utcnow(),
+                    )
                 )
             )
-        )
-        expiring_contracts = expiring_result.scalar() or 0
+            expiring_contracts = expiring_result.scalar() or 0
+        except Exception:
+            pass
 
-        # Pending quotes
-        pending_quotes_result = await self.db.execute(
-            select(func.count(HQQuote.id)).where(
-                HQQuote.status.in_([QuoteStatus.DRAFT, QuoteStatus.SENT])
+        try:
+            pending_quotes_result = await self.db.execute(
+                select(func.count(HQQuote.id)).where(
+                    HQQuote.status.in_([QuoteStatus.DRAFT, QuoteStatus.SENT])
+                )
             )
-        )
-        pending_quotes = pending_quotes_result.scalar() or 0
+            pending_quotes = pending_quotes_result.scalar() or 0
+        except Exception:
+            pass
 
-        # Outstanding credits (approved but not applied)
-        credits_result = await self.db.execute(
-            select(func.coalesce(func.sum(HQCredit.remaining_amount), 0)).where(
-                HQCredit.status == CreditStatus.APPROVED
+        try:
+            credits_result = await self.db.execute(
+                select(func.coalesce(func.sum(HQCredit.remaining_amount), 0)).where(
+                    HQCredit.status == CreditStatus.APPROVED
+                )
             )
-        )
-        total_credits_outstanding = Decimal(str(credits_result.scalar() or 0))
+            total_credits_outstanding = Decimal(str(credits_result.scalar() or 0))
+        except Exception:
+            pass
 
-        # HQ Employee count
-        employee_result = await self.db.execute(
-            select(func.count(HQEmployee.id)).where(HQEmployee.is_active == True)
-        )
-        hq_employee_count = employee_result.scalar() or 0
+        try:
+            employee_result = await self.db.execute(
+                select(func.count(HQEmployee.id)).where(HQEmployee.is_active == True)
+            )
+            hq_employee_count = employee_result.scalar() or 0
+        except Exception:
+            pass
 
         return HQDashboardMetrics(
             total_tenants=total_tenants,
