@@ -117,19 +117,19 @@ async def auto_send_approved_outreach() -> None:
     - Low risk actions (small fleets) = auto-send immediately
     - Medium/High risk = wait in approval queue for human review
     """
-    from app.models.hq_ai_queue import HQAIQueueAction, AIActionStatus, AIActionType
+    from app.models.hq_ai_queue import HQAIAction, AIActionStatus, AIActionType
     from app.services.hq_email import HQEmailService
     from sqlalchemy import select, and_
 
     async with AsyncSessionFactory() as session:
         # Find auto-executed outreach actions that haven't been processed
         result = await session.execute(
-            select(HQAIQueueAction)
+            select(HQAIAction)
             .where(
                 and_(
-                    HQAIQueueAction.action_type == AIActionType.LEAD_OUTREACH,
-                    HQAIQueueAction.status == AIActionStatus.AUTO_EXECUTED,
-                    HQAIQueueAction.executed_at.is_(None),  # Not yet sent
+                    HQAIAction.action_type == AIActionType.LEAD_OUTREACH,
+                    HQAIAction.status == AIActionStatus.AUTO_EXECUTED,
+                    HQAIAction.executed_at.is_(None),  # Not yet sent
                 )
             )
             .limit(20)
@@ -144,6 +144,7 @@ async def auto_send_approved_outreach() -> None:
 
         for action in actions:
             try:
+                # Get email data from entity_data
                 entity_data = action.entity_data or {}
                 email_to = entity_data.get("email_to")
                 subject = entity_data.get("subject")

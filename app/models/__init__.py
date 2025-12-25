@@ -86,3 +86,9 @@ from app.models.hq_general_ledger import (  # noqa: F401
     UsageMetricType, BillingFrequency,
 )
 
+# HQ AI Queue Models
+from app.models.hq_ai_queue import (  # noqa: F401
+    HQAIAction, HQAIAutonomyRule,
+    AIActionType, AIActionRisk, AIActionStatus,
+)
+

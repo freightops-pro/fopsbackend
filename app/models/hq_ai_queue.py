@@ -77,7 +77,8 @@ class HQAIAction(Base):
     entity_name = Column(String(255), nullable=True)  # For display
 
     # Risk assessment data
-    risk_factors = Column(JSON, nullable=True)  # {"fleet_size": 50, "new_entrant": false}
+    risk_factors = Column(JSON, nullable=True)  # Matched rules from risk assessment
+    entity_data = Column(JSON, nullable=True)  # Entity-specific data {"fleet_size": 50, "email_to": "..."}
 
     # Who should review this
     assigned_to_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)

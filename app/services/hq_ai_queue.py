@@ -163,6 +163,7 @@ class HQAIQueueService:
             entity_id=entity_id,
             entity_name=entity_name,
             risk_factors=risk_factors,
+            entity_data=entity_data,  # Store entity data for email details, etc.
             assigned_to_id=assigned_to_id,
             expires_at=datetime.utcnow() + timedelta(hours=expires_hours),
         )
@@ -391,7 +392,7 @@ class HQAIQueueService:
             # Lead Outreach Rules
             {
                 "action_type": AIActionType.LEAD_OUTREACH,
-                "agent_name": "alex",
+                "agent_name": "scout",
                 "name": "New Entrant - Low Stakes",
                 "description": "New carriers (< 30 days) are low risk for outreach",
                 "condition_field": "days_since_registration",
@@ -402,7 +403,18 @@ class HQAIQueueService:
             },
             {
                 "action_type": AIActionType.LEAD_OUTREACH,
-                "agent_name": "alex",
+                "agent_name": "scout",
+                "name": "Small Fleet - Auto Send",
+                "description": "Small fleets (< 20 trucks) are low risk for outreach",
+                "condition_field": "fleet_size",
+                "condition_operator": "<",
+                "condition_value": "20",
+                "resulting_risk": AIActionRisk.LOW,
+                "priority": 5,
+            },
+            {
+                "action_type": AIActionType.LEAD_OUTREACH,
+                "agent_name": "scout",
                 "name": "Key Account - Require Approval",
                 "description": "Large fleets (20+ trucks) require human approval",
                 "condition_field": "fleet_size",
@@ -413,7 +425,7 @@ class HQAIQueueService:
             },
             {
                 "action_type": AIActionType.LEAD_OUTREACH,
-                "agent_name": "alex",
+                "agent_name": "scout",
                 "name": "Mega Carrier - Critical",
                 "description": "Very large fleets (100+ trucks) require manager approval",
                 "condition_field": "fleet_size",
@@ -425,7 +437,7 @@ class HQAIQueueService:
             # Lead Qualification Rules
             {
                 "action_type": AIActionType.LEAD_QUALIFICATION,
-                "agent_name": "alex",
+                "agent_name": "scout",
                 "name": "Small Fleet - Auto Qualify",
                 "description": "Small fleets can be auto-qualified",
                 "condition_field": "fleet_size",
@@ -436,7 +448,7 @@ class HQAIQueueService:
             },
             {
                 "action_type": AIActionType.LEAD_QUALIFICATION,
-                "agent_name": "alex",
+                "agent_name": "scout",
                 "name": "High Value Lead",
                 "description": "High MRR leads require approval",
                 "condition_field": "estimated_mrr",
