@@ -80,10 +80,10 @@ class HQAIAction(Base):
     risk_factors = Column(JSON, nullable=True)  # {"fleet_size": 50, "new_entrant": false}
 
     # Who should review this
-    assigned_to_id = Column(String(36), ForeignKey("hq_employees.id"), nullable=True)
+    assigned_to_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)
 
     # Human action
-    reviewed_by_id = Column(String(36), ForeignKey("hq_employees.id"), nullable=True)
+    reviewed_by_id = Column(String(36), ForeignKey("hq_employee.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     human_edits = Column(Text, nullable=True)  # What the human changed
     rejection_reason = Column(Text, nullable=True)
