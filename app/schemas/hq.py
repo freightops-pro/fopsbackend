@@ -547,7 +547,7 @@ class HQExpiringContract(BaseModel):
 # ============================================================================
 
 LeadStatusType = Literal["new", "contacted", "qualified", "unqualified", "converted"]
-LeadSourceType = Literal["referral", "website", "cold_call", "partner", "trade_show", "linkedin", "other"]
+LeadSourceType = Literal["referral", "website", "cold_call", "partner", "trade_show", "linkedin", "fmcsa", "other"]
 
 
 class HQLeadBase(BaseModel):
@@ -562,6 +562,12 @@ class HQLeadBase(BaseModel):
     estimated_drivers: Optional[str] = Field(None, alias="estimatedDrivers", serialization_alias="estimatedDrivers")
     next_follow_up_date: Optional[datetime] = Field(None, alias="nextFollowUpDate", serialization_alias="nextFollowUpDate")
     notes: Optional[str] = None
+    # FMCSA data
+    state: Optional[str] = None
+    dot_number: Optional[str] = Field(None, alias="dotNumber", serialization_alias="dotNumber")
+    mc_number: Optional[str] = Field(None, alias="mcNumber", serialization_alias="mcNumber")
+    carrier_type: Optional[str] = Field(None, alias="carrierType", serialization_alias="carrierType")
+    cargo_types: Optional[str] = Field(None, alias="cargoTypes", serialization_alias="cargoTypes")
 
     model_config = {"populate_by_name": True}
 

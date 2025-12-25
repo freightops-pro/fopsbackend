@@ -22,6 +22,7 @@ class LeadSource(str, enum.Enum):
     PARTNER = "partner"
     TRADE_SHOW = "trade_show"
     LINKEDIN = "linkedin"
+    FMCSA = "fmcsa"  # FMCSA Motor Carrier Census import
     OTHER = "other"
 
 
@@ -39,6 +40,13 @@ class HQLead(Base):
     contact_email = Column(String, nullable=True, index=True)
     contact_phone = Column(String, nullable=True)
     contact_title = Column(String, nullable=True)
+
+    # FMCSA data
+    state = Column(String(2), nullable=True, index=True)  # Two-letter state code
+    dot_number = Column(String, nullable=True, index=True)  # DOT number
+    mc_number = Column(String, nullable=True, index=True)  # MC number
+    carrier_type = Column(String, nullable=True)  # Type of carrier operation
+    cargo_types = Column(String, nullable=True)  # Types of cargo hauled
 
     # Lead details
     source = Column(
