@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
 
+    # FMCSA Motor Carrier Census API
+    fmcsa_app_token: Optional[str] = None
+    fmcsa_secret_token: Optional[str] = None
+
     # Cloudflare R2 Storage Configuration
     r2_account_id: Optional[str] = None
     r2_access_key_id: Optional[str] = None
