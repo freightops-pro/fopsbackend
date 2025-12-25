@@ -322,54 +322,70 @@ async def get_expiring_contracts(
     from sqlalchemy import select, and_
     from sqlalchemy.orm import selectinload
     from datetime import datetime, timedelta
+    from decimal import Decimal
     from app.models.hq_contract import HQContract, ContractStatus
     from app.models.hq_tenant import HQTenant
 
-    thirty_days = datetime.utcnow() + timedelta(days=30)
-    result = await db.execute(
-        select(HQContract)
-        .options(selectinload(HQContract.tenant).selectinload(HQTenant.company))
-        .where(
-            and_(
-                HQContract.status == ContractStatus.ACTIVE,
-                HQContract.end_date <= thirty_days
+    try:
+        thirty_days = datetime.utcnow() + timedelta(days=30)
+        result = await db.execute(
+            select(HQContract)
+            .options(selectinload(HQContract.tenant).selectinload(HQTenant.company))
+            .where(
+                and_(
+                    HQContract.status == ContractStatus.ACTIVE,
+                    HQContract.end_date <= thirty_days
+                )
             )
+            .order_by(HQContract.end_date.asc())
+            .limit(5)
         )
-        .order_by(HQContract.end_date.asc())
-        .limit(5)
-    )
-    contracts = result.scalars().all()
+        contracts = result.scalars().all()
 
-    responses = []
-    for c in contracts:
-        data = {
-            "id": c.id,
-            "tenant_id": c.tenant_id,
-            "tenant_name": c.tenant.company.name if c.tenant and c.tenant.company else None,
-            "contract_number": c.contract_number,
-            "title": c.title,
-            "contract_type": c.contract_type.value if hasattr(c.contract_type, 'value') else c.contract_type,
-            "status": c.status.value if hasattr(c.status, 'value') else c.status,
-            "description": c.description,
-            "monthly_value": c.monthly_value,
-            "annual_value": c.annual_value,
-            "setup_fee": c.setup_fee or 0,
-            "start_date": c.start_date,
-            "end_date": c.end_date,
-            "auto_renew": c.auto_renew or "false",
-            "notice_period_days": c.notice_period_days or "30",
-            "custom_terms": c.custom_terms,
-            "signed_by_customer": c.signed_by_customer,
-            "signed_by_hq": c.signed_by_hq,
-            "signed_at": c.signed_at,
-            "created_by_id": c.created_by_id,
-            "approved_by_id": c.approved_by_id,
-            "approved_at": c.approved_at,
-            "created_at": c.created_at,
-            "updated_at": c.updated_at,
-        }
-        responses.append(HQContractResponse.model_validate(data))
-    return responses
+        responses = []
+        for c in contracts:
+            # Safely get tenant name
+            tenant_name = None
+            try:
+                if c.tenant and c.tenant.company:
+                    tenant_name = c.tenant.company.name
+            except Exception:
+                pass
+
+            data = {
+                "id": c.id,
+                "tenant_id": c.tenant_id,
+                "tenant_name": tenant_name,
+                "contract_number": c.contract_number,
+                "title": c.title,
+                "contract_type": c.contract_type.value if hasattr(c.contract_type, 'value') else str(c.contract_type),
+                "status": c.status.value if hasattr(c.status, 'value') else str(c.status),
+                "description": c.description,
+                "monthly_value": Decimal(str(c.monthly_value)) if c.monthly_value is not None else Decimal("0"),
+                "annual_value": Decimal(str(c.annual_value)) if c.annual_value is not None else None,
+                "setup_fee": Decimal(str(c.setup_fee)) if c.setup_fee is not None else Decimal("0"),
+                "start_date": c.start_date,
+                "end_date": c.end_date,
+                "auto_renew": str(c.auto_renew) if c.auto_renew else "false",
+                "notice_period_days": str(c.notice_period_days) if c.notice_period_days else "30",
+                "custom_terms": c.custom_terms,
+                "signed_by_customer": c.signed_by_customer,
+                "signed_by_hq": c.signed_by_hq,
+                "signed_at": c.signed_at,
+                "created_by_id": c.created_by_id,
+                "approved_by_id": c.approved_by_id,
+                "approved_at": c.approved_at,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+            }
+            responses.append(HQContractResponse.model_validate(data))
+        return responses
+    except Exception as e:
+        logger.error(f"Error fetching expiring contracts: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching expiring contracts: {str(e)}"
+        )
 
 
 # ============================================================================
