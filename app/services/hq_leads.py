@@ -20,13 +20,13 @@ from app.schemas.hq import (
 )
 from app.core.llm_router import LLMRouter
 
-# FMCSA Census Data (v3 API)
-# Dataset: FMCSA Motor Carrier Census
-FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/6eyk-hxee/query.json"
+# FMCSA Census Data - Socrata SODA API
+# Dataset: Carrier - All With History (6eyk-hxee)
+# Docs: https://dev.socrata.com/foundry/data.transportation.gov/6eyk-hxee
+FMCSA_CENSUS_API = "https://data.transportation.gov/resource/6eyk-hxee.json"
 
 import os
 FMCSA_APP_TOKEN = os.getenv("FMCSA_APP_TOKEN", "")
-FMCSA_SECRET_TOKEN = os.getenv("FMCSA_SECRET_TOKEN", "")
 
 
 class HQLeadService:
@@ -432,7 +432,7 @@ Extract all sales leads from this content and return as JSON array."""
         auto_assign_round_robin: bool = False
     ) -> Tuple[List[HQLeadResponse], List[dict]]:
         """
-        Import leads from FMCSA Motor Carrier Census data.
+        Import leads from FMCSA Motor Carrier Census data using Socrata SODA API.
 
         Args:
             state: Two-letter state code (e.g., "TX", "CA") or None for all states
@@ -446,73 +446,49 @@ Extract all sales leads from this content and return as JSON array."""
         Returns:
             Tuple of (created_leads, errors)
         """
-        # Build v3 API query for FMCSA data
-        # API uses POST with JSON query body
-        # Fields vary by dataset - common: LEGAL_NAME, DBA_NAME, PHY_STREET, PHY_CITY,
-        #                          PHY_STATE, PHY_ZIP, TELEPHONE, EMAIL, NBR_POWER_UNIT, TOT_DRVRS
+        # Build Socrata SODA API query using SoQL
+        # Dataset fields: LEGAL_NAME, DBA_NAME, BUS_STREET_PO, BUS_CITY, BUS_STATE_CODE,
+        #                 BUS_ZIP_CODE, BUS_TELNO, DOT_NUMBER, DOCKET_NUMBER
 
-        # Build filter conditions for v3 API
-        conditions = []
+        # Build SoQL $where clause
+        where_conditions = []
 
-        # Fleet size filter
-        conditions.append({
-            "column": "NBR_POWER_UNIT",
-            "operator": ">=",
-            "value": str(min_trucks)
-        })
-        conditions.append({
-            "column": "NBR_POWER_UNIT",
-            "operator": "<=",
-            "value": str(max_trucks)
-        })
-
-        # Active carriers only
-        conditions.append({
-            "column": "CARRIER_OPERATION",
-            "operator": "=",
-            "value": "A"  # Active
-        })
-
+        # State filter (using BUS_STATE_CODE)
         if state:
-            conditions.append({
-                "column": "PHY_STATE",
-                "operator": "=",
-                "value": state.upper()
-            })
+            where_conditions.append(f"bus_state_code='{state.upper()}'")
 
-        query_payload = {
-            "limit": limit,
-            "offset": 0,
-            "filter": {
-                "conditions": conditions,
-                "operator": "AND"
-            },
-            "order": [
-                {"column": "NBR_POWER_UNIT", "direction": "DESC"}
-            ]
+        # Active carriers - common status is checking property/broker stats
+        where_conditions.append("(common_stat='A' OR contract_stat='A' OR broker_stat='A')")
+
+        # Build the query parameters
+        params = {
+            "$limit": str(limit),
+            "$order": "legal_name ASC",
         }
 
+        if where_conditions:
+            params["$where"] = " AND ".join(where_conditions)
+
         try:
-            # Build headers with authentication
-            headers = {"Content-Type": "application/json"}
+            # Build headers with app token for higher rate limits
+            headers = {"Accept": "application/json"}
             if FMCSA_APP_TOKEN:
                 headers["X-App-Token"] = FMCSA_APP_TOKEN
-            if FMCSA_SECRET_TOKEN:
-                headers["X-App-Secret"] = FMCSA_SECRET_TOKEN
+
+            # Build URL with query params
+            query_string = "&".join(f"{k}={v}" for k, v in params.items())
+            url = f"{FMCSA_CENSUS_API}?{query_string}"
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    FMCSA_CENSUS_API,
-                    json=query_payload,
-                    timeout=aiohttp.ClientTimeout(total=30),
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=60),
                     headers=headers
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:200]}"}]
-                    data = await response.json()
-                    # v3 API returns data in a 'rows' array
-                    carriers = data.get("rows", data) if isinstance(data, dict) else data
+                        return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:500]}"}]
+                    carriers = await response.json()
         except Exception as e:
             return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}"}]
 
@@ -544,18 +520,17 @@ Extract all sales leads from this content and return as JSON array."""
 
         for idx, carrier in enumerate(carriers):
             try:
-                # Handle both v2 and v3 API field names
-                # v3 uses uppercase, v2 uses lowercase with underscores
-                def get_field(names):
+                # Socrata API returns lowercase field names
+                def get_field(*names):
                     """Get first matching field from list of possible names."""
                     for name in names:
-                        val = carrier.get(name)
+                        val = carrier.get(name.lower()) or carrier.get(name.upper())
                         if val:
-                            return val
+                            return str(val).strip()
                     return None
 
                 # Get company name (prefer DBA, fall back to legal name)
-                company_name = get_field(["DBA_NAME", "dba_name"]) or get_field(["LEGAL_NAME", "legal_name"])
+                company_name = get_field("dba_name") or get_field("legal_name")
                 if not company_name:
                     continue
 
@@ -573,32 +548,35 @@ Extract all sales leads from this content and return as JSON array."""
                 else:
                     rep_id = created_by_id
 
-                # Calculate estimated MRR based on fleet size
-                trucks_val = get_field(["NBR_POWER_UNIT", "tot_pwr_units"]) or 0
-                trucks = int(trucks_val) if trucks_val else 0
-                if trucks <= 10:
-                    estimated_mrr = Decimal("299")
-                elif trucks <= 50:
-                    estimated_mrr = Decimal("599")
-                else:
-                    estimated_mrr = Decimal("999")
+                # This dataset doesn't have power unit count, estimate based on carrier type
+                # Default to medium-sized carrier pricing
+                estimated_mrr = Decimal("599")
 
                 # Build address for notes
                 address_parts = [
-                    get_field(["PHY_STREET", "physical_address"]) or "",
-                    get_field(["PHY_CITY", "physical_city"]) or "",
-                    get_field(["PHY_STATE", "physical_state"]) or "",
-                    get_field(["PHY_ZIP", "physical_zip"]) or "",
+                    get_field("bus_street_po") or "",
+                    get_field("bus_city") or "",
+                    get_field("bus_state_code") or "",
+                    get_field("bus_zip_code") or "",
                 ]
                 address = ", ".join(p for p in address_parts if p)
 
-                # Get other fields
-                dot_number = get_field(["DOT_NUMBER", "dot_number"]) or "N/A"
-                mc_number = get_field(["MC_MX_FF_NUMBER", "mc_mx_ff_number"]) or "N/A"
-                telephone = get_field(["TELEPHONE", "telephone"])
-                email = get_field(["EMAIL", "email_address"])
-                drivers = get_field(["TOT_DRVRS", "tot_drivers"]) or ""
-                phy_state = get_field(["PHY_STATE", "physical_state"]) or ""
+                # Get other fields from this dataset
+                dot_number = get_field("dot_number") or ""
+                mc_number = get_field("docket_number") or ""  # DOCKET_NUMBER is the MC/MX number
+                telephone = get_field("bus_telno")
+                email = None  # This dataset doesn't have email
+                phy_state = get_field("bus_state_code") or ""
+
+                # Determine carrier type based on status fields
+                carrier_types = []
+                if get_field("common_stat") == "A":
+                    carrier_types.append("Common Carrier")
+                if get_field("contract_stat") == "A":
+                    carrier_types.append("Contract Carrier")
+                if get_field("broker_stat") == "A":
+                    carrier_types.append("Broker")
+                carrier_type = ", ".join(carrier_types) if carrier_types else "Motor Carrier"
 
                 # Create lead
                 lead_number = await self._generate_lead_number()
@@ -613,13 +591,14 @@ Extract all sales leads from this content and return as JSON array."""
                     source=LeadSource.FMCSA,
                     status=LeadStatus.NEW,
                     estimated_mrr=estimated_mrr,
-                    estimated_trucks=str(trucks),
-                    estimated_drivers=str(drivers),
+                    estimated_trucks=None,  # Dataset doesn't include truck count
+                    estimated_drivers=None,
                     state=phy_state,
                     dot_number=dot_number,
                     mc_number=mc_number,
+                    carrier_type=carrier_type,
                     assigned_sales_rep_id=rep_id,
-                    notes=f"DOT#: {dot_number}\nMC#: {mc_number}\nAddress: {address}\nDrivers: {drivers}\nSource: FMCSA Census",
+                    notes=f"DOT#: {dot_number}\nMC#: {mc_number}\nCarrier Type: {carrier_type}\nAddress: {address}\nSource: FMCSA Census",
                     created_by_id=created_by_id,
                 )
 
