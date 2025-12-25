@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import AsyncSessionFactory
 from app.core.llm_router import LLMRouter
 from app.services.hq_leads import HQLeadService
+from app.services.hq_ai_queue import HQAIQueueService
 from app.models.hq_lead import HQLead, LeadStatus
+from app.models.hq_ai_queue import AIActionType, AIActionRisk
 
 logger = logging.getLogger(__name__)
 
@@ -145,18 +147,22 @@ async def sync_fmcsa_single_state(
 
 async def ai_nurture_leads() -> None:
     """
-    AI-powered autonomous lead nurturing.
+    AI-powered autonomous lead nurturing with Level 2 autonomy.
 
-    This job:
-    1. Finds leads needing attention (new, stale, or needing qualification)
-    2. Uses AI to analyze each lead and determine next action
-    3. Auto-qualifies leads based on fit criteria
-    4. Prepares personalized outreach for sales reps
-    5. Updates lead status and notes with AI insights
+    LEVEL 2 PROTOCOL:
+    1. AI analyzes leads and prepares qualification + outreach
+    2. Low risk actions (small fleets, new entrants) = auto-execute
+    3. Medium/High risk (key accounts, mega carriers) = queue for approval
+    4. Humans review, approve/edit/reject in the Approval Queue
+    5. System learns from edits to improve over time
     """
     async with AsyncSessionFactory() as session:
         llm = LLMRouter()
         lead_service = HQLeadService(session)
+        ai_queue = HQAIQueueService(session)
+
+        # Seed default rules if not exist
+        await ai_queue.seed_default_rules()
 
         # Find leads needing AI attention
         cutoff_time = datetime.utcnow() - timedelta(hours=AI_NURTURING_CONFIG["min_hours_between_touches"])
@@ -167,7 +173,6 @@ async def ai_nurture_leads() -> None:
             .where(
                 and_(
                     HQLead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED]),
-                    # Avoid leads we just touched
                     HQLead.updated_at < cutoff_time,
                 )
             )
@@ -180,32 +185,34 @@ async def ai_nurture_leads() -> None:
             logger.info("ai_nurture_no_leads", extra={"message": "No leads need nurturing"})
             return
 
-        qualified_count = 0
         enriched_count = 0
-        outreach_prepared = 0
+        queued_count = 0
+        auto_executed = 0
 
         for lead in leads:
             try:
-                # Step 1: Enrich if missing contact info
+                # Step 1: Enrich if missing contact info (always auto-execute)
                 if not lead.contact_name or not lead.contact_email:
                     enriched = await lead_service.enrich_lead_with_ai(lead.id)
                     if enriched:
                         enriched_count += 1
-                        # Refresh lead data
                         await session.refresh(lead)
 
                 # Step 2: AI qualification analysis
                 qualification_result = await _ai_qualify_lead(llm, lead)
 
                 if qualification_result:
-                    # Update lead based on AI analysis
-                    if qualification_result.get("qualified"):
-                        lead.status = LeadStatus.QUALIFIED
-                        qualified_count += 1
-                    elif qualification_result.get("unqualified"):
-                        lead.status = LeadStatus.UNQUALIFIED
+                    # Build entity data for risk assessment
+                    fleet_size = int(lead.estimated_trucks or 0) if lead.estimated_trucks else 0
+                    entity_data = {
+                        "fleet_size": fleet_size,
+                        "estimated_mrr": float(lead.estimated_mrr or 0),
+                        "is_new_entrant": (datetime.utcnow() - lead.created_at).days < 30,
+                        "days_since_registration": (datetime.utcnow() - lead.created_at).days,
+                        "has_contact_info": bool(lead.contact_email or lead.contact_phone),
+                    }
 
-                    # Add AI analysis to notes
+                    # Prepare draft content
                     ai_notes = []
                     if qualification_result.get("fit_score"):
                         ai_notes.append(f"AI Fit Score: {qualification_result['fit_score']}/10")
@@ -216,14 +223,40 @@ async def ai_nurture_leads() -> None:
                     if qualification_result.get("talking_points"):
                         ai_notes.append(f"Talking Points: {', '.join(qualification_result['talking_points'])}")
 
-                    if ai_notes:
-                        new_notes = "\n".join(ai_notes)
+                    draft_content = "\n".join(ai_notes)
+                    new_status = "qualified" if qualification_result.get("qualified") else "unqualified" if qualification_result.get("unqualified") else None
+
+                    # Create action in approval queue (risk assessed automatically)
+                    action = await ai_queue.create_action(
+                        action_type=AIActionType.LEAD_QUALIFICATION,
+                        agent_name="alex",
+                        title=f"Qualify: {lead.company_name}",
+                        description=f"AI recommends marking as {new_status or 'needs review'}. Fleet: {fleet_size} trucks.",
+                        draft_content=draft_content,
+                        ai_reasoning=qualification_result.get("reasoning", ""),
+                        entity_type="lead",
+                        entity_id=lead.id,
+                        entity_name=lead.company_name,
+                        entity_data=entity_data,
+                        assigned_to_id=lead.assigned_sales_rep_id,
+                    )
+
+                    if action.status.value == "auto_executed":
+                        # Low risk - update lead directly
+                        if new_status == "qualified":
+                            lead.status = LeadStatus.QUALIFIED
+                        elif new_status == "unqualified":
+                            lead.status = LeadStatus.UNQUALIFIED
+
                         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
                         if lead.notes:
-                            lead.notes = f"{lead.notes}\n\n--- AI Analysis ({timestamp}) ---\n{new_notes}"
+                            lead.notes = f"{lead.notes}\n\n--- AI Analysis ({timestamp}) ---\n{draft_content}"
                         else:
-                            lead.notes = f"--- AI Analysis ({timestamp}) ---\n{new_notes}"
-                        outreach_prepared += 1
+                            lead.notes = f"--- AI Analysis ({timestamp}) ---\n{draft_content}"
+
+                        auto_executed += 1
+                    else:
+                        queued_count += 1
 
                 await session.commit()
 
@@ -238,9 +271,9 @@ async def ai_nurture_leads() -> None:
             "ai_nurture_complete",
             extra={
                 "processed": len(leads),
-                "qualified": qualified_count,
                 "enriched": enriched_count,
-                "outreach_prepared": outreach_prepared,
+                "auto_executed": auto_executed,
+                "queued_for_approval": queued_count,
             }
         )
 

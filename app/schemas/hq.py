@@ -1687,3 +1687,310 @@ class HQGLDashboard(BaseModel):
     gross_margin_percent: Decimal
     accounts_count: int
     posted_entries_count: int
+
+
+# ============================================================================
+# AI Approval Queue Schemas (Level 2 Autonomy)
+# ============================================================================
+
+AIActionType = Literal[
+    "lead_outreach", "lead_qualification", "rate_negotiation",
+    "load_acceptance", "driver_assignment", "compliance_alert", "invoice_approval"
+]
+AIActionRisk = Literal["low", "medium", "high", "critical"]
+AIActionStatus = Literal["pending", "approved", "approved_with_edits", "rejected", "auto_executed", "expired"]
+
+
+class HQAIActionResponse(BaseModel):
+    """AI-generated action in the approval queue."""
+    id: str
+    action_type: str = Field(alias="actionType")
+    risk_level: str = Field(alias="riskLevel")
+    status: str
+    agent_name: str = Field(alias="agentName")
+    title: str
+    description: Optional[str] = None
+    draft_content: Optional[str] = Field(None, alias="draftContent")
+    ai_reasoning: Optional[str] = Field(None, alias="aiReasoning")
+    entity_type: Optional[str] = Field(None, alias="entityType")
+    entity_id: Optional[str] = Field(None, alias="entityId")
+    entity_name: Optional[str] = Field(None, alias="entityName")
+    risk_factors: Optional[List[dict]] = Field(None, alias="riskFactors")
+    assigned_to_id: Optional[str] = Field(None, alias="assignedToId")
+    reviewed_by_id: Optional[str] = Field(None, alias="reviewedById")
+    reviewed_at: Optional[datetime] = Field(None, alias="reviewedAt")
+    human_edits: Optional[str] = Field(None, alias="humanEdits")
+    rejection_reason: Optional[str] = Field(None, alias="rejectionReason")
+    was_edited: bool = Field(False, alias="wasEdited")
+    created_at: datetime = Field(alias="createdAt")
+    expires_at: Optional[datetime] = Field(None, alias="expiresAt")
+    executed_at: Optional[datetime] = Field(None, alias="executedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQAIActionApprove(BaseModel):
+    """Request to approve an AI action."""
+    edits: Optional[str] = None  # Optional human edits to the draft
+
+
+class HQAIActionReject(BaseModel):
+    """Request to reject an AI action."""
+    reason: str = Field(..., min_length=1)
+
+
+class HQAIQueueStats(BaseModel):
+    """Statistics about the AI approval queue."""
+    pending_total: int = Field(alias="pendingTotal")
+    pending_by_risk: dict = Field(alias="pendingByRisk")
+    pending_by_type: dict = Field(alias="pendingByType")
+    today_created: int = Field(alias="todayCreated")
+    today_approved: int = Field(alias="todayApproved")
+    today_rejected: int = Field(alias="todayRejected")
+    today_auto_executed: int = Field(alias="todayAutoExecuted")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQAIAutonomyRuleResponse(BaseModel):
+    """Autonomy rule configuration."""
+    id: str
+    action_type: str = Field(alias="actionType")
+    agent_name: str = Field(alias="agentName")
+    name: str
+    description: Optional[str] = None
+    condition_field: str = Field(alias="conditionField")
+    condition_operator: str = Field(alias="conditionOperator")
+    condition_value: str = Field(alias="conditionValue")
+    resulting_risk: str = Field(alias="resultingRisk")
+    is_active: bool = Field(alias="isActive")
+    priority: int
+    total_actions: int = Field(alias="totalActions")
+    approved_without_edits: int = Field(alias="approvedWithoutEdits")
+    approved_with_edits: int = Field(alias="approvedWithEdits")
+    rejected: int
+    success_rate: float = Field(alias="successRate")
+    is_level_3_enabled: bool = Field(alias="isLevel3Enabled")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Lead Activity & Email Schemas
+# ============================================================================
+
+ActivityTypeType = Literal["note", "email_sent", "email_received", "call", "meeting", "follow_up", "status_change", "ai_action"]
+FollowUpStatusType = Literal["pending", "due", "completed", "snoozed", "cancelled"]
+
+
+class HQLeadActivityBase(BaseModel):
+    """Base lead activity schema."""
+    activity_type: ActivityTypeType = Field(alias="activityType", serialization_alias="activityType")
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    is_pinned: bool = Field(False, alias="isPinned", serialization_alias="isPinned")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQNoteCreate(BaseModel):
+    """Create a note on a lead."""
+    content: str = Field(..., min_length=1)
+    is_pinned: bool = Field(False, alias="isPinned")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQNoteUpdate(BaseModel):
+    """Update a note."""
+    content: Optional[str] = None
+    is_pinned: Optional[bool] = Field(None, alias="isPinned")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQFollowUpCreate(BaseModel):
+    """Create a follow-up reminder."""
+    follow_up_date: datetime = Field(alias="followUpDate")
+    content: str = Field(..., min_length=1)
+    subject: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQFollowUpComplete(BaseModel):
+    """Complete a follow-up."""
+    notes: Optional[str] = None
+
+
+class HQFollowUpSnooze(BaseModel):
+    """Snooze a follow-up."""
+    new_date: datetime = Field(alias="newDate")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQCallLogCreate(BaseModel):
+    """Log a phone call."""
+    outcome: str = Field(..., min_length=1)  # connected, voicemail, no_answer, busy
+    notes: Optional[str] = None
+    duration_seconds: Optional[int] = Field(None, alias="durationSeconds")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadActivityResponse(BaseModel):
+    """Lead activity response."""
+    id: str
+    lead_id: str = Field(alias="leadId", serialization_alias="leadId")
+    activity_type: ActivityTypeType = Field(alias="activityType", serialization_alias="activityType")
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    # Email fields
+    email_from: Optional[str] = Field(None, alias="emailFrom", serialization_alias="emailFrom")
+    email_to: Optional[str] = Field(None, alias="emailTo", serialization_alias="emailTo")
+    email_cc: Optional[str] = Field(None, alias="emailCc", serialization_alias="emailCc")
+    email_status: Optional[str] = Field(None, alias="emailStatus", serialization_alias="emailStatus")
+    email_thread_id: Optional[str] = Field(None, alias="emailThreadId", serialization_alias="emailThreadId")
+    # Follow-up fields
+    follow_up_date: Optional[datetime] = Field(None, alias="followUpDate", serialization_alias="followUpDate")
+    follow_up_status: Optional[FollowUpStatusType] = Field(None, alias="followUpStatus", serialization_alias="followUpStatus")
+    follow_up_completed_at: Optional[datetime] = Field(None, alias="followUpCompletedAt", serialization_alias="followUpCompletedAt")
+    # Call fields
+    call_duration_seconds: Optional[str] = Field(None, alias="callDurationSeconds", serialization_alias="callDurationSeconds")
+    call_outcome: Optional[str] = Field(None, alias="callOutcome", serialization_alias="callOutcome")
+    # Meta
+    is_pinned: bool = Field(False, alias="isPinned", serialization_alias="isPinned")
+    metadata: Optional[dict] = None
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_by_name: Optional[str] = Field(None, alias="createdByName", serialization_alias="createdByName")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: Optional[datetime] = Field(None, alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Email Schemas
+# ============================================================================
+
+class HQSendEmailRequest(BaseModel):
+    """Request to send an email to a lead."""
+    to_email: str = Field(alias="toEmail")
+    subject: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+    cc: Optional[str] = None
+    template_id: Optional[str] = Field(None, alias="templateId")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQEmailTemplateBase(BaseModel):
+    """Email template base schema."""
+    name: str = Field(..., min_length=1)
+    subject: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+    category: Optional[str] = None
+    is_global: bool = Field(False, alias="isGlobal", serialization_alias="isGlobal")
+    variables: Optional[List[str]] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQEmailTemplateCreate(HQEmailTemplateBase):
+    pass
+
+
+class HQEmailTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    category: Optional[str] = None
+    is_active: Optional[bool] = Field(None, alias="isActive")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQEmailTemplateResponse(HQEmailTemplateBase):
+    id: str
+    times_used: str = Field(alias="timesUsed", serialization_alias="timesUsed")
+    is_active: bool = Field(alias="isActive", serialization_alias="isActive")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQRenderTemplateRequest(BaseModel):
+    """Request to render an email template for preview."""
+    template_id: str = Field(alias="templateId")
+    custom_vars: Optional[dict] = Field(None, alias="customVars")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQRenderTemplateResponse(BaseModel):
+    """Rendered template response."""
+    subject: str
+    body: str
+
+
+class HQEmailConfigBase(BaseModel):
+    """Email configuration base schema."""
+    name: str
+    provider: str  # smtp, sendgrid, mailgun, ses
+    from_email: str = Field(alias="fromEmail", serialization_alias="fromEmail")
+    from_name: Optional[str] = Field(None, alias="fromName", serialization_alias="fromName")
+    reply_to: Optional[str] = Field(None, alias="replyTo", serialization_alias="replyTo")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQEmailConfigCreate(HQEmailConfigBase):
+    config: dict  # Provider-specific config (SMTP settings, API keys, etc.)
+    is_default: bool = Field(False, alias="isDefault")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQEmailConfigResponse(HQEmailConfigBase):
+    id: str
+    is_default: bool = Field(alias="isDefault", serialization_alias="isDefault")
+    is_active: bool = Field(alias="isActive", serialization_alias="isActive")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Follow-up Alerts Schemas
+# ============================================================================
+
+class HQDueFollowUp(BaseModel):
+    """A follow-up that is due or overdue."""
+    id: str
+    lead_id: str = Field(alias="leadId", serialization_alias="leadId")
+    lead_company_name: str = Field(alias="leadCompanyName", serialization_alias="leadCompanyName")
+    lead_contact_name: Optional[str] = Field(None, alias="leadContactName", serialization_alias="leadContactName")
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    follow_up_date: datetime = Field(alias="followUpDate", serialization_alias="followUpDate")
+    is_overdue: bool = Field(alias="isOverdue", serialization_alias="isOverdue")
+    days_overdue: int = Field(0, alias="daysOverdue", serialization_alias="daysOverdue")
+    created_by_name: Optional[str] = Field(None, alias="createdByName", serialization_alias="createdByName")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQFollowUpAlerts(BaseModel):
+    """Follow-up alerts summary for a sales rep."""
+    overdue_count: int = Field(alias="overdueCount", serialization_alias="overdueCount")
+    due_today_count: int = Field(alias="dueTodayCount", serialization_alias="dueTodayCount")
+    upcoming_count: int = Field(alias="upcomingCount", serialization_alias="upcomingCount")
+    overdue: List[HQDueFollowUp] = []
+    due_today: List[HQDueFollowUp] = Field([], alias="dueToday", serialization_alias="dueToday")
+    upcoming: List[HQDueFollowUp] = []
+
+    model_config = {"populate_by_name": True}

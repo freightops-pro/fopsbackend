@@ -3410,3 +3410,761 @@ async def mark_commission_payment_paid(
     if not payment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
     return payment
+
+
+# ============================================================================
+# AI Approval Queue Endpoints (Level 2 Autonomy)
+# ============================================================================
+
+from app.schemas.hq import (
+    HQAIActionResponse, HQAIActionApprove, HQAIActionReject,
+    HQAIQueueStats, HQAIAutonomyRuleResponse
+)
+
+
+@router.get("/ai-queue", response_model=List[HQAIActionResponse])
+async def get_ai_queue(
+    action_type: Optional[str] = None,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get pending AI actions for the approval queue.
+
+    Sales managers see only their assigned actions.
+    Admins see all actions.
+    """
+    from app.services.hq_ai_queue import HQAIQueueService
+    from app.models.hq_ai_queue import AIActionType
+
+    queue_service = HQAIQueueService(db)
+
+    # Sales managers only see their assigned actions
+    assigned_to = None
+    if current_employee.role.value == "SALES_MANAGER":
+        assigned_to = current_employee.id
+
+    at = AIActionType(action_type) if action_type else None
+
+    actions = await queue_service.get_pending_actions(
+        assigned_to_id=assigned_to,
+        action_type=at,
+    )
+
+    return [
+        HQAIActionResponse(
+            id=a.id,
+            action_type=a.action_type.value,
+            risk_level=a.risk_level.value,
+            status=a.status.value,
+            agent_name=a.agent_name,
+            title=a.title,
+            description=a.description,
+            draft_content=a.draft_content,
+            ai_reasoning=a.ai_reasoning,
+            entity_type=a.entity_type,
+            entity_id=a.entity_id,
+            entity_name=a.entity_name,
+            risk_factors=a.risk_factors,
+            assigned_to_id=a.assigned_to_id,
+            reviewed_by_id=a.reviewed_by_id,
+            reviewed_at=a.reviewed_at,
+            human_edits=a.human_edits,
+            rejection_reason=a.rejection_reason,
+            was_edited=a.was_edited,
+            created_at=a.created_at,
+            expires_at=a.expires_at,
+            executed_at=a.executed_at,
+        )
+        for a in actions
+    ]
+
+
+@router.get("/ai-queue/stats", response_model=HQAIQueueStats)
+async def get_ai_queue_stats(
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get AI approval queue statistics."""
+    from app.services.hq_ai_queue import HQAIQueueService
+
+    queue_service = HQAIQueueService(db)
+    stats = await queue_service.get_queue_stats()
+    return HQAIQueueStats(**stats)
+
+
+@router.get("/ai-queue/{action_id}", response_model=HQAIActionResponse)
+async def get_ai_action(
+    action_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific AI action by ID."""
+    from app.services.hq_ai_queue import HQAIQueueService
+
+    queue_service = HQAIQueueService(db)
+    action = await queue_service.get_action(action_id)
+
+    if not action:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found")
+
+    return HQAIActionResponse(
+        id=action.id,
+        action_type=action.action_type.value,
+        risk_level=action.risk_level.value,
+        status=action.status.value,
+        agent_name=action.agent_name,
+        title=action.title,
+        description=action.description,
+        draft_content=action.draft_content,
+        ai_reasoning=action.ai_reasoning,
+        entity_type=action.entity_type,
+        entity_id=action.entity_id,
+        entity_name=action.entity_name,
+        risk_factors=action.risk_factors,
+        assigned_to_id=action.assigned_to_id,
+        reviewed_by_id=action.reviewed_by_id,
+        reviewed_at=action.reviewed_at,
+        human_edits=action.human_edits,
+        rejection_reason=action.rejection_reason,
+        was_edited=action.was_edited,
+        created_at=action.created_at,
+        expires_at=action.expires_at,
+        executed_at=action.executed_at,
+    )
+
+
+@router.post("/ai-queue/{action_id}/approve", response_model=HQAIActionResponse)
+async def approve_ai_action(
+    action_id: str,
+    data: HQAIActionApprove,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Approve an AI action.
+
+    Optionally provide edits to modify the AI's draft before executing.
+    The system learns from edits to improve future actions.
+    """
+    from app.services.hq_ai_queue import HQAIQueueService
+
+    queue_service = HQAIQueueService(db)
+    action = await queue_service.approve_action(
+        action_id=action_id,
+        reviewed_by_id=current_employee.id,
+        edits=data.edits,
+    )
+
+    if not action:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action not found or already processed"
+        )
+
+    # Execute the action based on type
+    await _execute_approved_action(action, data.edits, db)
+
+    return HQAIActionResponse(
+        id=action.id,
+        action_type=action.action_type.value,
+        risk_level=action.risk_level.value,
+        status=action.status.value,
+        agent_name=action.agent_name,
+        title=action.title,
+        description=action.description,
+        draft_content=action.draft_content,
+        ai_reasoning=action.ai_reasoning,
+        entity_type=action.entity_type,
+        entity_id=action.entity_id,
+        entity_name=action.entity_name,
+        risk_factors=action.risk_factors,
+        assigned_to_id=action.assigned_to_id,
+        reviewed_by_id=action.reviewed_by_id,
+        reviewed_at=action.reviewed_at,
+        human_edits=action.human_edits,
+        rejection_reason=action.rejection_reason,
+        was_edited=action.was_edited,
+        created_at=action.created_at,
+        expires_at=action.expires_at,
+        executed_at=action.executed_at,
+    )
+
+
+@router.post("/ai-queue/{action_id}/reject", response_model=HQAIActionResponse)
+async def reject_ai_action(
+    action_id: str,
+    data: HQAIActionReject,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject an AI action with a reason."""
+    from app.services.hq_ai_queue import HQAIQueueService
+
+    queue_service = HQAIQueueService(db)
+    action = await queue_service.reject_action(
+        action_id=action_id,
+        reviewed_by_id=current_employee.id,
+        reason=data.reason,
+    )
+
+    if not action:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action not found or already processed"
+        )
+
+    return HQAIActionResponse(
+        id=action.id,
+        action_type=action.action_type.value,
+        risk_level=action.risk_level.value,
+        status=action.status.value,
+        agent_name=action.agent_name,
+        title=action.title,
+        description=action.description,
+        draft_content=action.draft_content,
+        ai_reasoning=action.ai_reasoning,
+        entity_type=action.entity_type,
+        entity_id=action.entity_id,
+        entity_name=action.entity_name,
+        risk_factors=action.risk_factors,
+        assigned_to_id=action.assigned_to_id,
+        reviewed_by_id=action.reviewed_by_id,
+        reviewed_at=action.reviewed_at,
+        human_edits=action.human_edits,
+        rejection_reason=action.rejection_reason,
+        was_edited=action.was_edited,
+        created_at=action.created_at,
+        expires_at=action.expires_at,
+        executed_at=action.executed_at,
+    )
+
+
+async def _execute_approved_action(action, edits: Optional[str], db: AsyncSession):
+    """Execute an approved AI action based on its type."""
+    from app.models.hq_ai_queue import AIActionType, HQAIAction
+    from app.models.hq_lead import HQLead, LeadStatus
+    from sqlalchemy import select
+    from datetime import datetime
+
+    if action.action_type == AIActionType.LEAD_QUALIFICATION:
+        # Update lead with AI analysis
+        if action.entity_id:
+            result = await db.execute(
+                select(HQLead).where(HQLead.id == action.entity_id)
+            )
+            lead = result.scalar_one_or_none()
+            if lead:
+                # Determine new status from description
+                if "qualified" in action.description.lower():
+                    lead.status = LeadStatus.QUALIFIED
+                elif "unqualified" in action.description.lower():
+                    lead.status = LeadStatus.UNQUALIFIED
+
+                # Add notes (use edits if provided, otherwise draft)
+                content = edits or action.draft_content
+                if content:
+                    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+                    if lead.notes:
+                        lead.notes = f"{lead.notes}\n\n--- AI Analysis ({timestamp}) ---\n{content}"
+                    else:
+                        lead.notes = f"--- AI Analysis ({timestamp}) ---\n{content}"
+
+                await db.commit()
+
+    # Add handlers for other action types as needed
+    # elif action.action_type == AIActionType.LEAD_OUTREACH:
+    #     # Send email, log activity, etc.
+    #     pass
+
+
+# ============================================================================
+# Lead Activity & Notes Endpoints
+# ============================================================================
+
+from app.schemas.hq import (
+    HQLeadActivityResponse, HQNoteCreate, HQNoteUpdate,
+    HQFollowUpCreate, HQFollowUpComplete, HQFollowUpSnooze,
+    HQCallLogCreate, HQDueFollowUp, HQFollowUpAlerts,
+    HQSendEmailRequest, HQEmailTemplateCreate, HQEmailTemplateUpdate,
+    HQEmailTemplateResponse, HQRenderTemplateRequest, HQRenderTemplateResponse,
+)
+
+
+@router.get("/leads/{lead_id}/activities", response_model=List[HQLeadActivityResponse])
+async def get_lead_activities(
+    lead_id: str,
+    activity_type: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all activities for a lead."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+    from app.models.hq_lead_activity import ActivityType
+
+    activity_service = HQLeadActivityService(db)
+
+    activity_types = None
+    if activity_type:
+        try:
+            activity_types = [ActivityType(activity_type)]
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid activity type: {activity_type}")
+
+    activities = await activity_service.get_activities(
+        lead_id=lead_id,
+        activity_types=activity_types,
+        limit=limit,
+        offset=offset,
+    )
+
+    result = []
+    for a in activities:
+        resp = HQLeadActivityResponse(
+            id=a.id,
+            lead_id=a.lead_id,
+            activity_type=a.activity_type.value,
+            subject=a.subject,
+            content=a.content,
+            email_from=a.email_from,
+            email_to=a.email_to,
+            email_cc=a.email_cc,
+            email_status=a.email_status,
+            email_thread_id=a.email_thread_id,
+            follow_up_date=a.follow_up_date,
+            follow_up_status=a.follow_up_status.value if a.follow_up_status else None,
+            follow_up_completed_at=a.follow_up_completed_at,
+            call_duration_seconds=a.call_duration_seconds,
+            call_outcome=a.call_outcome,
+            is_pinned=a.is_pinned,
+            metadata=a.metadata,
+            created_by_id=a.created_by_id,
+            created_by_name=f"{a.created_by.first_name} {a.created_by.last_name}" if a.created_by else None,
+            created_at=a.created_at,
+            updated_at=a.updated_at,
+        )
+        result.append(resp)
+
+    return result
+
+
+@router.post("/leads/{lead_id}/notes", response_model=HQLeadActivityResponse)
+async def add_lead_note(
+    lead_id: str,
+    data: HQNoteCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a note to a lead."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.add_note(
+        lead_id=lead_id,
+        content=data.content,
+        created_by_id=current_employee.id,
+        is_pinned=data.is_pinned,
+    )
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        is_pinned=activity.is_pinned,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+@router.patch("/leads/activities/{activity_id}", response_model=HQLeadActivityResponse)
+async def update_lead_note(
+    activity_id: str,
+    data: HQNoteUpdate,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a note."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.update_note(
+        activity_id=activity_id,
+        content=data.content,
+        is_pinned=data.is_pinned,
+    )
+
+    if not activity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found or not a note")
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        is_pinned=activity.is_pinned,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+@router.delete("/leads/activities/{activity_id}")
+async def delete_lead_activity(
+    activity_id: str,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an activity."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    deleted = await activity_service.delete_activity(activity_id)
+
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+
+    return {"status": "deleted"}
+
+
+# ============================================================================
+# Lead Follow-up Endpoints
+# ============================================================================
+
+@router.post("/leads/{lead_id}/follow-ups", response_model=HQLeadActivityResponse)
+async def create_lead_follow_up(
+    lead_id: str,
+    data: HQFollowUpCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a follow-up reminder for a lead."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.create_follow_up(
+        lead_id=lead_id,
+        follow_up_date=data.follow_up_date,
+        content=data.content,
+        created_by_id=current_employee.id,
+        subject=data.subject,
+    )
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        follow_up_date=activity.follow_up_date,
+        follow_up_status=activity.follow_up_status.value if activity.follow_up_status else None,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+@router.post("/leads/follow-ups/{activity_id}/complete", response_model=HQLeadActivityResponse)
+async def complete_follow_up(
+    activity_id: str,
+    data: HQFollowUpComplete,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete a follow-up."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.complete_follow_up(
+        activity_id=activity_id,
+        notes=data.notes,
+    )
+
+    if not activity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow-up not found")
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        follow_up_date=activity.follow_up_date,
+        follow_up_status=activity.follow_up_status.value if activity.follow_up_status else None,
+        follow_up_completed_at=activity.follow_up_completed_at,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+@router.post("/leads/follow-ups/{activity_id}/snooze", response_model=HQLeadActivityResponse)
+async def snooze_follow_up(
+    activity_id: str,
+    data: HQFollowUpSnooze,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Snooze a follow-up to a new date."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.snooze_follow_up(
+        activity_id=activity_id,
+        new_date=data.new_date,
+    )
+
+    if not activity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Follow-up not found")
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        follow_up_date=activity.follow_up_date,
+        follow_up_status=activity.follow_up_status.value if activity.follow_up_status else None,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+@router.get("/leads/follow-ups/alerts", response_model=HQFollowUpAlerts)
+async def get_follow_up_alerts(
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get follow-up alerts for the current sales rep."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+    from app.models.hq_employee import HQRole
+    from datetime import datetime
+
+    activity_service = HQLeadActivityService(db)
+
+    # Admin sees all, sales reps see their own
+    sales_rep_id = None if current_employee.role in [HQRole.SUPER_ADMIN, HQRole.ADMIN] else current_employee.id
+
+    # Get overdue and due today
+    due_follow_ups = await activity_service.get_due_follow_ups(
+        sales_rep_id=sales_rep_id,
+        include_overdue=True,
+    )
+
+    # Get upcoming (next 7 days)
+    upcoming = await activity_service.get_upcoming_follow_ups(
+        sales_rep_id=sales_rep_id,
+        days_ahead=7,
+    )
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    overdue = []
+    due_today = []
+
+    for f in due_follow_ups:
+        days_overdue = (now - f.follow_up_date).days if f.follow_up_date < today_start else 0
+        is_overdue = f.follow_up_date < today_start
+
+        item = HQDueFollowUp(
+            id=f.id,
+            lead_id=f.lead_id,
+            lead_company_name=f.lead.company_name if f.lead else "Unknown",
+            lead_contact_name=f.lead.contact_name if f.lead else None,
+            subject=f.subject,
+            content=f.content,
+            follow_up_date=f.follow_up_date,
+            is_overdue=is_overdue,
+            days_overdue=days_overdue,
+            created_by_name=f"{f.created_by.first_name} {f.created_by.last_name}" if f.created_by else None,
+        )
+
+        if is_overdue:
+            overdue.append(item)
+        else:
+            due_today.append(item)
+
+    upcoming_items = [
+        HQDueFollowUp(
+            id=f.id,
+            lead_id=f.lead_id,
+            lead_company_name=f.lead.company_name if f.lead else "Unknown",
+            lead_contact_name=f.lead.contact_name if f.lead else None,
+            subject=f.subject,
+            content=f.content,
+            follow_up_date=f.follow_up_date,
+            is_overdue=False,
+            days_overdue=0,
+            created_by_name=f"{f.created_by.first_name} {f.created_by.last_name}" if f.created_by else None,
+        )
+        for f in upcoming
+    ]
+
+    return HQFollowUpAlerts(
+        overdue_count=len(overdue),
+        due_today_count=len(due_today),
+        upcoming_count=len(upcoming_items),
+        overdue=overdue,
+        due_today=due_today,
+        upcoming=upcoming_items,
+    )
+
+
+# ============================================================================
+# Lead Call Logging Endpoints
+# ============================================================================
+
+@router.post("/leads/{lead_id}/calls", response_model=HQLeadActivityResponse)
+async def log_lead_call(
+    lead_id: str,
+    data: HQCallLogCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Log a phone call with a lead."""
+    from app.services.hq_lead_activity import HQLeadActivityService
+
+    activity_service = HQLeadActivityService(db)
+    activity = await activity_service.log_call(
+        lead_id=lead_id,
+        created_by_id=current_employee.id,
+        outcome=data.outcome,
+        notes=data.notes,
+        duration_seconds=data.duration_seconds,
+    )
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        call_duration_seconds=activity.call_duration_seconds,
+        call_outcome=activity.call_outcome,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+# ============================================================================
+# Lead Email Endpoints
+# ============================================================================
+
+@router.post("/leads/{lead_id}/email", response_model=HQLeadActivityResponse)
+async def send_lead_email(
+    lead_id: str,
+    data: HQSendEmailRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send an email to a lead."""
+    from app.services.hq_email import HQEmailService
+
+    email_service = HQEmailService(db)
+    activity, error = await email_service.send_email(
+        lead_id=lead_id,
+        to_email=data.to_email,
+        subject=data.subject,
+        body=data.body,
+        sent_by_id=current_employee.id,
+        cc=data.cc,
+        template_id=data.template_id,
+    )
+
+    if not activity:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error or "Failed to send email")
+
+    return HQLeadActivityResponse(
+        id=activity.id,
+        lead_id=activity.lead_id,
+        activity_type=activity.activity_type.value,
+        subject=activity.subject,
+        content=activity.content,
+        email_from=activity.email_from,
+        email_to=activity.email_to,
+        email_cc=activity.email_cc,
+        email_status=activity.email_status,
+        email_thread_id=activity.email_thread_id,
+        created_by_id=activity.created_by_id,
+        created_at=activity.created_at,
+        updated_at=activity.updated_at,
+    )
+
+
+# ============================================================================
+# Email Template Endpoints
+# ============================================================================
+
+@router.get("/email/templates", response_model=List[HQEmailTemplateResponse])
+async def list_email_templates(
+    category: Optional[str] = None,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List available email templates."""
+    from app.services.hq_email import HQEmailService
+
+    email_service = HQEmailService(db)
+    templates = await email_service.get_templates(
+        category=category,
+        include_personal=True,
+        user_id=current_employee.id,
+    )
+
+    return [HQEmailTemplateResponse.model_validate(t, from_attributes=True) for t in templates]
+
+
+@router.post("/email/templates", response_model=HQEmailTemplateResponse)
+async def create_email_template(
+    data: HQEmailTemplateCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an email template."""
+    from app.services.hq_email import HQEmailService
+
+    email_service = HQEmailService(db)
+    template = await email_service.create_template(
+        name=data.name,
+        subject=data.subject,
+        body=data.body,
+        created_by_id=current_employee.id,
+        category=data.category,
+        is_global=data.is_global,
+        variables=data.variables,
+    )
+
+    return HQEmailTemplateResponse.model_validate(template, from_attributes=True)
+
+
+@router.post("/email/templates/{template_id}/render", response_model=HQRenderTemplateResponse)
+async def render_email_template(
+    template_id: str,
+    lead_id: str,
+    custom_vars: Optional[dict] = None,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render an email template with lead data for preview."""
+    from app.services.hq_email import HQEmailService
+
+    email_service = HQEmailService(db)
+    subject, body, error = await email_service.render_template(
+        template_id=template_id,
+        lead_id=lead_id,
+        custom_vars=custom_vars,
+    )
+
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
+
+    return HQRenderTemplateResponse(subject=subject, body=body)

@@ -80,3 +80,4 @@ class HQLead(Base):
     assigned_sales_rep = relationship("HQEmployee", foreign_keys=[assigned_sales_rep_id])
     created_by = relationship("HQEmployee", foreign_keys=[created_by_id])
     converted_to_opportunity = relationship("HQOpportunity", foreign_keys=[converted_to_opportunity_id])
+    activities = relationship("HQLeadActivity", back_populates="lead", order_by="HQLeadActivity.created_at.desc()")
