@@ -467,7 +467,7 @@ class HQAIQueueService:
                         HQAIAutonomyRule.name == rule_data["name"],
                         HQAIAutonomyRule.agent_name == rule_data["agent_name"],
                     )
-                )
+                ).limit(1)
             )
             if result.scalar_one_or_none():
                 continue

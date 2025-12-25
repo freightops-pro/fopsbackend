@@ -86,18 +86,48 @@ def get_db_sync() -> Generator[Session, None, None]:
         session.close()
 
 
-async def init_database() -> None:
-    """Create all tables. In production use Alembic migrations instead.
+def run_alembic_migrations() -> None:
+    """Run Alembic migrations synchronously."""
+    import subprocess
+    import sys
+    print("[DB] Running Alembic migrations...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode == 0:
+            print("[DB] Alembic migrations completed successfully")
+            if result.stdout:
+                print(f"[DB] Migration output: {result.stdout[:500]}")
+        else:
+            print(f"[DB] Alembic migration warning: {result.stderr[:500]}")
+    except subprocess.TimeoutExpired:
+        print("[DB] WARNING: Alembic migration timed out after 60s")
+    except Exception as e:
+        print(f"[DB] WARNING: Alembic migration failed: {e}")
 
-    Note: This is a best-effort initialization. In production, Alembic
-    migrations are the source of truth. If create_all fails (e.g., due to
-    enum mismatches), the app can still function if tables exist via migrations.
+
+async def init_database() -> None:
+    """Run migrations and create tables.
+
+    1. First try to run Alembic migrations (source of truth)
+    2. Fall back to create_all for any missing tables
     """
     print("[DB] Initializing database tables...")
+
+    # Run Alembic migrations first
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, run_alembic_migrations)
+
+    # Then try create_all as fallback
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[DB] Database tables initialized successfully")
+        print("[DB] Database tables verified successfully")
     except Exception as e:
         # Don't fail startup - migrations are the source of truth
         print(f"[DB] WARNING: create_all failed (expected if using Alembic): {e}")
