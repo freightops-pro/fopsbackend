@@ -738,6 +738,12 @@ class HQDashboardService:
 
     async def get_metrics(self) -> HQDashboardMetrics:
         """Get dashboard metrics."""
+        from datetime import timedelta
+
+        # Total tenants
+        total_result = await self.db.execute(select(func.count(HQTenant.id)))
+        total_tenants = total_result.scalar() or 0
+
         # Active tenants
         active_result = await self.db.execute(
             select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.ACTIVE)
@@ -749,6 +755,12 @@ class HQDashboardService:
             select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.TRIAL)
         )
         trial_tenants = trial_result.scalar() or 0
+
+        # Churned tenants
+        churned_result = await self.db.execute(
+            select(func.count(HQTenant.id)).where(HQTenant.status == TenantStatus.CHURNED)
+        )
+        churned_tenants = churned_result.scalar() or 0
 
         # MRR (sum of active tenant monthly rates)
         mrr_result = await self.db.execute(
@@ -772,14 +784,13 @@ class HQDashboardService:
         pending_payouts_count = pending_row[0] or 0
         pending_payouts_amount = Decimal(str(pending_row[1] or 0))
 
-        # Pending credits
-        pending_credits_result = await self.db.execute(
-            select(func.count(HQCredit.id)).where(HQCredit.status == CreditStatus.PENDING)
+        # Open contracts (active)
+        open_contracts_result = await self.db.execute(
+            select(func.count(HQContract.id)).where(HQContract.status == ContractStatus.ACTIVE)
         )
-        pending_credits_count = pending_credits_result.scalar() or 0
+        open_contracts = open_contracts_result.scalar() or 0
 
         # Expiring contracts (next 30 days)
-        from datetime import timedelta
         expiring_result = await self.db.execute(
             select(func.count(HQContract.id)).where(
                 and_(
@@ -789,19 +800,45 @@ class HQDashboardService:
                 )
             )
         )
-        expiring_contracts_count = expiring_result.scalar() or 0
+        expiring_contracts = expiring_result.scalar() or 0
+
+        # Pending quotes
+        pending_quotes_result = await self.db.execute(
+            select(func.count(HQQuote.id)).where(
+                HQQuote.status.in_([QuoteStatus.DRAFT, QuoteStatus.SENT])
+            )
+        )
+        pending_quotes = pending_quotes_result.scalar() or 0
+
+        # Outstanding credits (approved but not applied)
+        credits_result = await self.db.execute(
+            select(func.coalesce(func.sum(HQCredit.remaining_amount), 0)).where(
+                HQCredit.status == CreditStatus.APPROVED
+            )
+        )
+        total_credits_outstanding = Decimal(str(credits_result.scalar() or 0))
+
+        # HQ Employee count
+        employee_result = await self.db.execute(
+            select(func.count(HQEmployee.id)).where(HQEmployee.is_active == True)
+        )
+        hq_employee_count = employee_result.scalar() or 0
 
         return HQDashboardMetrics(
+            total_tenants=total_tenants,
             active_tenants=active_tenants,
             trial_tenants=trial_tenants,
+            churned_tenants=churned_tenants,
             mrr=mrr,
             arr=arr,
-            churn_rate=Decimal("0"),  # Would need historical data
-            ltv=Decimal("0"),  # Would need historical data
-            pending_payouts_amount=pending_payouts_amount,
-            pending_payouts_count=pending_payouts_count,
-            pending_credits_count=pending_credits_count,
-            expiring_contracts_count=expiring_contracts_count,
+            mrr_growth=Decimal("0"),  # Would need historical data
+            pending_payouts=pending_payouts_count,
+            pending_payout_amount=pending_payouts_amount,
+            open_contracts=open_contracts,
+            expiring_contracts=expiring_contracts,
+            pending_quotes=pending_quotes,
+            total_credits_outstanding=total_credits_outstanding,
+            hq_employee_count=hq_employee_count,
         )
 
 

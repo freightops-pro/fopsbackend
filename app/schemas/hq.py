@@ -262,49 +262,54 @@ ContractTypeType = Literal["standard", "enterprise", "custom", "pilot"]
 
 class HQContractBase(BaseModel):
     title: str
-    contract_type: ContractTypeType = "standard"
+    contract_type: ContractTypeType = Field("standard", alias="type", serialization_alias="type")
     description: Optional[str] = None
-    monthly_value: Decimal
-    annual_value: Optional[Decimal] = None
-    setup_fee: Decimal = Decimal("0")
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    auto_renew: str = "false"
-    notice_period_days: str = "30"
-    custom_terms: Optional[str] = None
+    monthly_value: Decimal = Field(alias="monthlyFee", serialization_alias="monthlyFee")
+    annual_value: Optional[Decimal] = Field(None, alias="annualValue", serialization_alias="annualValue")
+    setup_fee: Decimal = Field(Decimal("0"), alias="setupFee", serialization_alias="setupFee")
+    start_date: Optional[datetime] = Field(None, alias="startDate", serialization_alias="startDate")
+    end_date: Optional[datetime] = Field(None, alias="endDate", serialization_alias="endDate")
+    auto_renew: str = Field("false", alias="autoRenew", serialization_alias="autoRenew")
+    notice_period_days: str = Field("30", alias="noticePeriodDays", serialization_alias="noticePeriodDays")
+    custom_terms: Optional[str] = Field(None, alias="customTerms", serialization_alias="customTerms")
+
+    model_config = {"populate_by_name": True}
 
 
 class HQContractCreate(HQContractBase):
-    tenant_id: str
+    tenant_id: str = Field(alias="tenantId")
 
 
 class HQContractUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[ContractStatusType] = None
     description: Optional[str] = None
-    monthly_value: Optional[Decimal] = None
-    annual_value: Optional[Decimal] = None
-    setup_fee: Optional[Decimal] = None
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    custom_terms: Optional[str] = None
+    monthly_value: Optional[Decimal] = Field(None, alias="monthlyFee")
+    annual_value: Optional[Decimal] = Field(None, alias="annualValue")
+    setup_fee: Optional[Decimal] = Field(None, alias="setupFee")
+    start_date: Optional[datetime] = Field(None, alias="startDate")
+    end_date: Optional[datetime] = Field(None, alias="endDate")
+    custom_terms: Optional[str] = Field(None, alias="customTerms")
+
+    model_config = {"populate_by_name": True}
 
 
 class HQContractResponse(HQContractBase):
     id: str
-    tenant_id: str
-    contract_number: str
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    tenant_name: Optional[str] = Field(None, alias="tenantName", serialization_alias="tenantName")
+    contract_number: str = Field(alias="contractNumber", serialization_alias="contractNumber")
     status: ContractStatusType
-    signed_by_customer: Optional[str] = None
-    signed_by_hq: Optional[str] = None
-    signed_at: Optional[datetime] = None
-    created_by_id: Optional[str] = None
-    approved_by_id: Optional[str] = None
-    approved_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    signed_by_customer: Optional[str] = Field(None, alias="signedByCustomer", serialization_alias="signedByCustomer")
+    signed_by_hq: Optional[str] = Field(None, alias="signedByHQ", serialization_alias="signedByHQ")
+    signed_at: Optional[datetime] = Field(None, alias="signedAt", serialization_alias="signedAt")
+    created_by_id: Optional[str] = Field(None, alias="createdBy", serialization_alias="createdBy")
+    approved_by_id: Optional[str] = Field(None, alias="approvedBy", serialization_alias="approvedBy")
+    approved_at: Optional[datetime] = Field(None, alias="approvedAt", serialization_alias="approvedAt")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # ============================================================================
@@ -498,32 +503,43 @@ class HQSystemModuleResponse(HQSystemModuleBase):
 # ============================================================================
 
 class HQDashboardMetrics(BaseModel):
-    active_tenants: int
-    trial_tenants: int
-    mrr: Decimal
-    arr: Decimal
-    churn_rate: Decimal
-    ltv: Decimal
-    pending_payouts_amount: Decimal
-    pending_payouts_count: int
-    pending_credits_count: int
-    expiring_contracts_count: int
+    """Dashboard metrics matching frontend HQDashboardMetrics type."""
+    total_tenants: int = Field(0, alias="totalTenants", serialization_alias="totalTenants")
+    active_tenants: int = Field(0, alias="activeTenants", serialization_alias="activeTenants")
+    trial_tenants: int = Field(0, alias="trialTenants", serialization_alias="trialTenants")
+    churned_tenants: int = Field(0, alias="churnedTenants", serialization_alias="churnedTenants")
+    mrr: Decimal = Field(Decimal("0"), serialization_alias="mrr")
+    arr: Decimal = Field(Decimal("0"), serialization_alias="arr")
+    mrr_growth: Decimal = Field(Decimal("0"), alias="mrrGrowth", serialization_alias="mrrGrowth")
+    pending_payouts: int = Field(0, alias="pendingPayouts", serialization_alias="pendingPayouts")
+    pending_payout_amount: Decimal = Field(Decimal("0"), alias="pendingPayoutAmount", serialization_alias="pendingPayoutAmount")
+    open_contracts: int = Field(0, alias="openContracts", serialization_alias="openContracts")
+    expiring_contracts: int = Field(0, alias="expiringContracts", serialization_alias="expiringContracts")
+    pending_quotes: int = Field(0, alias="pendingQuotes", serialization_alias="pendingQuotes")
+    total_credits_outstanding: Decimal = Field(Decimal("0"), alias="totalCreditsOutstanding", serialization_alias="totalCreditsOutstanding")
+    hq_employee_count: int = Field(0, alias="hqEmployeeCount", serialization_alias="hqEmployeeCount")
+
+    model_config = {"populate_by_name": True}
 
 
 class HQRecentTenant(BaseModel):
     id: str
-    company_name: str
+    company_name: str = Field(alias="companyName", serialization_alias="companyName")
     status: str
-    subscription_tier: str
-    created_at: datetime
+    subscription_tier: str = Field(alias="subscriptionTier", serialization_alias="subscriptionTier")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"populate_by_name": True}
 
 
 class HQExpiringContract(BaseModel):
     id: str
-    tenant_name: str
-    contract_number: str
-    end_date: datetime
-    monthly_value: Decimal
+    tenant_name: str = Field(alias="tenantName", serialization_alias="tenantName")
+    contract_number: str = Field(alias="contractNumber", serialization_alias="contractNumber")
+    end_date: datetime = Field(alias="endDate", serialization_alias="endDate")
+    monthly_value: Decimal = Field(alias="monthlyValue", serialization_alias="monthlyValue")
+
+    model_config = {"populate_by_name": True}
 
 
 # ============================================================================

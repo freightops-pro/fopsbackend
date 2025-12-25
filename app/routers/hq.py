@@ -274,15 +274,20 @@ async def get_recent_tenants(
 ) -> List[HQTenantResponse]:
     """Get recently created tenants."""
     from sqlalchemy import select
-    from app.models.hq_tenant import HQTenant
+    from sqlalchemy.orm import selectinload
+    from app.models.company import Company
 
     result = await db.execute(
-        select(HQTenant)
-        .order_by(HQTenant.created_at.desc())
+        select(Company)
+        .options(
+            selectinload(Company.users),
+            selectinload(Company.subscription),
+        )
+        .order_by(Company.createdAt.desc())
         .limit(5)
     )
-    tenants = result.scalars().all()
-    return [HQTenantResponse.model_validate(t, from_attributes=True) for t in tenants]
+    companies = result.scalars().all()
+    return [_build_tenant_response_from_company(c) for c in companies]
 
 
 @router.get("/dashboard/expiring-contracts", response_model=List[HQContractResponse])
@@ -292,12 +297,15 @@ async def get_expiring_contracts(
 ) -> List[HQContractResponse]:
     """Get contracts expiring within 30 days."""
     from sqlalchemy import select, and_
+    from sqlalchemy.orm import selectinload
     from datetime import datetime, timedelta
     from app.models.hq_contract import HQContract, ContractStatus
+    from app.models.hq_tenant import HQTenant
 
     thirty_days = datetime.utcnow() + timedelta(days=30)
     result = await db.execute(
         select(HQContract)
+        .options(selectinload(HQContract.tenant).selectinload(HQTenant.company))
         .where(
             and_(
                 HQContract.status == ContractStatus.ACTIVE,
@@ -308,7 +316,37 @@ async def get_expiring_contracts(
         .limit(5)
     )
     contracts = result.scalars().all()
-    return [HQContractResponse.model_validate(c, from_attributes=True) for c in contracts]
+
+    responses = []
+    for c in contracts:
+        data = {
+            "id": c.id,
+            "tenant_id": c.tenant_id,
+            "tenant_name": c.tenant.company.name if c.tenant and c.tenant.company else None,
+            "contract_number": c.contract_number,
+            "title": c.title,
+            "contract_type": c.contract_type.value if hasattr(c.contract_type, 'value') else c.contract_type,
+            "status": c.status.value if hasattr(c.status, 'value') else c.status,
+            "description": c.description,
+            "monthly_value": c.monthly_value,
+            "annual_value": c.annual_value,
+            "setup_fee": c.setup_fee or 0,
+            "start_date": c.start_date,
+            "end_date": c.end_date,
+            "auto_renew": c.auto_renew or "false",
+            "notice_period_days": c.notice_period_days or "30",
+            "custom_terms": c.custom_terms,
+            "signed_by_customer": c.signed_by_customer,
+            "signed_by_hq": c.signed_by_hq,
+            "signed_at": c.signed_at,
+            "created_by_id": c.created_by_id,
+            "approved_by_id": c.approved_by_id,
+            "approved_at": c.approved_at,
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        responses.append(HQContractResponse.model_validate(data))
+    return responses
 
 
 # ============================================================================
