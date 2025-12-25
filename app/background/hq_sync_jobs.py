@@ -189,6 +189,8 @@ async def ai_nurture_leads() -> None:
         queued_count = 0
         auto_executed = 0
 
+        outreach_drafted = 0
+
         for lead in leads:
             try:
                 # Step 1: Enrich if missing contact info (always auto-execute)
@@ -198,7 +200,7 @@ async def ai_nurture_leads() -> None:
                         enriched_count += 1
                         await session.refresh(lead)
 
-                # Step 2: AI qualification analysis
+                # Step 2: Scout AI qualification analysis
                 qualification_result = await _ai_qualify_lead(llm, lead)
 
                 if qualification_result:
@@ -210,28 +212,39 @@ async def ai_nurture_leads() -> None:
                         "is_new_entrant": (datetime.utcnow() - lead.created_at).days < 30,
                         "days_since_registration": (datetime.utcnow() - lead.created_at).days,
                         "has_contact_info": bool(lead.contact_email or lead.contact_phone),
+                        "priority": qualification_result.get("priority", "medium"),
+                        "fleet_tier": qualification_result.get("fleet_tier", "unknown"),
                     }
 
-                    # Prepare draft content
+                    # Prepare qualification draft content
                     ai_notes = []
-                    if qualification_result.get("fit_score"):
-                        ai_notes.append(f"AI Fit Score: {qualification_result['fit_score']}/10")
+                    fit_score = qualification_result.get("fit_score", 0)
+                    if fit_score:
+                        ai_notes.append(f"Fit Score: {fit_score}/100")
+                    if qualification_result.get("fleet_tier"):
+                        ai_notes.append(f"Fleet Tier: {qualification_result['fleet_tier']}")
+                    if qualification_result.get("priority"):
+                        ai_notes.append(f"Priority: {qualification_result['priority'].upper()}")
                     if qualification_result.get("reasoning"):
-                        ai_notes.append(f"AI Analysis: {qualification_result['reasoning']}")
-                    if qualification_result.get("suggested_approach"):
-                        ai_notes.append(f"Suggested Approach: {qualification_result['suggested_approach']}")
+                        ai_notes.append(f"\nAnalysis: {qualification_result['reasoning']}")
+                    if qualification_result.get("buying_signals"):
+                        ai_notes.append(f"\nBuying Signals: {', '.join(qualification_result['buying_signals'])}")
+                    if qualification_result.get("pain_points"):
+                        ai_notes.append(f"\nPain Points: {', '.join(qualification_result['pain_points'])}")
                     if qualification_result.get("talking_points"):
-                        ai_notes.append(f"Talking Points: {', '.join(qualification_result['talking_points'])}")
+                        ai_notes.append(f"\nTalking Points: {', '.join(qualification_result['talking_points'])}")
+                    if qualification_result.get("suggested_approach"):
+                        ai_notes.append(f"\nRecommended Approach: {qualification_result['suggested_approach']}")
 
                     draft_content = "\n".join(ai_notes)
                     new_status = "qualified" if qualification_result.get("qualified") else "unqualified" if qualification_result.get("unqualified") else None
 
-                    # Create action in approval queue (risk assessed automatically)
+                    # Create qualification action in approval queue
                     action = await ai_queue.create_action(
                         action_type=AIActionType.LEAD_QUALIFICATION,
-                        agent_name="alex",
+                        agent_name="scout",
                         title=f"Qualify: {lead.company_name}",
-                        description=f"AI recommends marking as {new_status or 'needs review'}. Fleet: {fleet_size} trucks.",
+                        description=f"Scout recommends marking as {new_status or 'needs review'}. Fleet: {fleet_size} trucks. Priority: {qualification_result.get('priority', 'medium')}.",
                         draft_content=draft_content,
                         ai_reasoning=qualification_result.get("reasoning", ""),
                         entity_type="lead",
@@ -250,13 +263,45 @@ async def ai_nurture_leads() -> None:
 
                         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
                         if lead.notes:
-                            lead.notes = f"{lead.notes}\n\n--- AI Analysis ({timestamp}) ---\n{draft_content}"
+                            lead.notes = f"{lead.notes}\n\n--- Scout Analysis ({timestamp}) ---\n{draft_content}"
                         else:
-                            lead.notes = f"--- AI Analysis ({timestamp}) ---\n{draft_content}"
+                            lead.notes = f"--- Scout Analysis ({timestamp}) ---\n{draft_content}"
 
                         auto_executed += 1
                     else:
                         queued_count += 1
+
+                    # Step 3: For qualified leads with contact info, draft outreach email
+                    if (qualification_result.get("qualified") and
+                        lead.contact_email and
+                        qualification_result.get("priority") in ["high", "medium"]):
+
+                        outreach_draft = await _ai_draft_outreach(llm, lead, qualification_result)
+
+                        if outreach_draft:
+                            # Create outreach action in approval queue
+                            outreach_content = f"Subject: {outreach_draft.get('subject', 'N/A')}\n\n{outreach_draft.get('body', '')}"
+
+                            await ai_queue.create_action(
+                                action_type=AIActionType.LEAD_OUTREACH,
+                                agent_name="scout",
+                                title=f"Outreach: {lead.company_name}",
+                                description=f"Scout drafted a personalized outreach email. Priority: {qualification_result.get('priority', 'medium')}. Follow-up in {outreach_draft.get('follow_up_days', 3)} days.",
+                                draft_content=outreach_content,
+                                ai_reasoning=f"Based on qualification analysis: {qualification_result.get('reasoning', 'Lead meets ICP criteria')}",
+                                entity_type="lead",
+                                entity_id=lead.id,
+                                entity_name=lead.company_name,
+                                entity_data={
+                                    **entity_data,
+                                    "email_to": lead.contact_email,
+                                    "subject": outreach_draft.get("subject", ""),
+                                    "follow_up_days": outreach_draft.get("follow_up_days", 3),
+                                    "follow_up_angle": outreach_draft.get("follow_up_angle", ""),
+                                },
+                                assigned_to_id=lead.assigned_sales_rep_id,
+                            )
+                            outreach_drafted += 1
 
                 await session.commit()
 
@@ -274,71 +319,147 @@ async def ai_nurture_leads() -> None:
                 "enriched": enriched_count,
                 "auto_executed": auto_executed,
                 "queued_for_approval": queued_count,
+                "outreach_drafted": outreach_drafted,
             }
         )
 
 
 async def _ai_qualify_lead(llm: LLMRouter, lead: HQLead) -> Optional[dict]:
     """
-    Use AI to qualify a lead and prepare outreach strategy.
+    Use Scout AI to qualify a lead and prepare outreach strategy.
 
     Returns qualification analysis including:
     - qualified: bool - is this a good fit?
-    - fit_score: int 1-10 - how good is the fit?
+    - fit_score: int 1-100 - how good is the fit?
     - reasoning: str - why qualified/not
     - suggested_approach: str - how to approach this lead
     - talking_points: list - key points for sales conversation
+    - buying_signals: list - detected signals of purchase readiness
+    - pain_points: list - likely pain points to address
     """
-    system_prompt = """You are an expert sales qualification AI for FreightOps, a TMS (Transportation Management System) software company.
+    from app.core.agent_prompts import get_agent_prompt
 
-Your job is to analyze trucking company leads and determine:
-1. Are they a good fit for our TMS product?
-2. How should sales approach them?
-3. What are the key talking points?
+    system_prompt = get_agent_prompt("scout", "system")
 
-IDEAL CUSTOMER PROFILE:
-- Fleet size: 5-200 trucks (sweet spot: 15-75 trucks)
-- Currently using outdated systems or spreadsheets
-- Growing companies needing better operations management
-- Companies focused on compliance (ELD, IFTA, DOT)
-- Regional or OTR carriers
+    # Determine fleet tier for context
+    fleet_size = int(lead.estimated_trucks or 0) if lead.estimated_trucks else 0
+    if fleet_size < 5:
+        fleet_tier = "micro"
+    elif fleet_size <= 20:
+        fleet_tier = "small"
+    elif fleet_size <= 50:
+        fleet_tier = "growth"
+    elif fleet_size <= 100:
+        fleet_tier = "mid"
+    else:
+        fleet_tier = "enterprise"
 
-DISQUALIFICATION SIGNALS:
-- Very large enterprise fleets (1000+ trucks) - need enterprise sales
-- Brokers/3PLs (not carriers) - different product
-- Companies already using modern TMS
-- Inactive or suspended operating authority
+    # Calculate days since registration
+    days_since_registration = (datetime.utcnow() - lead.created_at).days
 
-Return ONLY valid JSON:
-{
-  "qualified": true/false,
-  "unqualified": true/false,
-  "fit_score": 1-10,
-  "reasoning": "explanation",
-  "suggested_approach": "how to reach out",
-  "talking_points": ["point1", "point2", "point3"],
-  "priority": "high/medium/low"
-}"""
+    user_prompt = f"""Analyze this trucking company lead using your qualification criteria:
 
-    user_prompt = f"""Analyze this trucking company lead:
+COMPANY PROFILE:
+- Company Name: {lead.company_name}
+- DOT Number: {lead.dot_number or 'Unknown'}
+- MC Number: {lead.mc_number or 'Unknown'}
+- Fleet Size: {lead.estimated_trucks or 'Unknown'} trucks (Tier: {fleet_tier})
+- State: {lead.state or 'Unknown'}
+- Days Since Added: {days_since_registration}
 
-Company: {lead.company_name}
-Contact: {lead.contact_name or 'Unknown'} ({lead.contact_title or 'Unknown title'})
-Email: {lead.contact_email or 'Unknown'}
-Phone: {lead.contact_phone or 'Unknown'}
-Fleet Size: {lead.estimated_trucks or 'Unknown'} trucks
-Estimated MRR: ${lead.estimated_mrr or 0}
-Source: {lead.source.value if lead.source else 'Unknown'}
-Notes: {lead.notes or 'None'}
+CONTACT INFO:
+- Name: {lead.contact_name or 'Unknown'}
+- Title: {lead.contact_title or 'Unknown'}
+- Email: {lead.contact_email or 'Not available'}
+- Phone: {lead.contact_phone or 'Not available'}
 
-Qualify this lead and provide outreach strategy."""
+BUSINESS DETAILS:
+- Estimated MRR Potential: ${lead.estimated_mrr or 0}
+- Lead Source: {lead.source.value if lead.source else 'Unknown'}
+- Carrier Type: {lead.carrier_type or 'Unknown'}
+- Cargo Types: {lead.cargo_types or 'Unknown'}
+
+EXISTING NOTES:
+{lead.notes or 'None'}
+
+Qualify this lead and determine:
+1. Is this a good fit for FreightOps TMS?
+2. What is their priority level?
+3. What pain points should we address?
+4. What is the recommended outreach approach?
+
+Return your analysis as JSON."""
 
     try:
         response, _ = await llm.generate(
-            agent_role="alex",
+            agent_role="scout",
             prompt=user_prompt,
             system_prompt=system_prompt,
-            temperature=0.3,
+            temperature=0.4,
+            max_tokens=2048
+        )
+
+        # Parse JSON response
+        response_text = response.strip()
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
+
+        return json.loads(response_text)
+
+    except Exception as exc:
+        logger.warning(f"Scout qualification failed for lead {lead.id}: {str(exc)}")
+        return None
+
+
+async def _ai_draft_outreach(llm: LLMRouter, lead: HQLead, qualification: dict) -> Optional[dict]:
+    """
+    Use Scout AI to draft a personalized outreach email for a qualified lead.
+
+    Returns:
+    - subject: Email subject line
+    - body: Email body content
+    - follow_up_days: When to follow up if no response
+    - follow_up_angle: Different angle for follow-up
+    """
+    from app.core.agent_prompts import get_agent_prompt
+
+    outreach_prompt = get_agent_prompt("scout", "outreach")
+
+    fleet_size = lead.estimated_trucks or "unknown"
+    pain_points = qualification.get("pain_points", [])
+    buying_signals = qualification.get("buying_signals", [])
+    recommended_pitch = qualification.get("recommended_pitch", "general TMS benefits")
+
+    user_prompt = f"""Draft a personalized cold outreach email for this lead:
+
+LEAD DETAILS:
+- Company: {lead.company_name}
+- Contact Name: {lead.contact_name or 'there'}
+- Fleet Size: {fleet_size} trucks
+- State: {lead.state or 'Unknown'}
+- Cargo Types: {lead.cargo_types or 'General freight'}
+
+QUALIFICATION INSIGHTS:
+- Pain Points Identified: {', '.join(pain_points) if pain_points else 'General operational challenges'}
+- Buying Signals: {', '.join(buying_signals) if buying_signals else 'Fleet size suggests growth stage'}
+- Recommended Pitch Angle: {recommended_pitch}
+- Priority: {qualification.get('priority', 'medium')}
+
+Write a short, personalized email that:
+1. References something specific about their operation
+2. Addresses their likely pain point
+3. Offers a low-commitment call to discuss
+4. Is under 150 words
+
+Return as JSON with subject, body, follow_up_days, and follow_up_angle."""
+
+    try:
+        response, _ = await llm.generate(
+            agent_role="scout",
+            prompt=user_prompt,
+            system_prompt=outreach_prompt,
+            temperature=0.5,  # Slightly more creative for email writing
             max_tokens=1024
         )
 
@@ -351,7 +472,7 @@ Qualify this lead and provide outreach strategy."""
         return json.loads(response_text)
 
     except Exception as exc:
-        logger.warning(f"AI qualification failed for lead {lead.id}: {str(exc)}")
+        logger.warning(f"Scout outreach draft failed for lead {lead.id}: {str(exc)}")
         return None
 
 
