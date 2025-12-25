@@ -62,9 +62,11 @@ class HQQuote(Base):
     rejection_reason = Column(Text, nullable=True)
 
     created_by_id = Column(String, ForeignKey("hq_employee.id"), nullable=True)
+    assigned_sales_rep_id = Column(String, ForeignKey("hq_employee.id"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     tenant = relationship("HQTenant", back_populates="quotes")
     created_by = relationship("HQEmployee", foreign_keys=[created_by_id])
+    assigned_sales_rep = relationship("HQEmployee", foreign_keys=[assigned_sales_rep_id])

@@ -66,6 +66,7 @@ class HQContract(Base):
     created_by_id = Column(String, ForeignKey("hq_employee.id"), nullable=True)
     approved_by_id = Column(String, ForeignKey("hq_employee.id"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
+    assigned_sales_rep_id = Column(String, ForeignKey("hq_employee.id"), nullable=True, index=True)
 
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -74,3 +75,4 @@ class HQContract(Base):
     tenant = relationship("HQTenant", back_populates="contracts")
     created_by = relationship("HQEmployee", foreign_keys=[created_by_id])
     approved_by = relationship("HQEmployee", foreign_keys=[approved_by_id])
+    assigned_sales_rep = relationship("HQEmployee", foreign_keys=[assigned_sales_rep_id])

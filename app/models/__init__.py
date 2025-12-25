@@ -52,6 +52,13 @@ from app.models.hq_payout import HQPayout, PayoutStatus  # noqa: F401
 from app.models.hq_system_module import HQSystemModule, ModuleStatus  # noqa: F401
 from app.models.hq_banking import HQFraudAlert, HQBankingAuditLog, FraudAlertSeverity, FraudAlertStatus, BankingAuditAction  # noqa: F401
 
+# HQ CRM Models
+from app.models.hq_lead import HQLead, LeadStatus, LeadSource  # noqa: F401
+from app.models.hq_opportunity import HQOpportunity, OpportunityStage  # noqa: F401
+from app.models.hq_sales_rep_commission import HQSalesRepCommission, CommissionTier  # noqa: F401
+from app.models.hq_commission_record import HQCommissionRecord, CommissionRecordStatus  # noqa: F401
+from app.models.hq_commission_payment import HQCommissionPayment, CommissionPaymentStatus  # noqa: F401
+
 # Billing Models
 from app.models.billing import Subscription, SubscriptionAddOn, PaymentMethod, StripeInvoice, StripeWebhookEvent  # noqa: F401
 

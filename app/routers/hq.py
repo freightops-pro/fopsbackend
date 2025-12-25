@@ -54,6 +54,26 @@ from app.schemas.hq import (
     HQAIUsageLogRequest,
     HQAICostsByTenant,
     HQGLDashboard,
+    # CRM schemas
+    HQLeadCreate,
+    HQLeadUpdate,
+    HQLeadResponse,
+    HQLeadConvert,
+    HQLeadImportRequest,
+    HQLeadImportResponse,
+    HQOpportunityCreate,
+    HQOpportunityUpdate,
+    HQOpportunityResponse,
+    HQOpportunityConvert,
+    HQPipelineSummary,
+    HQSalesRepCommissionCreate,
+    HQSalesRepCommissionUpdate,
+    HQSalesRepCommissionResponse,
+    HQCommissionRecordResponse,
+    HQCommissionPaymentResponse,
+    HQCommissionPaymentApprove,
+    HQSalesRepEarnings,
+    HQSalesRepAccountSummary,
 )
 from app.services.hq import (
     HQAuthService,
@@ -2885,3 +2905,430 @@ async def complete_employee_onboarding(
     await db.refresh(employee)
 
     return HQHREmployeeResponse.model_validate(employee, from_attributes=True)
+
+
+# ============================================================================
+# CRM - Lead Endpoints
+# ============================================================================
+
+@router.get("/leads", response_model=List[HQLeadResponse])
+async def list_leads(
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List leads. Sales managers only see their own leads."""
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    return await lead_service.get_leads(
+        current_user_id=current_employee.id,
+        current_user_role=current_employee.role,
+        status=status,
+        source=source,
+    )
+
+
+@router.get("/leads/{lead_id}", response_model=HQLeadResponse)
+async def get_lead(
+    lead_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single lead by ID."""
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    lead = await lead_service.get_lead(lead_id)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    return lead
+
+
+@router.post("/leads", response_model=HQLeadResponse)
+async def create_lead(
+    data: HQLeadCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new lead."""
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    return await lead_service.create_lead(data, current_employee.id)
+
+
+@router.put("/leads/{lead_id}", response_model=HQLeadResponse)
+async def update_lead(
+    lead_id: str,
+    data: HQLeadUpdate,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a lead."""
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    lead = await lead_service.update_lead(lead_id, data)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    return lead
+
+
+@router.post("/leads/{lead_id}/convert", response_model=HQOpportunityResponse)
+async def convert_lead_to_opportunity(
+    lead_id: str,
+    data: HQLeadConvert,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Convert a lead to an opportunity."""
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    try:
+        opportunity = await lead_service.convert_to_opportunity(lead_id, data, current_employee.id)
+        if not opportunity:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        return opportunity
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/leads/import", response_model=HQLeadImportResponse)
+async def import_leads_ai(
+    data: HQLeadImportRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import leads using AI parsing from CSV, spreadsheet, email, or text content.
+
+    The AI will extract company names, contacts, and other lead info automatically.
+    Leads can be assigned to a specific sales rep or distributed round-robin.
+    """
+    from app.services.hq_leads import HQLeadService
+
+    lead_service = HQLeadService(db)
+    leads_created, errors = await lead_service.import_leads_from_content(
+        content=data.content,
+        content_type=data.content_type,
+        assign_to_sales_rep_id=data.assign_to_sales_rep_id,
+        created_by_id=current_employee.id,
+        auto_assign_round_robin=data.auto_assign_round_robin,
+    )
+
+    return HQLeadImportResponse(
+        leads_created=leads_created,
+        errors=errors,
+        total_parsed=len(leads_created) + len(errors),
+        total_created=len(leads_created),
+    )
+
+
+# ============================================================================
+# CRM - Opportunity Endpoints
+# ============================================================================
+
+@router.get("/opportunities", response_model=List[HQOpportunityResponse])
+async def list_opportunities(
+    stage: Optional[str] = None,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List opportunities. Sales managers only see their own."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    return await opp_service.get_opportunities(
+        current_user_id=current_employee.id,
+        current_user_role=current_employee.role,
+        stage=stage,
+    )
+
+
+@router.get("/opportunities/pipeline", response_model=List[HQPipelineSummary])
+async def get_pipeline_summary(
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get pipeline summary grouped by stage."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    return await opp_service.get_pipeline_summary(
+        current_user_id=current_employee.id,
+        current_user_role=current_employee.role,
+    )
+
+
+@router.get("/opportunities/{opportunity_id}", response_model=HQOpportunityResponse)
+async def get_opportunity(
+    opportunity_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single opportunity by ID."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    opportunity = await opp_service.get_opportunity(opportunity_id)
+    if not opportunity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    return opportunity
+
+
+@router.post("/opportunities", response_model=HQOpportunityResponse)
+async def create_opportunity(
+    data: HQOpportunityCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new opportunity."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    return await opp_service.create_opportunity(data, current_employee.id)
+
+
+@router.put("/opportunities/{opportunity_id}", response_model=HQOpportunityResponse)
+async def update_opportunity(
+    opportunity_id: str,
+    data: HQOpportunityUpdate,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an opportunity."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    opportunity = await opp_service.update_opportunity(opportunity_id, data)
+    if not opportunity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+    return opportunity
+
+
+@router.post("/opportunities/{opportunity_id}/convert", response_model=HQQuoteResponse)
+async def convert_opportunity_to_quote(
+    opportunity_id: str,
+    data: HQOpportunityConvert,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_quotes")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Convert an opportunity to a quote."""
+    from app.services.hq_opportunities import HQOpportunityService
+
+    opp_service = HQOpportunityService(db)
+    try:
+        quote = await opp_service.convert_to_quote(opportunity_id, data, current_employee.id)
+        if not quote:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity not found")
+        return quote
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ============================================================================
+# Commission Configuration Endpoints (Admin Only)
+# ============================================================================
+
+@router.get("/commission/config", response_model=List[HQSalesRepCommissionResponse])
+async def list_commission_configs(
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all sales rep commission configurations (Admin only)."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    return await commission_service.get_all_commission_configs()
+
+
+@router.get("/commission/config/{sales_rep_id}", response_model=HQSalesRepCommissionResponse)
+async def get_commission_config(
+    sales_rep_id: str,
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get commission config for a specific sales rep."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    config = await commission_service.get_commission_config(sales_rep_id)
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commission config not found")
+    return config
+
+
+@router.post("/commission/config", response_model=HQSalesRepCommissionResponse)
+async def create_commission_config(
+    data: HQSalesRepCommissionCreate,
+    current_employee: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create commission config for a sales rep."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    try:
+        return await commission_service.create_commission_config(data, current_employee.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/commission/config/{sales_rep_id}", response_model=HQSalesRepCommissionResponse)
+async def update_commission_config(
+    sales_rep_id: str,
+    data: HQSalesRepCommissionUpdate,
+    current_employee: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update commission config for a sales rep."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    config = await commission_service.update_commission_config(sales_rep_id, data, current_employee.id)
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commission config not found")
+    return config
+
+
+# ============================================================================
+# Commission Earnings Endpoints
+# ============================================================================
+
+@router.get("/commission/earnings", response_model=HQSalesRepEarnings)
+async def get_my_earnings(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get earnings dashboard for current sales rep."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    earnings = await commission_service.get_sales_rep_earnings(current_employee.id)
+    if not earnings:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Earnings data not found")
+    return earnings
+
+
+@router.get("/commission/earnings/{sales_rep_id}", response_model=HQSalesRepEarnings)
+async def get_sales_rep_earnings(
+    sales_rep_id: str,
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get earnings dashboard for a specific sales rep (Admin only)."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    earnings = await commission_service.get_sales_rep_earnings(sales_rep_id)
+    if not earnings:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Earnings data not found")
+    return earnings
+
+
+@router.get("/commission/accounts", response_model=List[HQSalesRepAccountSummary])
+async def get_my_accounts(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get accounts assigned to current sales rep with MRR breakdown."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    return await commission_service.get_sales_rep_accounts(current_employee.id)
+
+
+@router.get("/commission/accounts/{sales_rep_id}", response_model=List[HQSalesRepAccountSummary])
+async def get_sales_rep_accounts(
+    sales_rep_id: str,
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get accounts for a specific sales rep (Admin only)."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    return await commission_service.get_sales_rep_accounts(sales_rep_id)
+
+
+# ============================================================================
+# Commission Records & Payments Endpoints
+# ============================================================================
+
+@router.get("/commission/records", response_model=List[HQCommissionRecordResponse])
+async def list_commission_records(
+    status: Optional[str] = None,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """List commission records. Sales reps see their own, admins see all."""
+    from app.services.hq_commission import HQCommissionService
+    from app.models.hq_employee import HQRole
+
+    commission_service = HQCommissionService(db)
+
+    # Admins see all, sales reps see their own
+    sales_rep_id = None if current_employee.role in [HQRole.SUPER_ADMIN, HQRole.ADMIN] else current_employee.id
+
+    return await commission_service.get_commission_records(
+        sales_rep_id=sales_rep_id,
+        status=status,
+    )
+
+
+@router.get("/commission/payments", response_model=List[HQCommissionPaymentResponse])
+async def list_commission_payments(
+    status: Optional[str] = None,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """List commission payments. Sales reps see their own, admins see all."""
+    from app.services.hq_commission import HQCommissionService
+    from app.models.hq_employee import HQRole
+
+    commission_service = HQCommissionService(db)
+
+    # Admins see all, sales reps see their own
+    sales_rep_id = None if current_employee.role in [HQRole.SUPER_ADMIN, HQRole.ADMIN] else current_employee.id
+
+    return await commission_service.get_commission_payments(
+        sales_rep_id=sales_rep_id,
+        status=status,
+    )
+
+
+@router.post("/commission/payments/{payment_id}/approve", response_model=HQCommissionPaymentResponse)
+async def approve_commission_payment(
+    payment_id: str,
+    data: HQCommissionPaymentApprove,
+    current_employee: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a commission payment (Admin only)."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    payment = await commission_service.approve_commission_payment(payment_id, data, current_employee.id)
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+    return payment
+
+
+@router.post("/commission/payments/{payment_id}/mark-paid", response_model=HQCommissionPaymentResponse)
+async def mark_commission_payment_paid(
+    payment_id: str,
+    payment_reference: Optional[str] = None,
+    _: HQEmployee = Depends(require_hq_admin()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a commission payment as paid (Admin only)."""
+    from app.services.hq_commission import HQCommissionService
+
+    commission_service = HQCommissionService(db)
+    payment = await commission_service.mark_payment_paid(payment_id, payment_reference)
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+    return payment

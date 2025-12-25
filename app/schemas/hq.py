@@ -543,6 +543,329 @@ class HQExpiringContract(BaseModel):
 
 
 # ============================================================================
+# CRM Lead Schemas
+# ============================================================================
+
+LeadStatusType = Literal["new", "contacted", "qualified", "unqualified", "converted"]
+LeadSourceType = Literal["referral", "website", "cold_call", "partner", "trade_show", "linkedin", "other"]
+
+
+class HQLeadBase(BaseModel):
+    company_name: str = Field(alias="companyName", serialization_alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName", serialization_alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail", serialization_alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone", serialization_alias="contactPhone")
+    contact_title: Optional[str] = Field(None, alias="contactTitle", serialization_alias="contactTitle")
+    source: LeadSourceType = "other"
+    estimated_mrr: Optional[Decimal] = Field(None, alias="estimatedMrr", serialization_alias="estimatedMrr")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks", serialization_alias="estimatedTrucks")
+    estimated_drivers: Optional[str] = Field(None, alias="estimatedDrivers", serialization_alias="estimatedDrivers")
+    next_follow_up_date: Optional[datetime] = Field(None, alias="nextFollowUpDate", serialization_alias="nextFollowUpDate")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadCreate(HQLeadBase):
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+
+
+class HQLeadUpdate(BaseModel):
+    company_name: Optional[str] = Field(None, alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_title: Optional[str] = Field(None, alias="contactTitle")
+    source: Optional[LeadSourceType] = None
+    status: Optional[LeadStatusType] = None
+    estimated_mrr: Optional[Decimal] = Field(None, alias="estimatedMrr")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks")
+    estimated_drivers: Optional[str] = Field(None, alias="estimatedDrivers")
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId")
+    next_follow_up_date: Optional[datetime] = Field(None, alias="nextFollowUpDate")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadResponse(HQLeadBase):
+    id: str
+    lead_number: str = Field(alias="leadNumber", serialization_alias="leadNumber")
+    status: LeadStatusType
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+    assigned_sales_rep_name: Optional[str] = Field(None, alias="assignedSalesRepName", serialization_alias="assignedSalesRepName")
+    last_contacted_at: Optional[datetime] = Field(None, alias="lastContactedAt", serialization_alias="lastContactedAt")
+    converted_to_opportunity_id: Optional[str] = Field(None, alias="convertedToOpportunityId", serialization_alias="convertedToOpportunityId")
+    converted_at: Optional[datetime] = Field(None, alias="convertedAt", serialization_alias="convertedAt")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQLeadConvert(BaseModel):
+    """Convert lead to opportunity."""
+    title: str
+    estimated_mrr: Decimal = Field(alias="estimatedMrr")
+    estimated_close_date: Optional[datetime] = Field(None, alias="estimatedCloseDate")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadImportRequest(BaseModel):
+    """Request to import leads from AI-parsed content."""
+    content: str = Field(..., min_length=10, max_length=100000)
+    content_type: Literal["csv", "email", "spreadsheet", "text"] = Field("text", alias="contentType")
+    assign_to_sales_rep_id: Optional[str] = Field(None, alias="assignToSalesRepId")
+    auto_assign_round_robin: bool = Field(False, alias="autoAssignRoundRobin")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQLeadImportResponse(BaseModel):
+    """Response from AI lead import."""
+    leads_created: List["HQLeadResponse"] = Field(alias="leadsCreated", serialization_alias="leadsCreated")
+    errors: List[dict] = []
+    total_parsed: int = Field(alias="totalParsed", serialization_alias="totalParsed")
+    total_created: int = Field(alias="totalCreated", serialization_alias="totalCreated")
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# CRM Opportunity Schemas
+# ============================================================================
+
+OpportunityStageType = Literal["discovery", "proposal", "negotiation", "closed_won", "closed_lost"]
+
+
+class HQOpportunityBase(BaseModel):
+    company_name: str = Field(alias="companyName", serialization_alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName", serialization_alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail", serialization_alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone", serialization_alias="contactPhone")
+    title: str
+    description: Optional[str] = None
+    estimated_mrr: Decimal = Field(alias="estimatedMrr", serialization_alias="estimatedMrr")
+    estimated_setup_fee: Optional[Decimal] = Field(Decimal("0"), alias="estimatedSetupFee", serialization_alias="estimatedSetupFee")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks", serialization_alias="estimatedTrucks")
+    estimated_close_date: Optional[datetime] = Field(None, alias="estimatedCloseDate", serialization_alias="estimatedCloseDate")
+    probability: Optional[Decimal] = Field(Decimal("20"), serialization_alias="probability")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQOpportunityCreate(HQOpportunityBase):
+    lead_id: Optional[str] = Field(None, alias="leadId", serialization_alias="leadId")
+    tenant_id: Optional[str] = Field(None, alias="tenantId", serialization_alias="tenantId")
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+
+
+class HQOpportunityUpdate(BaseModel):
+    company_name: Optional[str] = Field(None, alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    title: Optional[str] = None
+    description: Optional[str] = None
+    stage: Optional[OpportunityStageType] = None
+    probability: Optional[Decimal] = None
+    estimated_mrr: Optional[Decimal] = Field(None, alias="estimatedMrr")
+    estimated_setup_fee: Optional[Decimal] = Field(None, alias="estimatedSetupFee")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks")
+    estimated_close_date: Optional[datetime] = Field(None, alias="estimatedCloseDate")
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId")
+    lost_reason: Optional[str] = Field(None, alias="lostReason")
+    competitor: Optional[str] = None
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQOpportunityResponse(HQOpportunityBase):
+    id: str
+    opportunity_number: str = Field(alias="opportunityNumber", serialization_alias="opportunityNumber")
+    lead_id: Optional[str] = Field(None, alias="leadId", serialization_alias="leadId")
+    tenant_id: Optional[str] = Field(None, alias="tenantId", serialization_alias="tenantId")
+    stage: OpportunityStageType
+    actual_close_date: Optional[datetime] = Field(None, alias="actualCloseDate", serialization_alias="actualCloseDate")
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+    assigned_sales_rep_name: Optional[str] = Field(None, alias="assignedSalesRepName", serialization_alias="assignedSalesRepName")
+    converted_to_quote_id: Optional[str] = Field(None, alias="convertedToQuoteId", serialization_alias="convertedToQuoteId")
+    converted_at: Optional[datetime] = Field(None, alias="convertedAt", serialization_alias="convertedAt")
+    lost_reason: Optional[str] = Field(None, alias="lostReason", serialization_alias="lostReason")
+    competitor: Optional[str] = None
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQOpportunityConvert(BaseModel):
+    """Convert opportunity to quote."""
+    title: str
+    tier: str = "professional"
+    base_monthly_rate: Decimal = Field(alias="baseMonthlyRate")
+    setup_fee: Optional[Decimal] = Field(Decimal("0"), alias="setupFee")
+    valid_days: int = Field(30, alias="validDays")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQPipelineSummary(BaseModel):
+    """Pipeline stage summary for dashboard."""
+    stage: OpportunityStageType
+    count: int
+    total_value: Decimal = Field(alias="totalValue", serialization_alias="totalValue")
+    weighted_value: Decimal = Field(alias="weightedValue", serialization_alias="weightedValue")
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# Commission Configuration Schemas
+# ============================================================================
+
+CommissionTierType = Literal["junior", "mid", "senior", "enterprise"]
+
+
+class HQSalesRepCommissionBase(BaseModel):
+    commission_rate: Decimal = Field(alias="commissionRate", serialization_alias="commissionRate")
+    tier_level: CommissionTierType = Field("junior", alias="tierLevel", serialization_alias="tierLevel")
+    effective_from: Optional[datetime] = Field(None, alias="effectiveFrom", serialization_alias="effectiveFrom")
+    effective_until: Optional[datetime] = Field(None, alias="effectiveUntil", serialization_alias="effectiveUntil")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSalesRepCommissionCreate(HQSalesRepCommissionBase):
+    sales_rep_id: str = Field(alias="salesRepId", serialization_alias="salesRepId")
+
+
+class HQSalesRepCommissionUpdate(BaseModel):
+    commission_rate: Optional[Decimal] = Field(None, alias="commissionRate")
+    tier_level: Optional[CommissionTierType] = Field(None, alias="tierLevel")
+    effective_until: Optional[datetime] = Field(None, alias="effectiveUntil")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSalesRepCommissionResponse(HQSalesRepCommissionBase):
+    id: str
+    sales_rep_id: str = Field(alias="salesRepId", serialization_alias="salesRepId")
+    sales_rep_name: Optional[str] = Field(None, alias="salesRepName", serialization_alias="salesRepName")
+    sales_rep_email: Optional[str] = Field(None, alias="salesRepEmail", serialization_alias="salesRepEmail")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Commission Record & Payment Schemas
+# ============================================================================
+
+CommissionRecordStatusType = Literal["pending", "eligible", "active", "cancelled"]
+CommissionPaymentStatusType = Literal["pending", "approved", "paid", "cancelled"]
+
+
+class HQCommissionRecordResponse(BaseModel):
+    id: str
+    sales_rep_id: str = Field(alias="salesRepId", serialization_alias="salesRepId")
+    sales_rep_name: Optional[str] = Field(None, alias="salesRepName", serialization_alias="salesRepName")
+    contract_id: str = Field(alias="contractId", serialization_alias="contractId")
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    tenant_name: Optional[str] = Field(None, alias="tenantName", serialization_alias="tenantName")
+    commission_rate: Decimal = Field(alias="commissionRate", serialization_alias="commissionRate")
+    base_mrr: Decimal = Field(alias="baseMrr", serialization_alias="baseMrr")
+    status: CommissionRecordStatusType
+    deal_closed_at: datetime = Field(alias="dealClosedAt", serialization_alias="dealClosedAt")
+    eligible_at: datetime = Field(alias="eligibleAt", serialization_alias="eligibleAt")
+    total_paid_amount: Decimal = Field(alias="totalPaidAmount", serialization_alias="totalPaidAmount")
+    is_active: bool = Field(alias="isActive", serialization_alias="isActive")
+    deactivated_at: Optional[datetime] = Field(None, alias="deactivatedAt", serialization_alias="deactivatedAt")
+    deactivated_reason: Optional[str] = Field(None, alias="deactivatedReason", serialization_alias="deactivatedReason")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQCommissionPaymentResponse(BaseModel):
+    id: str
+    commission_record_id: str = Field(alias="commissionRecordId", serialization_alias="commissionRecordId")
+    sales_rep_id: str = Field(alias="salesRepId", serialization_alias="salesRepId")
+    sales_rep_name: Optional[str] = Field(None, alias="salesRepName", serialization_alias="salesRepName")
+    tenant_name: Optional[str] = Field(None, alias="tenantName", serialization_alias="tenantName")
+    period_start: datetime = Field(alias="periodStart", serialization_alias="periodStart")
+    period_end: datetime = Field(alias="periodEnd", serialization_alias="periodEnd")
+    mrr_amount: Decimal = Field(alias="mrrAmount", serialization_alias="mrrAmount")
+    commission_rate: Decimal = Field(alias="commissionRate", serialization_alias="commissionRate")
+    commission_amount: Decimal = Field(alias="commissionAmount", serialization_alias="commissionAmount")
+    status: CommissionPaymentStatusType
+    payment_date: Optional[datetime] = Field(None, alias="paymentDate", serialization_alias="paymentDate")
+    payment_reference: Optional[str] = Field(None, alias="paymentReference", serialization_alias="paymentReference")
+    payment_method: Optional[str] = Field(None, alias="paymentMethod", serialization_alias="paymentMethod")
+    approved_by_id: Optional[str] = Field(None, alias="approvedById", serialization_alias="approvedById")
+    approved_at: Optional[datetime] = Field(None, alias="approvedAt", serialization_alias="approvedAt")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQCommissionPaymentApprove(BaseModel):
+    """Approve a commission payment."""
+    payment_method: Optional[str] = Field(None, alias="paymentMethod")
+    payment_reference: Optional[str] = Field(None, alias="paymentReference")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# Sales Rep Earnings Dashboard Schemas
+# ============================================================================
+
+class HQSalesRepEarnings(BaseModel):
+    """Sales rep earnings dashboard data."""
+    sales_rep_id: str = Field(alias="salesRepId", serialization_alias="salesRepId")
+    sales_rep_name: str = Field(alias="salesRepName", serialization_alias="salesRepName")
+    commission_rate: Decimal = Field(alias="commissionRate", serialization_alias="commissionRate")
+    tier_level: CommissionTierType = Field(alias="tierLevel", serialization_alias="tierLevel")
+    # Earnings
+    lifetime_earnings: Decimal = Field(alias="lifetimeEarnings", serialization_alias="lifetimeEarnings")
+    ytd_earnings: Decimal = Field(alias="ytdEarnings", serialization_alias="ytdEarnings")
+    mtd_earnings: Decimal = Field(alias="mtdEarnings", serialization_alias="mtdEarnings")
+    pending_amount: Decimal = Field(alias="pendingAmount", serialization_alias="pendingAmount")
+    eligible_unpaid: Decimal = Field(alias="eligibleUnpaid", serialization_alias="eligibleUnpaid")
+    # Activity
+    active_accounts: int = Field(alias="activeAccounts", serialization_alias="activeAccounts")
+    active_mrr: Decimal = Field(alias="activeMrr", serialization_alias="activeMrr")
+    pipeline_value: Decimal = Field(alias="pipelineValue", serialization_alias="pipelineValue")
+    pipeline_count: int = Field(alias="pipelineCount", serialization_alias="pipelineCount")
+    leads_count: int = Field(alias="leadsCount", serialization_alias="leadsCount")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSalesRepAccountSummary(BaseModel):
+    """Sales rep's account summary with MRR breakdown."""
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    tenant_name: str = Field(alias="tenantName", serialization_alias="tenantName")
+    mrr: Decimal
+    contract_start_date: Optional[datetime] = Field(None, alias="contractStartDate", serialization_alias="contractStartDate")
+    commission_earned: Decimal = Field(alias="commissionEarned", serialization_alias="commissionEarned")
+    status: str
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================================
 # Banking Admin Schemas (Synctera Integration)
 # ============================================================================
 
