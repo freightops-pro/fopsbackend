@@ -20,13 +20,14 @@ from app.schemas.hq import (
 )
 from app.core.llm_router import LLMRouter
 
-# FMCSA Census Data - Socrata SODA API
+# FMCSA Census Data - Socrata v3 API with SoQL
 # Dataset: Carrier - All With History (6eyk-hxee)
 # Docs: https://dev.socrata.com/foundry/data.transportation.gov/6eyk-hxee
-FMCSA_CENSUS_API = "https://data.transportation.gov/resource/6eyk-hxee.json"
+FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/6eyk-hxee/query.json"
 
 import os
 FMCSA_APP_TOKEN = os.getenv("FMCSA_APP_TOKEN", "")
+FMCSA_SECRET_TOKEN = os.getenv("FMCSA_SECRET_TOKEN", "")
 
 
 class HQLeadService:
@@ -446,49 +447,53 @@ Extract all sales leads from this content and return as JSON array."""
         Returns:
             Tuple of (created_leads, errors)
         """
-        # Build Socrata SODA API query using SoQL
+        # Build Socrata v3 API query using SoQL
         # Dataset fields: LEGAL_NAME, DBA_NAME, BUS_STREET_PO, BUS_CITY, BUS_STATE_CODE,
         #                 BUS_ZIP_CODE, BUS_TELNO, DOT_NUMBER, DOCKET_NUMBER
 
-        # Build SoQL $where clause
+        # Build SoQL WHERE clause
         where_conditions = []
 
         # State filter (using BUS_STATE_CODE)
         if state:
-            where_conditions.append(f"bus_state_code='{state.upper()}'")
+            where_conditions.append(f"`bus_state_code` = '{state.upper()}'")
 
-        # Active carriers - common status is checking property/broker stats
-        where_conditions.append("(common_stat='A' OR contract_stat='A' OR broker_stat='A')")
+        # Active carriers - check common/contract/broker status
+        where_conditions.append("(`common_stat` = 'A' OR `contract_stat` = 'A' OR `broker_stat` = 'A')")
 
-        # Build the query parameters
-        params = {
-            "$limit": str(limit),
-            "$order": "legal_name ASC",
+        # Build the SoQL query
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        soql_query = f"SELECT * WHERE {where_clause} ORDER BY `legal_name` ASC LIMIT {limit}"
+
+        # v3 API uses POST with JSON body containing the query
+        query_payload = {
+            "query": soql_query
         }
 
-        if where_conditions:
-            params["$where"] = " AND ".join(where_conditions)
-
         try:
-            # Build headers with app token for higher rate limits
-            headers = {"Accept": "application/json"}
+            # Build headers with app token and secret for authentication
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
             if FMCSA_APP_TOKEN:
                 headers["X-App-Token"] = FMCSA_APP_TOKEN
-
-            # Build URL with query params
-            query_string = "&".join(f"{k}={v}" for k, v in params.items())
-            url = f"{FMCSA_CENSUS_API}?{query_string}"
+            if FMCSA_SECRET_TOKEN:
+                headers["X-App-Secret"] = FMCSA_SECRET_TOKEN
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
+                async with session.post(
+                    FMCSA_CENSUS_API,
+                    json=query_payload,
                     timeout=aiohttp.ClientTimeout(total=60),
                     headers=headers
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:500]}"}]
-                    carriers = await response.json()
+                    data = await response.json()
+                    # v3 API returns data in a specific structure
+                    carriers = data if isinstance(data, list) else data.get("rows", data.get("data", []))
         except Exception as e:
             return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}"}]
 
