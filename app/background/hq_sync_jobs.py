@@ -177,7 +177,7 @@ async def ai_nurture_leads() -> None:
         leads = result.scalars().all()
 
         if not leads:
-            logger.info("ai_nurture_no_leads", extra={"message": "No leads need nurturing"})
+            logger.info("ai_nurture_no_leads", extra={"details": "No leads need nurturing"})
             return
 
         enriched_count = 0

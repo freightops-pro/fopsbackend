@@ -190,13 +190,13 @@ async def run_lead_import_pipeline() -> None:
         logger.warning("lead_import_skipped", extra={"reason": "Database migrations not complete after 30s"})
         return
 
-    logger.info("lead_import_start", extra={"message": "Starting FMCSA lead import"})
+    logger.info("lead_import_start", extra={"details": "Starting FMCSA lead import"})
 
     try:
         # Import leads from FMCSA (no AI enrichment - that's done manually per lead)
         await sync_fmcsa_leads()
 
-        logger.info("lead_import_complete", extra={"message": "FMCSA lead import completed"})
+        logger.info("lead_import_complete", extra={"details": "FMCSA lead import completed"})
     except Exception as exc:
         logger.exception("lead_import_failed", extra={"error": str(exc)})
 
