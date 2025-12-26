@@ -34,6 +34,7 @@ from app.routers import (
     ports,
     reporting,
     roles,
+    settlements,
     tenant,
     usage_ledger,
     webhooks,
@@ -77,6 +78,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["HQ Admin"])
 api_router.include_router(hq.router, prefix="/hq", tags=["HQ Portal"])
 api_router.include_router(tenant.router, prefix="/tenant", tags=["Tenant"])
 api_router.include_router(roles.router, prefix="/rbac", tags=["Roles & Permissions"])
+api_router.include_router(settlements.router, prefix="/settlements", tags=["Settlements"])
 api_router.include_router(websocket.router, tags=["WebSocket"])
 
 # Onboarding & DQF System

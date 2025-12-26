@@ -7,7 +7,7 @@ from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Tex
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
-from app.core.db import Base
+from app.models.base import Base
 
 
 class HQChatChannel(Base):
