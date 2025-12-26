@@ -2243,6 +2243,186 @@ async def get_integration_health(
 
 
 # ============================================================================
+# HQ QuickBooks Integration Endpoints
+# ============================================================================
+
+from app.services.quickbooks.quickbooks_service import QuickBooksService
+
+
+@router.get("/integrations/quickbooks/{integration_id}/sync/summary")
+async def hq_quickbooks_sync_summary(
+    integration_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get summary of QuickBooks data and sync status for HQ."""
+    result = await db.execute(
+        select(CompanyIntegration).where(CompanyIntegration.id == integration_id)
+    )
+    integration = result.scalar_one_or_none()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    try:
+        service = QuickBooksService(db)
+        return await service.get_sync_summary(integration)
+    except Exception as e:
+        logger.error(f"QuickBooks sync summary error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/integrations/quickbooks/{integration_id}/sync/{entity}")
+async def hq_quickbooks_sync_entity(
+    integration_id: str,
+    entity: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync a specific entity (customers, invoices, vendors, bills) from QuickBooks for HQ."""
+    result = await db.execute(
+        select(CompanyIntegration).where(CompanyIntegration.id == integration_id)
+    )
+    integration = result.scalar_one_or_none()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    try:
+        service = QuickBooksService(db)
+        if entity == "customers":
+            return await service.sync_customers(integration)
+        elif entity == "invoices":
+            return await service.sync_invoices(integration)
+        elif entity == "vendors":
+            return await service.sync_vendors(integration)
+        elif entity == "bills":
+            return await service.sync_bills(integration)
+        elif entity == "full":
+            return await service.full_sync(integration)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown entity: {entity}")
+    except Exception as e:
+        logger.error(f"QuickBooks sync {entity} error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/integrations/quickbooks/{integration_id}/oauth/authorize")
+async def hq_quickbooks_oauth_authorize(
+    integration_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate QuickBooks OAuth authorization URL for HQ."""
+    from app.core.settings import settings
+
+    result = await db.execute(
+        select(CompanyIntegration).where(CompanyIntegration.id == integration_id)
+    )
+    integration = result.scalar_one_or_none()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    try:
+        # Build OAuth URL
+        credentials = integration.credentials or {}
+        client_id = credentials.get("client_id")
+
+        if not client_id:
+            raise HTTPException(status_code=400, detail="Client ID not configured")
+
+        redirect_uri = f"{settings.get_api_base_url()}/hq/integrations/quickbooks/{integration_id}/oauth/callback"
+
+        # QuickBooks OAuth URL
+        auth_url = (
+            f"https://appcenter.intuit.com/connect/oauth2"
+            f"?client_id={client_id}"
+            f"&response_type=code"
+            f"&scope=com.intuit.quickbooks.accounting"
+            f"&redirect_uri={redirect_uri}"
+            f"&state={integration_id}"
+        )
+
+        return {"success": True, "authorization_url": auth_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"QuickBooks OAuth authorize error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/integrations/quickbooks/{integration_id}/test-connection")
+async def hq_quickbooks_test_connection(
+    integration_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test QuickBooks connection for HQ."""
+    result = await db.execute(
+        select(CompanyIntegration).where(CompanyIntegration.id == integration_id)
+    )
+    integration = result.scalar_one_or_none()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    try:
+        service = QuickBooksService(db)
+        return await service.test_connection(integration)
+    except Exception as e:
+        logger.error(f"QuickBooks connection test error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/integrations/company/{integration_id}")
+async def hq_update_integration_connection(
+    integration_id: str,
+    update_data: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an integration connection (credentials, config) for HQ."""
+    result = await db.execute(
+        select(CompanyIntegration).where(CompanyIntegration.id == integration_id)
+    )
+    integration = result.scalar_one_or_none()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    try:
+        if "credentials" in update_data:
+            # Merge with existing credentials
+            existing_creds = integration.credentials or {}
+            existing_creds.update(update_data["credentials"])
+            integration.credentials = existing_creds
+
+        if "config" in update_data:
+            existing_config = integration.config or {}
+            existing_config.update(update_data["config"])
+            integration.config = existing_config
+
+        if "status" in update_data:
+            integration.status = update_data["status"]
+
+        if "auto_sync" in update_data:
+            integration.auto_sync = update_data["auto_sync"]
+
+        if "sync_interval_minutes" in update_data:
+            integration.sync_interval_minutes = update_data["sync_interval_minutes"]
+
+        await db.commit()
+        await db.refresh(integration)
+
+        return {"success": True, "message": "Integration updated successfully"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Update integration error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # HQ Chat Endpoints (Unified Team + AI Chat)
 # ============================================================================
 
