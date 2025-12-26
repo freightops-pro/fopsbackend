@@ -97,3 +97,6 @@ from app.models.hq_ai_queue import (  # noqa: F401
 # HQ Chat Models
 from app.models.hq_chat import HQChatChannel, HQChatMessage, HQChatParticipant  # noqa: F401
 
+# HQ Presence Models
+from app.models.hq_presence import HQPresence  # noqa: F401
+

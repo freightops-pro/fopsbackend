@@ -1,3 +1,9 @@
+"""HQ Employee Presence Service.
+
+Tracks online/away/offline status for HQ portal employees
+with support for away messages and automatic status detection.
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -7,8 +13,8 @@ from typing import List, Optional
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.collaboration import Presence
-from app.models.user import User
+from app.models.hq_presence import HQPresence
+from app.models.hq_employee import HQEmployee
 from app.schemas.presence import PresenceState, PresenceStatus
 
 # Auto-away thresholds
@@ -16,38 +22,38 @@ AUTO_AWAY_MINUTES = 5
 AUTO_OFFLINE_MINUTES = 30
 
 
-class PresenceService:
+class HQPresenceService:
+    """Service for HQ employee presence operations."""
+
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def _get_user_name(self, user_id: str) -> Optional[str]:
-        """Resolve user name from user_id."""
-        result = await self.db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if user:
-            return f"{user.first_name} {user.last_name}".strip() or user.email
+    async def _get_employee_name(self, employee_id: str) -> Optional[str]:
+        """Resolve employee name from employee_id."""
+        result = await self.db.execute(select(HQEmployee).where(HQEmployee.id == employee_id))
+        employee = result.scalar_one_or_none()
+        if employee:
+            return f"{employee.first_name} {employee.last_name}".strip() or employee.email
         return None
 
     async def set_presence(
         self,
-        channel_id: str,
-        user_id: str,
+        employee_id: str,
         status: PresenceStatus,
         away_message: Optional[str] = None,
         manual: bool = False,
     ) -> PresenceState:
-        """Set user presence status in a channel.
+        """Set employee presence status.
 
         Args:
-            channel_id: The channel ID
-            user_id: The user ID
+            employee_id: The employee ID
             status: The presence status (online, away, offline)
             away_message: Optional away message
             manual: If True, status was set manually and won't auto-change
         """
         now = datetime.utcnow()
         result = await self.db.execute(
-            select(Presence).where(Presence.channel_id == channel_id, Presence.user_id == user_id)
+            select(HQPresence).where(HQPresence.employee_id == employee_id)
         )
         record = result.scalar_one_or_none()
 
@@ -58,10 +64,9 @@ class PresenceService:
             if status == "online":
                 record.last_activity_at = now
         else:
-            record = Presence(
+            record = HQPresence(
                 id=str(uuid.uuid4()),
-                channel_id=channel_id,
-                user_id=user_id,
+                employee_id=employee_id,
                 status=status,
                 away_message=away_message,
                 status_set_manually=manual,
@@ -72,17 +77,17 @@ class PresenceService:
         await self.db.commit()
         await self.db.refresh(record)
 
-        user_name = await self._get_user_name(user_id)
+        employee_name = await self._get_employee_name(employee_id)
         return PresenceState(
-            user_id=record.user_id,
-            user_name=user_name,
+            user_id=record.employee_id,
+            user_name=employee_name,
             status=record.status,
             away_message=record.away_message,
-            last_seen_at=record.last_seen_at,
+            last_seen_at=record.updated_at,
             last_activity_at=record.last_activity_at,
         )
 
-    async def update_activity(self, channel_id: str, user_id: str) -> Optional[PresenceState]:
+    async def update_activity(self, employee_id: str) -> Optional[PresenceState]:
         """Update last activity timestamp (heartbeat).
 
         Called periodically by clients to indicate activity.
@@ -90,13 +95,13 @@ class PresenceService:
         """
         now = datetime.utcnow()
         result = await self.db.execute(
-            select(Presence).where(Presence.channel_id == channel_id, Presence.user_id == user_id)
+            select(HQPresence).where(HQPresence.employee_id == employee_id)
         )
         record = result.scalar_one_or_none()
 
         if not record:
             # Create presence record if doesn't exist
-            return await self.set_presence(channel_id, user_id, "online")
+            return await self.set_presence(employee_id, "online")
 
         record.last_activity_at = now
 
@@ -107,22 +112,22 @@ class PresenceService:
         await self.db.commit()
         await self.db.refresh(record)
 
-        user_name = await self._get_user_name(user_id)
+        employee_name = await self._get_employee_name(employee_id)
         return PresenceState(
-            user_id=record.user_id,
-            user_name=user_name,
+            user_id=record.employee_id,
+            user_name=employee_name,
             status=record.status,
             away_message=record.away_message,
-            last_seen_at=record.last_seen_at,
+            last_seen_at=record.updated_at,
             last_activity_at=record.last_activity_at,
         )
 
     async def set_away_message(
-        self, channel_id: str, user_id: str, away_message: Optional[str]
+        self, employee_id: str, away_message: Optional[str]
     ) -> Optional[PresenceState]:
-        """Set or clear away message for a user."""
+        """Set or clear away message for an employee."""
         result = await self.db.execute(
-            select(Presence).where(Presence.channel_id == channel_id, Presence.user_id == user_id)
+            select(HQPresence).where(HQPresence.employee_id == employee_id)
         )
         record = result.scalar_one_or_none()
 
@@ -133,20 +138,20 @@ class PresenceService:
         await self.db.commit()
         await self.db.refresh(record)
 
-        user_name = await self._get_user_name(user_id)
+        employee_name = await self._get_employee_name(employee_id)
         return PresenceState(
-            user_id=record.user_id,
-            user_name=user_name,
+            user_id=record.employee_id,
+            user_name=employee_name,
             status=record.status,
             away_message=record.away_message,
-            last_seen_at=record.last_seen_at,
+            last_seen_at=record.updated_at,
             last_activity_at=record.last_activity_at,
         )
 
-    async def mark_user_offline(self, channel_id: str, user_id: str) -> Optional[PresenceState]:
-        """Mark user as offline (e.g., on disconnect)."""
+    async def mark_employee_offline(self, employee_id: str) -> Optional[PresenceState]:
+        """Mark employee as offline (e.g., on disconnect)."""
         result = await self.db.execute(
-            select(Presence).where(Presence.channel_id == channel_id, Presence.user_id == user_id)
+            select(HQPresence).where(HQPresence.employee_id == employee_id)
         )
         record = result.scalar_one_or_none()
 
@@ -158,33 +163,32 @@ class PresenceService:
         await self.db.commit()
         await self.db.refresh(record)
 
-        user_name = await self._get_user_name(user_id)
+        employee_name = await self._get_employee_name(employee_id)
         return PresenceState(
-            user_id=record.user_id,
-            user_name=user_name,
+            user_id=record.employee_id,
+            user_name=employee_name,
             status=record.status,
             away_message=record.away_message,
-            last_seen_at=record.last_seen_at,
+            last_seen_at=record.updated_at,
             last_activity_at=record.last_activity_at,
         )
 
-    async def check_idle_users(self, channel_id: str) -> List[PresenceState]:
-        """Check for idle users and update their status.
+    async def check_idle_employees(self) -> List[PresenceState]:
+        """Check for idle employees and update their status.
 
-        Returns list of users whose status changed.
+        Returns list of employees whose status changed.
         Called by scheduler job.
         """
         now = datetime.utcnow()
         away_threshold = now - timedelta(minutes=AUTO_AWAY_MINUTES)
         offline_threshold = now - timedelta(minutes=AUTO_OFFLINE_MINUTES)
 
-        # Get all online/away users who haven't set status manually
+        # Get all online/away employees who haven't set status manually
         result = await self.db.execute(
-            select(Presence).where(
+            select(HQPresence).where(
                 and_(
-                    Presence.channel_id == channel_id,
-                    Presence.status.in_(["online", "away"]),
-                    Presence.status_set_manually == False,
+                    HQPresence.status.in_(["online", "away"]),
+                    HQPresence.status_set_manually == False,
                 )
             )
         )
@@ -203,13 +207,13 @@ class PresenceService:
 
             if new_status and new_status != record.status:
                 record.status = new_status
-                user_name = await self._get_user_name(record.user_id)
+                employee_name = await self._get_employee_name(record.employee_id)
                 changed.append(PresenceState(
-                    user_id=record.user_id,
-                    user_name=user_name,
+                    user_id=record.employee_id,
+                    user_name=employee_name,
                     status=record.status,
                     away_message=record.away_message,
-                    last_seen_at=record.last_seen_at,
+                    last_seen_at=record.updated_at,
                     last_activity_at=record.last_activity_at,
                 ))
 
@@ -218,37 +222,39 @@ class PresenceService:
 
         return changed
 
-    async def current_presence(self, channel_id: str) -> List[PresenceState]:
-        """Get current presence for all users in a channel."""
-        result = await self.db.execute(select(Presence).where(Presence.channel_id == channel_id))
+    async def get_all_presence(self) -> List[PresenceState]:
+        """Get presence for all HQ employees."""
+        result = await self.db.execute(select(HQPresence))
 
         states = []
         for record in result.scalars().all():
-            user_name = await self._get_user_name(record.user_id)
+            employee_name = await self._get_employee_name(record.employee_id)
             states.append(PresenceState(
-                user_id=record.user_id,
-                user_name=user_name,
+                user_id=record.employee_id,
+                user_name=employee_name,
                 status=record.status,
                 away_message=record.away_message,
-                last_seen_at=record.last_seen_at,
+                last_seen_at=record.updated_at,
                 last_activity_at=record.last_activity_at,
             ))
         return states
 
-    async def get_user_presence(self, user_id: str) -> List[PresenceState]:
-        """Get presence for a specific user across all channels."""
-        result = await self.db.execute(select(Presence).where(Presence.user_id == user_id))
+    async def get_employee_presence(self, employee_id: str) -> Optional[PresenceState]:
+        """Get presence for a specific employee."""
+        result = await self.db.execute(
+            select(HQPresence).where(HQPresence.employee_id == employee_id)
+        )
+        record = result.scalar_one_or_none()
 
-        user_name = await self._get_user_name(user_id)
-        return [
-            PresenceState(
-                user_id=record.user_id,
-                user_name=user_name,
-                status=record.status,
-                away_message=record.away_message,
-                last_seen_at=record.last_seen_at,
-                last_activity_at=record.last_activity_at,
-            )
-            for record in result.scalars().all()
-        ]
+        if not record:
+            return None
 
+        employee_name = await self._get_employee_name(employee_id)
+        return PresenceState(
+            user_id=record.employee_id,
+            user_name=employee_name,
+            status=record.status,
+            away_message=record.away_message,
+            last_seen_at=record.updated_at,
+            last_activity_at=record.last_activity_at,
+        )

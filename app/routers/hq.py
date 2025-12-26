@@ -1653,6 +1653,377 @@ async def list_banking_audit_logs(
 
 
 # ============================================================================
+# HQ Internal Banking Endpoints (FreightOps HQ's Own Banking)
+# Uses the same banking infrastructure as tenants, but for HQ's company
+# ============================================================================
+
+from app.services.banking import BankingService
+from app.schemas.banking import (
+    BankingAccountCreate,
+    BankingAccountResponse,
+    BankingCardCreate,
+    BankingCardResponse,
+    BankingCustomerCreate,
+    BankingCustomerResponse,
+)
+
+
+def _get_hq_company_id() -> str:
+    """Get HQ's company ID from config."""
+    if not settings.hq_company_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="HQ company ID not configured. Set HQ_COMPANY_ID in environment."
+        )
+    return settings.hq_company_id
+
+
+@router.get("/internal-banking/accounts", response_model=List[BankingAccountResponse])
+async def list_hq_accounts(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[BankingAccountResponse]:
+    """List HQ's own bank accounts."""
+    company_id = _get_hq_company_id()
+    service = BankingService(db)
+    return await service.list_accounts(company_id)
+
+
+@router.post("/internal-banking/accounts", response_model=BankingAccountResponse, status_code=status.HTTP_201_CREATED)
+async def create_hq_account(
+    payload: BankingAccountCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> BankingAccountResponse:
+    """Create a new bank account for HQ."""
+    company_id = _get_hq_company_id()
+    service = BankingService(db)
+    return await service.create_account(company_id, payload)
+
+
+@router.get("/internal-banking/cards")
+async def list_hq_cards(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    """List HQ's cards."""
+    from app.models.banking import BankingCard, BankingAccount
+
+    company_id = _get_hq_company_id()
+    result = await db.execute(
+        select(BankingCard)
+        .join(BankingAccount, BankingCard.account_id == BankingAccount.id)
+        .where(BankingAccount.company_id == company_id)
+        .order_by(BankingCard.created_at.desc())
+    )
+    cards = result.scalars().all()
+    return [BankingCardResponse.model_validate(card).model_dump() for card in cards]
+
+
+@router.post("/internal-banking/cards", response_model=BankingCardResponse, status_code=status.HTTP_201_CREATED)
+async def issue_hq_card(
+    payload: BankingCardCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> BankingCardResponse:
+    """Issue a new card for HQ."""
+    service = BankingService(db)
+    return await service.issue_card(payload)
+
+
+@router.get("/internal-banking/transactions")
+async def list_hq_transactions(
+    account_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """List HQ's transactions."""
+    from app.models.banking import BankingTransaction, BankingAccount
+    from datetime import datetime
+
+    company_id = _get_hq_company_id()
+
+    # Build query
+    query = (
+        select(BankingTransaction)
+        .join(BankingAccount, BankingTransaction.account_id == BankingAccount.id)
+        .where(BankingAccount.company_id == company_id)
+    )
+
+    if account_id:
+        query = query.where(BankingTransaction.account_id == account_id)
+
+    if start_date:
+        query = query.where(BankingTransaction.posted_at >= datetime.fromisoformat(start_date))
+    if end_date:
+        query = query.where(BankingTransaction.posted_at <= datetime.fromisoformat(end_date))
+
+    # Get total count
+    count_result = await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )
+    total = count_result.scalar() or 0
+
+    # Get paginated results
+    query = query.order_by(BankingTransaction.posted_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    transactions = result.scalars().all()
+
+    return {
+        "transactions": [
+            {
+                "id": t.id,
+                "account_id": t.account_id,
+                "amount": float(t.amount) if t.amount else 0,
+                "currency": t.currency or "USD",
+                "description": t.description,
+                "category": t.category or "transfer",
+                "posted_at": t.posted_at.isoformat() if t.posted_at else None,
+                "pending": t.pending if hasattr(t, 'pending') else False,
+            }
+            for t in transactions
+        ],
+        "total": total,
+    }
+
+
+@router.post("/internal-banking/transfers/internal", status_code=status.HTTP_201_CREATED)
+async def create_hq_internal_transfer(
+    payload: Dict[str, Any],
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Create an internal transfer between HQ accounts."""
+    from app.services.transfer_service import TransferService
+
+    company_id = _get_hq_company_id()
+    service = TransferService(db)
+
+    try:
+        result = await service.create_internal_transfer(
+            company_id=company_id,
+            from_account_id=payload["from_account_id"],
+            to_account_id=payload["to_account_id"],
+            amount=payload["amount"],
+            description=payload["description"],
+            user_id=current_employee.id,
+            scheduled_date=payload.get("scheduled_date"),
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/internal-banking/transfers/ach", status_code=status.HTTP_201_CREATED)
+async def create_hq_ach_transfer(
+    payload: Dict[str, Any],
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Create an ACH transfer from HQ account."""
+    from app.services.transfer_service import TransferService
+
+    company_id = _get_hq_company_id()
+    service = TransferService(db)
+
+    try:
+        result = await service.create_ach_transfer(
+            company_id=company_id,
+            from_account_id=payload["from_account_id"],
+            recipient_name=payload.get("recipient_name"),
+            recipient_routing_number=payload.get("recipient_routing_number"),
+            recipient_account_number=payload.get("recipient_account_number"),
+            recipient_account_type=payload.get("recipient_account_type", "checking"),
+            amount=payload["amount"],
+            description=payload["description"],
+            user_id=current_employee.id,
+            save_recipient=payload.get("save_recipient", False),
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/internal-banking/transfers/wire", status_code=status.HTTP_201_CREATED)
+async def create_hq_wire_transfer(
+    payload: Dict[str, Any],
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Create a wire transfer from HQ account."""
+    from app.services.transfer_service import TransferService
+
+    company_id = _get_hq_company_id()
+    service = TransferService(db)
+
+    try:
+        result = await service.create_wire_transfer(
+            company_id=company_id,
+            from_account_id=payload["from_account_id"],
+            recipient_name=payload["recipient_name"],
+            recipient_routing_number=payload["recipient_routing_number"],
+            recipient_account_number=payload["recipient_account_number"],
+            recipient_bank_name=payload["recipient_bank_name"],
+            amount=payload["amount"],
+            description=payload.get("description", ""),
+            wire_type=payload.get("wire_type", "domestic"),
+            user_id=current_employee.id,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/internal-banking/transfers/history")
+async def get_hq_transfer_history(
+    limit: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get HQ's transfer history."""
+    from app.services.transfer_service import TransferService
+
+    company_id = _get_hq_company_id()
+    service = TransferService(db)
+    transfers = await service.get_transfer_history(company_id, limit)
+    return {"transfers": transfers}
+
+
+@router.get("/internal-banking/statements")
+async def list_hq_statements(
+    account_id: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """List HQ's bank statements."""
+    from app.models.banking import BankingStatement, BankingAccount
+
+    company_id = _get_hq_company_id()
+
+    query = (
+        select(BankingStatement)
+        .join(BankingAccount, BankingStatement.account_id == BankingAccount.id)
+        .where(BankingAccount.company_id == company_id)
+    )
+
+    if account_id:
+        query = query.where(BankingStatement.account_id == account_id)
+
+    query = query.order_by(BankingStatement.period_end.desc())
+    result = await db.execute(query)
+    statements = result.scalars().all()
+
+    return {
+        "statements": [
+            {
+                "id": s.id,
+                "account_id": s.account_id,
+                "period_start": s.period_start.isoformat() if s.period_start else None,
+                "period_end": s.period_end.isoformat() if s.period_end else None,
+                "opening_balance": float(s.opening_balance) if s.opening_balance else 0,
+                "closing_balance": float(s.closing_balance) if s.closing_balance else 0,
+                "total_credits": float(s.total_credits) if hasattr(s, 'total_credits') and s.total_credits else 0,
+                "total_debits": float(s.total_debits) if hasattr(s, 'total_debits') and s.total_debits else 0,
+                "transaction_count": s.transaction_count if hasattr(s, 'transaction_count') else 0,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in statements
+        ]
+    }
+
+
+@router.get("/internal-banking/statements/{statement_id}/download")
+async def download_hq_statement(
+    statement_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get download URL for HQ statement."""
+    from app.models.banking import BankingStatement, BankingAccount
+
+    company_id = _get_hq_company_id()
+
+    result = await db.execute(
+        select(BankingStatement)
+        .join(BankingAccount, BankingStatement.account_id == BankingAccount.id)
+        .where(BankingStatement.id == statement_id)
+        .where(BankingAccount.company_id == company_id)
+    )
+    statement = result.scalar_one_or_none()
+
+    if not statement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Statement not found")
+
+    # Return download URL (would be generated from R2/S3 in production)
+    return {
+        "statement_id": statement.id,
+        "download_url": f"/api/hq/internal-banking/statements/{statement_id}/pdf",
+        "filename": f"statement_{statement.period_end.strftime('%Y-%m')}.pdf" if statement.period_end else "statement.pdf",
+    }
+
+
+@router.get("/internal-banking/recipients")
+async def list_hq_recipients(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    """List HQ's saved transfer recipients."""
+    company_id = _get_hq_company_id()
+
+    result = await db.execute(
+        text("""
+            SELECT id, name, bank_name, routing_number, account_number, account_type,
+                   is_verified, created_at
+            FROM banking_recipient
+            WHERE company_id = :company_id
+            ORDER BY name
+        """),
+        {"company_id": company_id}
+    )
+    rows = result.fetchall()
+
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "bank_name": row.bank_name,
+            "routing_number": row.routing_number,
+            "account_number": row.account_number,
+            "account_type": row.account_type,
+            "is_verified": row.is_verified,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
+@router.delete("/internal-banking/recipients/{recipient_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_hq_recipient(
+    recipient_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a saved recipient."""
+    company_id = _get_hq_company_id()
+
+    result = await db.execute(
+        text("""
+            DELETE FROM banking_recipient
+            WHERE id = :recipient_id AND company_id = :company_id
+        """),
+        {"recipient_id": recipient_id, "company_id": company_id}
+    )
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient not found")
+
+
+# ============================================================================
 # Accounting Endpoints
 # ============================================================================
 
@@ -2440,6 +2811,15 @@ async def _get_chat_service(db: AsyncSession = Depends(get_db)) -> HQChatService
     return HQChatService(db)
 
 
+from app.services.hq_presence import HQPresenceService
+from app.schemas.presence import PresenceState, PresenceUpdate, SetAwayMessage
+
+
+async def _get_hq_presence_service(db: AsyncSession = Depends(get_db)) -> HQPresenceService:
+    """Get HQ Presence service instance."""
+    return HQPresenceService(db)
+
+
 @router.get("/chat/channels", response_model=List[HQChatChannelResponse])
 async def list_chat_channels(
     _: HQEmployee = Depends(get_current_hq_employee),
@@ -2745,6 +3125,87 @@ async def upload_chat_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload file: {str(e)}"
         )
+
+
+# ============================================================================
+# HQ Presence Endpoints
+# ============================================================================
+
+@router.get("/presence", response_model=List[PresenceState])
+async def list_all_presence(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> List[PresenceState]:
+    """Get presence status for all HQ employees."""
+    return await presence_service.get_all_presence()
+
+
+@router.get("/presence/me", response_model=PresenceState)
+async def get_my_presence(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> PresenceState:
+    """Get current employee's presence status."""
+    state = await presence_service.get_employee_presence(str(current_employee.id))
+    if not state:
+        # Create initial presence if not exists
+        state = await presence_service.set_presence(str(current_employee.id), "online")
+    return state
+
+
+@router.put("/presence", response_model=PresenceState)
+async def update_my_presence(
+    payload: PresenceUpdate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> PresenceState:
+    """Update current employee's presence status."""
+    return await presence_service.set_presence(
+        str(current_employee.id),
+        payload.status,
+        payload.away_message,
+        manual=True,
+    )
+
+
+@router.post("/presence/heartbeat", response_model=PresenceState)
+async def presence_heartbeat(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> PresenceState:
+    """Send heartbeat to indicate employee activity."""
+    state = await presence_service.update_activity(str(current_employee.id))
+    if not state:
+        state = await presence_service.set_presence(str(current_employee.id), "online")
+    return state
+
+
+@router.put("/presence/away-message", response_model=PresenceState)
+async def set_my_away_message(
+    payload: SetAwayMessage,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> PresenceState:
+    """Set or clear away message for current employee."""
+    state = await presence_service.set_away_message(
+        str(current_employee.id), payload.away_message
+    )
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Presence not found")
+    return state
+
+
+@router.get("/presence/{employee_id}", response_model=PresenceState)
+async def get_employee_presence(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    presence_service: HQPresenceService = Depends(_get_hq_presence_service),
+) -> PresenceState:
+    """Get presence status for a specific employee."""
+    state = await presence_service.get_employee_presence(employee_id)
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Presence not found")
+    return state
 
 
 # ============================================================================

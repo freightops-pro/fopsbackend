@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     synctera_environment: str = "sandbox"  # sandbox or production
     synctera_webhook_secret: Optional[str] = None
 
+    # HQ Company Configuration
+    # HQ (FreightOps HQ) is treated as a company in the system for banking, accounting, etc.
+    hq_company_id: Optional[str] = None  # UUID of the HQ company record
+
     # Plaid External Bank Integration
     # Sign up at: https://dashboard.plaid.com/signup
     # Docs: https://plaid.com/docs/

@@ -16,7 +16,7 @@ from app.schemas.collaboration import (
     MessageCreate,
     MessageResponse,
 )
-from app.schemas.presence import PresenceState, PresenceUpdate
+from app.schemas.presence import PresenceState, PresenceUpdate, SetAwayMessage
 from app.services.collaboration import CollaborationService
 from app.services.presence import PresenceService
 from app.websocket.hub import channel_hub
@@ -204,6 +204,104 @@ async def post_message(
     return response
 
 
+# ============ Presence REST Endpoints ============
+
+@router.get("/channels/{channel_id}/presence", response_model=List[PresenceState])
+async def get_channel_presence(
+    channel_id: str,
+    company_id: str = Depends(_company_id),
+    service: CollaborationService = Depends(_service),
+    presence_service: PresenceService = Depends(_presence_service),
+) -> List[PresenceState]:
+    """Get presence status for all users in a channel."""
+    try:
+        await service.get_channel(company_id, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return await presence_service.current_presence(channel_id)
+
+
+@router.put("/channels/{channel_id}/presence", response_model=PresenceState)
+async def update_presence(
+    channel_id: str,
+    payload: PresenceUpdate,
+    company_id: str = Depends(_company_id),
+    user_id: str = Depends(_user_id),
+    service: CollaborationService = Depends(_service),
+    presence_service: PresenceService = Depends(_presence_service),
+) -> PresenceState:
+    """Update user's presence status in a channel."""
+    try:
+        await service.get_channel(company_id, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    # Manual status update (user explicitly set it)
+    state = await presence_service.set_presence(
+        channel_id, user_id, payload.status, payload.away_message, manual=True
+    )
+
+    # Broadcast presence update
+    await channel_hub.broadcast(
+        channel_id,
+        {
+            "type": "presence",
+            "data": [s.model_dump() for s in await presence_service.current_presence(channel_id)],
+        },
+    )
+    return state
+
+
+@router.post("/channels/{channel_id}/presence/heartbeat", response_model=PresenceState)
+async def presence_heartbeat(
+    channel_id: str,
+    company_id: str = Depends(_company_id),
+    user_id: str = Depends(_user_id),
+    service: CollaborationService = Depends(_service),
+    presence_service: PresenceService = Depends(_presence_service),
+) -> PresenceState:
+    """Send heartbeat to indicate user activity. Updates last_activity_at."""
+    try:
+        await service.get_channel(company_id, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    state = await presence_service.update_activity(channel_id, user_id)
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Presence not found")
+    return state
+
+
+@router.put("/channels/{channel_id}/presence/away-message", response_model=PresenceState)
+async def set_away_message(
+    channel_id: str,
+    payload: SetAwayMessage,
+    company_id: str = Depends(_company_id),
+    user_id: str = Depends(_user_id),
+    service: CollaborationService = Depends(_service),
+    presence_service: PresenceService = Depends(_presence_service),
+) -> PresenceState:
+    """Set or clear user's away message."""
+    try:
+        await service.get_channel(company_id, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    state = await presence_service.set_away_message(channel_id, user_id, payload.away_message)
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Presence not found")
+
+    # Broadcast presence update
+    await channel_hub.broadcast(
+        channel_id,
+        {
+            "type": "presence",
+            "data": [s.model_dump() for s in await presence_service.current_presence(channel_id)],
+        },
+    )
+    return state
+
+
 @router.websocket("/channels/{channel_id}/ws")
 async def collaboration_stream(
     websocket: WebSocket,
@@ -211,9 +309,18 @@ async def collaboration_stream(
     presence_service: PresenceService = Depends(_presence_service),
     db: AsyncSession = Depends(get_db),
 ):
+    """WebSocket connection for real-time channel updates.
+
+    Handles incoming messages:
+    - {"type": "presence", "status": "online|away|offline", "away_message": "..."}
+    - {"type": "heartbeat"} - Updates activity timestamp
+    """
+    import json
+
     user = await deps.get_current_user_websocket(websocket, db)
     await channel_hub.connect(channel_id, websocket)
     try:
+        # Set user as online on connect
         await presence_service.set_presence(channel_id, user.id, "online")
         await channel_hub.broadcast(
             channel_id,
@@ -225,20 +332,31 @@ async def collaboration_stream(
         while True:
             payload = await websocket.receive_text()
             try:
-                update = PresenceUpdate.model_validate_json(payload)
+                data = json.loads(payload)
+                msg_type = data.get("type", "presence")
+
+                if msg_type == "heartbeat":
+                    # Activity heartbeat - just update timestamp, don't broadcast
+                    await presence_service.update_activity(channel_id, user.id)
+                elif msg_type == "presence":
+                    # Presence update
+                    update = PresenceUpdate.model_validate(data)
+                    # User manually setting status
+                    await presence_service.set_presence(
+                        channel_id, user.id, update.status, update.away_message, manual=True
+                    )
+                    await channel_hub.broadcast(
+                        channel_id,
+                        {
+                            "type": "presence",
+                            "data": [state.model_dump() for state in await presence_service.current_presence(channel_id)],
+                        },
+                    )
             except Exception:
                 continue
-            state = await presence_service.set_presence(channel_id, user.id, update.status)
-            await channel_hub.broadcast(
-                channel_id,
-                {
-                    "type": "presence",
-                    "data": [state.model_dump() for state in await presence_service.current_presence(channel_id)],
-                },
-            )
     except WebSocketDisconnect:
         channel_hub.disconnect(channel_id, websocket)
-        await presence_service.set_presence(channel_id, user.id, "offline")
+        await presence_service.mark_user_offline(channel_id, user.id)
         await channel_hub.broadcast(
             channel_id,
             {
