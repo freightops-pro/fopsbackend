@@ -40,7 +40,7 @@ class UserInvitation(Base):
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
 
     # Who invited them
-    invited_by = Column(String, ForeignKey("users.id"), nullable=False)
+    invited_by = Column(String, ForeignKey("user.id"), nullable=False)
     invited_at = Column(DateTime, nullable=False, server_default=func.now())
 
     # Secure token for acceptance
@@ -52,7 +52,7 @@ class UserInvitation(Base):
 
     # Acceptance details
     accepted_at = Column(DateTime, nullable=True)
-    accepted_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    accepted_by_user_id = Column(String, ForeignKey("user.id"), nullable=True)
 
     # Optional message from inviter
     message = Column(String, nullable=True)
