@@ -17,7 +17,8 @@ Infrastructure Model:
 Provider Hierarchy:
 1. Self-hosted (production) → vLLM/TGI on NVIDIA GPUs
 2. Groq (testing/demo) → Fast inference, free tier
-3. AWS Bedrock (fallback) → Enterprise reliability
+3. Google Gemini (fallback) → Reliable, low-cost fallback
+4. AWS Bedrock (enterprise) → Enterprise reliability
 """
 
 import os
@@ -50,7 +51,18 @@ class LLMRouter:
             except ImportError:
                 print("[LLM Router] Warning: groq package not installed. Install with: pip install groq")
 
-        # Provider 3: AWS Bedrock (fallback)
+        # Provider 3: Google Gemini (fallback)
+        self.google_api_key = os.getenv("GOOGLE_AI_API_KEY")
+        self.gemini = None
+        if self.google_api_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=self.google_api_key)
+                self.gemini = genai
+            except ImportError:
+                print("[LLM Router] Warning: google-generativeai not installed. Install with: pip install google-generativeai")
+
+        # Provider 4: AWS Bedrock (enterprise fallback)
         self.aws_region = os.getenv("AWS_REGION", "us-east-1")
         self.bedrock = None
         if os.getenv("AWS_ACCESS_KEY_ID"):
@@ -248,9 +260,18 @@ class LLMRouter:
                     prompt, system_prompt, tools, config, temperature, max_tokens, image_data
                 )
             except Exception as e:
-                print(f"[LLM Router] Groq failed: {e}, falling back to Bedrock")
+                print(f"[LLM Router] Groq failed: {e}, falling back to Gemini")
 
-        # Try AWS Bedrock (fallback)
+        # Try Google Gemini (fallback)
+        if self.gemini:
+            try:
+                return await self._generate_gemini(
+                    prompt, system_prompt, config, temperature, max_tokens
+                )
+            except Exception as e:
+                print(f"[LLM Router] Gemini failed: {e}, falling back to Bedrock")
+
+        # Try AWS Bedrock (enterprise fallback)
         if self.bedrock:
             try:
                 return await self._generate_bedrock(
@@ -260,7 +281,7 @@ class LLMRouter:
                 print(f"[LLM Router] Bedrock failed: {e}")
                 raise Exception("All LLM providers failed")
 
-        raise Exception("No LLM providers configured. Set GROQ_API_KEY or AWS credentials.")
+        raise Exception("No LLM providers configured. Set GROQ_API_KEY, GOOGLE_AI_API_KEY, or AWS credentials.")
 
     async def _generate_groq(
         self,
@@ -327,6 +348,47 @@ class LLMRouter:
             "output_tokens": completion.usage.completion_tokens,
             "cost_usd": (completion.usage.total_tokens / 1_000_000) * config["cost_per_1m_tokens"],
             "vision_used": image_data is not None
+        }
+
+    async def _generate_gemini(
+        self,
+        prompt: str,
+        system_prompt: str,
+        config: dict,
+        temperature: float,
+        max_tokens: int
+    ) -> tuple[str, dict]:
+        """Generate using Google Gemini (reliable fallback)."""
+        # Use Gemini 2.0 Flash for fast, reliable responses
+        model = self.gemini.GenerativeModel(
+            model_name="gemini-2.0-flash-exp",
+            system_instruction=system_prompt if system_prompt else None,
+            generation_config={
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+        )
+
+        response = await asyncio.to_thread(
+            model.generate_content,
+            prompt
+        )
+
+        # Extract text from response
+        content = response.text
+
+        # Get token counts if available
+        input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) if hasattr(response, 'usage_metadata') else 0
+        output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) if hasattr(response, 'usage_metadata') else 0
+        total_tokens = input_tokens + output_tokens
+
+        return content, {
+            "model": "gemini-2.0-flash-exp",
+            "provider": "gemini",
+            "tokens_used": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": (total_tokens / 1_000_000) * 0.075,  # Gemini Flash pricing
         }
 
     async def _generate_bedrock(
