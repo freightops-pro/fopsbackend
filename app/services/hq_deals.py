@@ -833,7 +833,7 @@ Notes: {deal.notes or 'None'}"""
             "competitor": deal.competitor,
             "wonAt": deal.won_at.isoformat() if deal.won_at else None,
             "lostAt": deal.lost_at.isoformat() if deal.lost_at else None,
-            "subscriptionId": deal.subscription_id,
+            "subscriptionId": deal.subscription.id if deal.subscription else None,
             "notes": deal.notes,
             "createdById": deal.created_by_id,
             "createdAt": deal.created_at.isoformat() if deal.created_at else None,

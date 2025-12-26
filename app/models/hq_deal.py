@@ -92,9 +92,6 @@ class HQDeal(Base):
     won_at = Column(DateTime, nullable=True)
     lost_at = Column(DateTime, nullable=True)
 
-    # Conversion to subscription
-    subscription_id = Column(String, ForeignKey("hq_subscription.id"), nullable=True)
-
     # Notes
     notes = Column(Text, nullable=True)
 
@@ -106,7 +103,7 @@ class HQDeal(Base):
     # Relationships
     assigned_sales_rep = relationship("HQEmployee", foreign_keys=[assigned_sales_rep_id])
     created_by = relationship("HQEmployee", foreign_keys=[created_by_id])
-    subscription = relationship("HQSubscription", foreign_keys=[subscription_id], back_populates="deal")
+    subscription = relationship("HQSubscription", back_populates="deal", uselist=False)
     activities = relationship("HQDealActivity", back_populates="deal", cascade="all, delete-orphan")
 
 
