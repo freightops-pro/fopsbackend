@@ -2024,6 +2024,211 @@ async def delete_hq_recipient(
 
 
 # ============================================================================
+# HQ Banking Onboarding Endpoints
+# ============================================================================
+
+class HQBankingOnboardingStatusResponse(BaseModel):
+    """Response model for HQ banking onboarding status."""
+    status: str  # not_started, pending, in_review, approved, rejected, active
+    application_id: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class HQBankingApplicationSubmit(BaseModel):
+    """Request model for submitting HQ banking application."""
+    # Business info
+    business_legal_name: str
+    business_dba: Optional[str] = None
+    business_type: str  # llc, corporation, partnership, sole_proprietorship
+    business_ein: str
+    business_formation_date: Optional[str] = None
+    business_state: Optional[str] = None
+    business_phone: Optional[str] = None
+    business_website: Optional[str] = None
+    business_address: Optional[str] = None
+    business_industry: Optional[str] = None
+
+    # Primary applicant
+    applicant_first_name: str
+    applicant_last_name: str
+    applicant_email: str
+    applicant_phone: Optional[str] = None
+    applicant_title: Optional[str] = None
+    applicant_dob: Optional[str] = None
+    applicant_ssn: Optional[str] = None
+    applicant_address: Optional[str] = None
+    applicant_ownership_percent: Optional[float] = None
+
+    # Account choices
+    account_types: List[str] = ["checking"]  # checking, savings
+    initial_deposit: Optional[float] = None
+
+
+@router.get("/internal-banking/onboarding/status", response_model=HQBankingOnboardingStatusResponse)
+async def get_hq_banking_onboarding_status(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> HQBankingOnboardingStatusResponse:
+    """Get HQ banking onboarding/KYB status."""
+    from app.models.banking import BankingApplication, BankingAccount
+
+    company_id = _get_hq_company_id()
+
+    # Check if there's already an approved application with active accounts
+    accounts_result = await db.execute(
+        select(BankingAccount).where(
+            BankingAccount.company_id == company_id,
+            BankingAccount.status == "active"
+        ).limit(1)
+    )
+    active_account = accounts_result.scalar_one_or_none()
+
+    if active_account:
+        return HQBankingOnboardingStatusResponse(
+            status="active",
+            application_id=None,
+            submitted_at=None,
+            reviewed_at=None,
+            rejection_reason=None
+        )
+
+    # Check for existing application
+    result = await db.execute(
+        select(BankingApplication)
+        .where(BankingApplication.company_id == company_id)
+        .order_by(BankingApplication.created_at.desc())
+        .limit(1)
+    )
+    application = result.scalar_one_or_none()
+
+    if not application:
+        return HQBankingOnboardingStatusResponse(
+            status="not_started",
+            application_id=None,
+            submitted_at=None,
+            reviewed_at=None,
+            rejection_reason=None
+        )
+
+    # Map application status to onboarding status
+    status_map = {
+        "draft": "pending",
+        "submitted": "pending",
+        "pending_review": "in_review",
+        "approved": "approved",
+        "rejected": "rejected",
+        "needs_info": "pending",
+        "synctera_error": "pending",
+    }
+    onboarding_status = status_map.get(application.status, "pending")
+
+    return HQBankingOnboardingStatusResponse(
+        status=onboarding_status,
+        application_id=application.id,
+        submitted_at=application.submitted_at,
+        reviewed_at=application.reviewed_at,
+        rejection_reason=application.rejection_reason
+    )
+
+
+@router.post("/internal-banking/onboarding/apply", status_code=status.HTTP_201_CREATED)
+async def submit_hq_banking_application(
+    payload: HQBankingApplicationSubmit,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Submit HQ banking application for KYB review."""
+    from app.models.banking import BankingApplication, BankingBusiness, BankingPerson
+    import uuid
+    from datetime import datetime
+
+    company_id = _get_hq_company_id()
+
+    # Check for existing pending application
+    existing_result = await db.execute(
+        select(BankingApplication)
+        .where(
+            BankingApplication.company_id == company_id,
+            BankingApplication.status.in_(["submitted", "pending_review", "approved"])
+        )
+        .limit(1)
+    )
+    existing_app = existing_result.scalar_one_or_none()
+
+    if existing_app:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An application is already in progress or approved"
+        )
+
+    # Create the application
+    app_id = str(uuid.uuid4())
+    reference = f"HQ-{datetime.now().strftime('%Y%m%d')}-{app_id[:8].upper()}"
+
+    application = BankingApplication(
+        id=app_id,
+        company_id=company_id,
+        reference=reference,
+        status="submitted",
+        account_choices={"types": payload.account_types, "initial_deposit": payload.initial_deposit},
+        submitted_at=datetime.utcnow(),
+    )
+    db.add(application)
+
+    # Create business record
+    business_id = str(uuid.uuid4())
+    business = BankingBusiness(
+        id=business_id,
+        application_id=app_id,
+        legal_name=payload.business_legal_name,
+        dba=payload.business_dba,
+        entity_type=payload.business_type,
+        ein=payload.business_ein,
+        formation_date=datetime.strptime(payload.business_formation_date, "%Y-%m-%d").date() if payload.business_formation_date else None,
+        state_of_formation=payload.business_state,
+        phone=payload.business_phone,
+        website=payload.business_website,
+        physical_address=payload.business_address,
+        industry_description=payload.business_industry,
+    )
+    db.add(business)
+
+    # Create primary applicant record
+    person_id = str(uuid.uuid4())
+    person = BankingPerson(
+        id=person_id,
+        application_id=app_id,
+        person_type="primary",
+        first_name=payload.applicant_first_name,
+        last_name=payload.applicant_last_name,
+        email=payload.applicant_email,
+        phone=payload.applicant_phone,
+        role=payload.applicant_title,
+        dob=datetime.strptime(payload.applicant_dob, "%Y-%m-%d").date() if payload.applicant_dob else None,
+        ssn_last4=payload.applicant_ssn[-4:] if payload.applicant_ssn and len(payload.applicant_ssn) >= 4 else None,
+        address=payload.applicant_address,
+        ownership_pct=payload.applicant_ownership_percent,
+    )
+    db.add(person)
+
+    # Update application with primary person
+    application.primary_person_id = person_id
+
+    await db.commit()
+
+    return {
+        "application_id": app_id,
+        "reference": reference,
+        "status": "submitted",
+        "message": "Application submitted successfully. You will be notified once reviewed."
+    }
+
+
+# ============================================================================
 # Accounting Endpoints
 # ============================================================================
 
