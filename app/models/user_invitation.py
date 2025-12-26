@@ -34,7 +34,7 @@ class UserInvitation(Base):
     last_name = Column(String, nullable=True)
 
     # What role will they have
-    role_id = Column(String, ForeignKey("roles.id"), nullable=True)
+    role_id = Column(String, ForeignKey("role.id"), nullable=True)
 
     # Which company
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
