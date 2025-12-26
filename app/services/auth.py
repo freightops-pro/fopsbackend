@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_access_token, hash_password, verify_password
 from app.core.password_policy import validate_password
 from app.models.company import Company
+from app.models.driver import Driver
 from app.models.rbac import Role, UserRole
 from app.models.user import User
 from app.models.audit_log import AuditLog
@@ -218,6 +219,9 @@ class AuthService:
         if not roles:
             roles = ["TENANT_ADMIN"]
 
+        # Check if user is linked to a driver profile
+        driver_id = await self._get_driver_id_for_user(user.id)
+
         session_user = SessionUser(
             id=user.id,
             email=user.email,
@@ -226,6 +230,7 @@ class AuthService:
             roles=roles,
             must_change_password=user.must_change_password,
             email_verified=user.email_verified,
+            driver_id=driver_id,
         )
 
         session_company = SessionCompany(
@@ -370,6 +375,14 @@ class AuthService:
             .where(Role.is_active == True)
         )
         return [row[0] for row in result.fetchall()]
+
+    async def _get_driver_id_for_user(self, user_id: str) -> Optional[str]:
+        """Get driver ID if user is linked to a driver profile."""
+        result = await self.db.execute(
+            select(Driver.id).where(Driver.user_id == user_id)
+        )
+        row = result.scalar_one_or_none()
+        return row if row else None
 
     async def _log_audit_event(
         self,

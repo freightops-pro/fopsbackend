@@ -289,6 +289,8 @@ class HQChatService:
 
     async def list_messages(self, channel_id: str, limit: int = 100) -> List[HQChatMessageResponse]:
         """Get messages for a channel."""
+        from app.schemas.hq import HQChatAttachment
+
         result = await self.db.execute(
             select(HQChatMessage)
             .where(HQChatMessage.channel_id == channel_id)
@@ -297,23 +299,42 @@ class HQChatService:
         )
         messages = result.scalars().all()
 
-        return [
-            HQChatMessageResponse(
-                id=m.id,
-                channel_id=m.channel_id,
-                author_id=m.author_id,
-                author_name=m.author_name,
-                content=m.content,
-                is_ai_response=m.is_ai_response,
-                ai_agent=m.ai_agent,
-                ai_reasoning=m.ai_reasoning,
-                ai_confidence=m.ai_confidence,
-                mentions=m.mentions,
-                is_read=m.is_read,
-                created_at=m.created_at
+        response_messages = []
+        for m in messages:
+            # Convert stored attachments to schema format
+            attachments = None
+            if m.attachments:
+                attachments = [
+                    HQChatAttachment(
+                        id=att["id"],
+                        filename=att["filename"],
+                        file_type=att["file_type"],
+                        file_size=att["file_size"],
+                        url=att["url"],
+                        thumbnail_url=att.get("thumbnail_url"),
+                    )
+                    for att in m.attachments
+                ]
+
+            response_messages.append(
+                HQChatMessageResponse(
+                    id=m.id,
+                    channel_id=m.channel_id,
+                    author_id=m.author_id,
+                    author_name=m.author_name,
+                    content=m.content,
+                    is_ai_response=m.is_ai_response,
+                    ai_agent=m.ai_agent,
+                    ai_reasoning=m.ai_reasoning,
+                    ai_confidence=m.ai_confidence,
+                    attachments=attachments,
+                    mentions=m.mentions,
+                    is_read=m.is_read,
+                    created_at=m.created_at
+                )
             )
-            for m in messages
-        ]
+
+        return response_messages
 
     async def post_message(
         self,
@@ -337,6 +358,21 @@ class HQChatService:
         if not channel:
             raise ValueError(f"Channel {channel_id} not found")
 
+        # Convert attachments to JSON format for storage
+        attachments_json = None
+        if payload.attachments:
+            attachments_json = [
+                {
+                    "id": att.id,
+                    "filename": att.filename,
+                    "file_type": att.file_type,
+                    "file_size": att.file_size,
+                    "url": att.url,
+                    "thumbnail_url": att.thumbnail_url,
+                }
+                for att in payload.attachments
+            ]
+
         # Create user message
         user_message = HQChatMessage(
             id=str(uuid.uuid4()),
@@ -345,18 +381,25 @@ class HQChatService:
             author_name=author_name,
             content=payload.content,
             mentions=payload.mentions,
+            attachments=attachments_json,
             is_ai_response=False,
             created_at=datetime.utcnow()
         )
 
         self.db.add(user_message)
 
+        # Determine last message preview
+        last_message_preview = payload.content[:100] if payload.content else ""
+        if not last_message_preview and payload.attachments:
+            attachment_count = len(payload.attachments)
+            last_message_preview = f"[{attachment_count} attachment{'s' if attachment_count > 1 else ''}]"
+
         # Update channel's last message
         await self.db.execute(
             update(HQChatChannel)
             .where(HQChatChannel.id == channel_id)
             .values(
-                last_message=payload.content[:100],
+                last_message=last_message_preview,
                 last_message_at=datetime.utcnow(),
                 updated_at=datetime.utcnow()
             )
@@ -364,6 +407,22 @@ class HQChatService:
 
         await self.db.commit()
         await self.db.refresh(user_message)
+
+        # Convert stored attachments back to schema format
+        response_attachments = None
+        if user_message.attachments:
+            from app.schemas.hq import HQChatAttachment
+            response_attachments = [
+                HQChatAttachment(
+                    id=att["id"],
+                    filename=att["filename"],
+                    file_type=att["file_type"],
+                    file_size=att["file_size"],
+                    url=att["url"],
+                    thumbnail_url=att.get("thumbnail_url"),
+                )
+                for att in user_message.attachments
+            ]
 
         user_response = HQChatMessageResponse(
             id=user_message.id,
@@ -375,6 +434,7 @@ class HQChatService:
             ai_agent=None,
             ai_reasoning=None,
             ai_confidence=None,
+            attachments=response_attachments,
             mentions=user_message.mentions,
             is_read=False,
             created_at=user_message.created_at
@@ -480,3 +540,287 @@ class HQChatService:
         """Mark all messages in a channel as read for a user."""
         # TODO: Implement per-user read tracking
         pass
+
+    # =========================================================================
+    # Direct Messages & Group Chats
+    # =========================================================================
+
+    async def create_direct_message(
+        self,
+        current_employee_id: str,
+        current_employee_name: str,
+        target_employee_id: str,
+        target_employee_name: str
+    ) -> HQChatChannelResponse:
+        """Create or get existing direct message channel between two employees."""
+        # Check if DM channel already exists between these two users
+        # DM channel names are formatted as "dm:{id1}:{id2}" where ids are sorted
+        sorted_ids = sorted([current_employee_id, target_employee_id])
+        dm_id = f"dm:{sorted_ids[0]}:{sorted_ids[1]}"
+
+        result = await self.db.execute(
+            select(HQChatChannel).where(HQChatChannel.id == dm_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            participants = await self._get_channel_participants(existing.id)
+            return HQChatChannelResponse(
+                id=existing.id,
+                name=existing.name,
+                channel_type=existing.channel_type,
+                description=existing.description,
+                last_message=existing.last_message,
+                last_message_at=existing.last_message_at,
+                unread_count=0,
+                is_pinned=existing.is_pinned,
+                participants=participants,
+                created_at=existing.created_at,
+                updated_at=existing.updated_at
+            )
+
+        # Create new DM channel
+        channel = HQChatChannel(
+            id=dm_id,
+            name=target_employee_name,  # Show other person's name
+            channel_type="direct",
+            description=f"Direct message with {target_employee_name}",
+            is_pinned=False,
+            created_by=current_employee_id,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        self.db.add(channel)
+
+        # Add both participants
+        participant1 = HQChatParticipant(
+            id=str(uuid.uuid4()),
+            channel_id=dm_id,
+            employee_id=current_employee_id,
+            display_name=current_employee_name,
+            role="member",
+            is_ai=False,
+            added_at=datetime.utcnow()
+        )
+        participant2 = HQChatParticipant(
+            id=str(uuid.uuid4()),
+            channel_id=dm_id,
+            employee_id=target_employee_id,
+            display_name=target_employee_name,
+            role="member",
+            is_ai=False,
+            added_at=datetime.utcnow()
+        )
+        self.db.add(participant1)
+        self.db.add(participant2)
+
+        await self.db.commit()
+        await self.db.refresh(channel)
+
+        return HQChatChannelResponse(
+            id=channel.id,
+            name=channel.name,
+            channel_type=channel.channel_type,
+            description=channel.description,
+            last_message=None,
+            last_message_at=None,
+            unread_count=0,
+            is_pinned=False,
+            participants=[
+                HQChatParticipantSchema(
+                    id=participant1.id,
+                    employee_id=participant1.employee_id,
+                    display_name=participant1.display_name,
+                    role=participant1.role,
+                    is_ai=False,
+                    added_at=participant1.added_at
+                ),
+                HQChatParticipantSchema(
+                    id=participant2.id,
+                    employee_id=participant2.employee_id,
+                    display_name=participant2.display_name,
+                    role=participant2.role,
+                    is_ai=False,
+                    added_at=participant2.added_at
+                )
+            ],
+            created_at=channel.created_at,
+            updated_at=channel.updated_at
+        )
+
+    async def create_group_chat(
+        self,
+        creator_id: str,
+        creator_name: str,
+        name: str,
+        description: Optional[str],
+        participant_ids: List[str],
+        participant_names: Dict[str, str]
+    ) -> HQChatChannelResponse:
+        """Create a new group chat with multiple participants."""
+        channel_id = str(uuid.uuid4())
+
+        channel = HQChatChannel(
+            id=channel_id,
+            name=name,
+            channel_type="team",
+            description=description,
+            is_pinned=False,
+            created_by=creator_id,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        self.db.add(channel)
+
+        # Add creator as admin
+        creator_participant = HQChatParticipant(
+            id=str(uuid.uuid4()),
+            channel_id=channel_id,
+            employee_id=creator_id,
+            display_name=creator_name,
+            role="admin",
+            is_ai=False,
+            added_at=datetime.utcnow()
+        )
+        self.db.add(creator_participant)
+
+        participants = [
+            HQChatParticipantSchema(
+                id=creator_participant.id,
+                employee_id=creator_participant.employee_id,
+                display_name=creator_participant.display_name,
+                role=creator_participant.role,
+                is_ai=False,
+                added_at=creator_participant.added_at
+            )
+        ]
+
+        # Add other participants as members
+        for emp_id in participant_ids:
+            if emp_id != creator_id:  # Don't add creator twice
+                emp_name = participant_names.get(emp_id, "Unknown")
+                participant = HQChatParticipant(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel_id,
+                    employee_id=emp_id,
+                    display_name=emp_name,
+                    role="member",
+                    is_ai=False,
+                    added_at=datetime.utcnow()
+                )
+                self.db.add(participant)
+                participants.append(
+                    HQChatParticipantSchema(
+                        id=participant.id,
+                        employee_id=participant.employee_id,
+                        display_name=participant.display_name,
+                        role=participant.role,
+                        is_ai=False,
+                        added_at=participant.added_at
+                    )
+                )
+
+        await self.db.commit()
+        await self.db.refresh(channel)
+
+        return HQChatChannelResponse(
+            id=channel.id,
+            name=channel.name,
+            channel_type=channel.channel_type,
+            description=channel.description,
+            last_message=None,
+            last_message_at=None,
+            unread_count=0,
+            is_pinned=False,
+            participants=participants,
+            created_at=channel.created_at,
+            updated_at=channel.updated_at
+        )
+
+    async def add_participant(
+        self,
+        channel_id: str,
+        employee_id: str,
+        employee_name: str,
+        role: str = "member"
+    ) -> HQChatParticipantSchema:
+        """Add a participant to a channel."""
+        # Check if channel exists
+        result = await self.db.execute(
+            select(HQChatChannel).where(HQChatChannel.id == channel_id)
+        )
+        channel = result.scalar_one_or_none()
+        if not channel:
+            raise ValueError(f"Channel {channel_id} not found")
+
+        # Check if already a participant
+        existing = await self.db.execute(
+            select(HQChatParticipant).where(
+                and_(
+                    HQChatParticipant.channel_id == channel_id,
+                    HQChatParticipant.employee_id == employee_id
+                )
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise ValueError(f"Employee {employee_id} is already a participant")
+
+        participant = HQChatParticipant(
+            id=str(uuid.uuid4()),
+            channel_id=channel_id,
+            employee_id=employee_id,
+            display_name=employee_name,
+            role=role,
+            is_ai=False,
+            added_at=datetime.utcnow()
+        )
+        self.db.add(participant)
+        await self.db.commit()
+        await self.db.refresh(participant)
+
+        return HQChatParticipantSchema(
+            id=participant.id,
+            employee_id=participant.employee_id,
+            display_name=participant.display_name,
+            role=participant.role,
+            is_ai=False,
+            added_at=participant.added_at
+        )
+
+    async def remove_participant(self, channel_id: str, employee_id: str) -> None:
+        """Remove a participant from a channel."""
+        result = await self.db.execute(
+            delete(HQChatParticipant).where(
+                and_(
+                    HQChatParticipant.channel_id == channel_id,
+                    HQChatParticipant.employee_id == employee_id
+                )
+            )
+        )
+        if result.rowcount == 0:
+            raise ValueError(f"Participant not found in channel")
+        await self.db.commit()
+
+    async def list_employees_for_chat(self, exclude_id: Optional[str] = None) -> List[dict]:
+        """List all active HQ employees for starting chats."""
+        from app.models.hq_employee import HQEmployee
+
+        query = select(HQEmployee).where(HQEmployee.is_active == True)
+        if exclude_id:
+            query = query.where(HQEmployee.id != exclude_id)
+
+        result = await self.db.execute(query.order_by(HQEmployee.first_name))
+        employees = result.scalars().all()
+
+        return [
+            {
+                "id": str(e.id),
+                "employeeNumber": e.employee_number,
+                "firstName": e.first_name,
+                "lastName": e.last_name,
+                "email": e.email,
+                "department": e.department,
+                "title": e.title
+            }
+            for e in employees
+        ]

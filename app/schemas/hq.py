@@ -1504,10 +1504,23 @@ class HQChatChannelResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class HQChatAttachment(BaseModel):
+    """File attachment in a chat message."""
+    id: str
+    filename: str
+    file_type: str  # image/png, application/pdf, etc.
+    file_size: int  # bytes
+    url: str
+    thumbnail_url: Optional[str] = Field(None, alias="thumbnailUrl", serialization_alias="thumbnailUrl")
+
+    model_config = {"populate_by_name": True}
+
+
 class HQChatMessageCreate(BaseModel):
     """Create a new chat message."""
     content: str
     mentions: Optional[List[str]] = None  # Employee IDs mentioned
+    attachments: Optional[List[HQChatAttachment]] = None  # File attachments
 
 
 class HQChatMessageResponse(BaseModel):
@@ -1521,6 +1534,7 @@ class HQChatMessageResponse(BaseModel):
     ai_agent: Optional[HQAgentType] = Field(None, alias="aiAgent", serialization_alias="aiAgent")
     ai_reasoning: Optional[str] = Field(None, alias="aiReasoning", serialization_alias="aiReasoning")
     ai_confidence: Optional[float] = Field(None, alias="aiConfidence", serialization_alias="aiConfidence")
+    attachments: Optional[List[HQChatAttachment]] = None
     mentions: Optional[List[str]] = None
     is_read: bool = Field(False, alias="isRead", serialization_alias="isRead")
     created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
@@ -1533,6 +1547,41 @@ class HQChatAIRoutingResult(BaseModel):
     agent: HQAgentType
     confidence: float
     reasoning: str
+
+
+class HQDirectMessageCreate(BaseModel):
+    """Create a direct message channel with another employee."""
+    employee_id: str = Field(alias="employeeId")  # Employee ID to start DM with
+
+    model_config = {"populate_by_name": True}
+
+
+class HQGroupChatCreate(BaseModel):
+    """Create a group chat with multiple employees."""
+    name: str
+    description: Optional[str] = None
+    participant_ids: List[str] = Field(alias="participantIds")  # Employee IDs to add
+
+    model_config = {"populate_by_name": True}
+
+
+class HQAddParticipant(BaseModel):
+    """Add a participant to a channel."""
+    employee_id: str = Field(alias="employeeId")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQChatFileUpload(BaseModel):
+    """Response after uploading a file for chat."""
+    id: str
+    filename: str
+    file_type: str = Field(alias="fileType", serialization_alias="fileType")
+    file_size: int = Field(alias="fileSize", serialization_alias="fileSize")
+    url: str
+    thumbnail_url: Optional[str] = Field(None, alias="thumbnailUrl", serialization_alias="thumbnailUrl")
+
+    model_config = {"populate_by_name": True}
 
 
 # ============================================================================

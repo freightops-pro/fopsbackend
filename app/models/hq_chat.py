@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Text, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -22,6 +22,7 @@ class HQChatChannel(Base):
     is_pinned = Column(Boolean, default=False)
     last_message = Column(Text, nullable=True)
     last_message_at = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)  # Employee ID who created the channel
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -46,6 +47,10 @@ class HQChatMessage(Base):
     ai_agent = Column(String(20), nullable=True)  # oracle, sentinel, nexus
     ai_reasoning = Column(Text, nullable=True)
     ai_confidence = Column(Float, nullable=True)
+
+    # File attachments - JSON array of attachment objects
+    # Each attachment: {id, filename, file_type, file_size, url, thumbnail_url}
+    attachments = Column(JSONB, nullable=True)
 
     # Metadata
     mentions = Column(ARRAY(String), nullable=True)

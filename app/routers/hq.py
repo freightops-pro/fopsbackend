@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1987,6 +1987,262 @@ async def colab_chat(
 
 
 # ============================================================================
+# HQ AI Tasks Endpoints (Proxy to main AI tasks for HQ portal)
+# ============================================================================
+
+from app.models.ai_task import AITask
+from sqlalchemy import select, or_
+
+
+@router.get("/ai/tasks")
+async def list_hq_ai_tasks(
+    status: Optional[str] = None,
+    agent_type: Optional[str] = None,
+    limit: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List AI tasks across all tenants for HQ monitoring.
+
+    Query params:
+    - status: Filter by status (comma-separated for multiple, e.g. 'queued,planning,in_progress')
+    - agent_type: Filter by agent type
+    - limit: Max results (default 50)
+    """
+    query = select(AITask)
+
+    if status:
+        # Support comma-separated status values
+        statuses = [s.strip() for s in status.split(",")]
+        query = query.where(or_(*[AITask.status == s for s in statuses]))
+
+    if agent_type:
+        query = query.where(AITask.agent_type == agent_type)
+
+    query = query.order_by(AITask.created_at.desc()).limit(limit)
+
+    result = await db.execute(query)
+    tasks = result.scalars().all()
+
+    return [
+        {
+            "id": str(task.id),
+            "company_id": str(task.company_id) if task.company_id else None,
+            "agent_type": task.agent_type,
+            "task_description": task.task_description,
+            "status": task.status,
+            "progress_percent": task.progress_percent,
+            "result": task.result,
+            "error_message": task.error_message,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        }
+        for task in tasks
+    ]
+
+
+@router.get("/ai/tasks/{task_id}")
+async def get_hq_ai_task(
+    task_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific AI task by ID for HQ monitoring."""
+    result = await db.execute(select(AITask).where(AITask.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {
+        "id": str(task.id),
+        "company_id": str(task.company_id) if task.company_id else None,
+        "agent_type": task.agent_type,
+        "task_description": task.task_description,
+        "status": task.status,
+        "progress_percent": task.progress_percent,
+        "result": task.result,
+        "error_message": task.error_message,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+    }
+
+
+# ============================================================================
+# HQ Integrations Endpoints
+# ============================================================================
+
+from app.models.integration import Integration, CompanyIntegration
+
+
+@router.get("/integrations/connections")
+async def list_hq_integration_connections(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all HQ-level integration connections.
+
+    HQ has its own integrations separate from tenant integrations,
+    primarily for platform-level accounting (QuickBooks for HQ revenue, etc).
+    """
+    from sqlalchemy.orm import selectinload
+
+    # HQ integrations are stored with company_id = None or a special HQ company ID
+    query = (
+        select(CompanyIntegration)
+        .where(CompanyIntegration.company_id.is_(None))
+        .options(selectinload(CompanyIntegration.integration))
+    )
+
+    result = await db.execute(query)
+    connections = result.scalars().all()
+
+    return [
+        {
+            "id": str(conn.id),
+            "company_id": None,
+            "integration_id": str(conn.integration_id),
+            "status": conn.status or "not-activated",
+            "last_sync_at": conn.last_sync_at.isoformat() if conn.last_sync_at else None,
+            "last_success_at": conn.last_success_at.isoformat() if conn.last_success_at else None,
+            "last_error_at": conn.last_error_at.isoformat() if conn.last_error_at else None,
+            "last_error_message": conn.last_error_message,
+            "consecutive_failures": conn.consecutive_failures or 0,
+            "auto_sync": conn.auto_sync if hasattr(conn, 'auto_sync') else False,
+            "sync_interval_minutes": conn.sync_interval_minutes if hasattr(conn, 'sync_interval_minutes') else 60,
+            "activated_at": conn.activated_at.isoformat() if hasattr(conn, 'activated_at') and conn.activated_at else None,
+            "created_at": conn.created_at.isoformat() if conn.created_at else None,
+            "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
+            "integration": {
+                "id": str(conn.integration.id),
+                "integration_key": conn.integration.integration_key,
+                "display_name": conn.integration.display_name,
+                "description": conn.integration.description,
+                "integration_type": conn.integration.integration_type,
+                "auth_type": conn.integration.auth_type,
+                "requires_oauth": conn.integration.requires_oauth,
+                "status": conn.status or "not-activated",
+            } if conn.integration else None,
+        }
+        for conn in connections
+    ]
+
+
+@router.get("/integrations/available")
+async def list_available_integrations(
+    integration_type: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all available integrations that can be connected."""
+    query = select(Integration).where(Integration.is_active == True)
+
+    if integration_type:
+        query = query.where(Integration.integration_type == integration_type)
+
+    result = await db.execute(query)
+    integrations = result.scalars().all()
+
+    return [
+        {
+            "id": str(i.id),
+            "integration_key": i.integration_key,
+            "display_name": i.display_name,
+            "description": i.description,
+            "integration_type": i.integration_type,
+            "auth_type": i.auth_type,
+            "requires_oauth": i.requires_oauth,
+            "features": i.features if hasattr(i, 'features') else None,
+            "support_email": i.support_email if hasattr(i, 'support_email') else None,
+            "status": "not-activated",
+        }
+        for i in integrations
+    ]
+
+
+@router.get("/integrations/health")
+async def get_integration_health(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get overall health status of all tenant integrations (for monitoring).
+
+    This is an admin view to monitor integration health across all tenants.
+    """
+    from sqlalchemy.orm import selectinload
+
+    # Get all company integrations with their status
+    query = (
+        select(CompanyIntegration)
+        .options(selectinload(CompanyIntegration.integration))
+    )
+
+    result = await db.execute(query)
+    connections = result.scalars().all()
+
+    # Calculate statistics
+    total = len(connections)
+    active = sum(1 for c in connections if c.status == "active")
+    error = sum(1 for c in connections if c.status == "error")
+    healthy = sum(1 for c in connections if c.status == "active" and (c.consecutive_failures or 0) == 0)
+    warning = sum(1 for c in connections if c.status == "active" and 0 < (c.consecutive_failures or 0) < 3)
+    critical = sum(1 for c in connections if (c.consecutive_failures or 0) >= 3)
+
+    # Group by integration type
+    by_type = {}
+    for conn in connections:
+        if conn.integration:
+            key = conn.integration.integration_key
+            if key not in by_type:
+                by_type[key] = {
+                    "integration_type": conn.integration.integration_type,
+                    "integration_key": key,
+                    "integration_name": conn.integration.display_name,
+                    "total_connections": 0,
+                    "active_connections": 0,
+                    "error_connections": 0,
+                }
+            by_type[key]["total_connections"] += 1
+            if conn.status == "active":
+                by_type[key]["active_connections"] += 1
+            if conn.status == "error":
+                by_type[key]["error_connections"] += 1
+
+    # Get recent errors
+    recent_errors = [
+        {
+            "id": str(c.id),
+            "company_id": str(c.company_id) if c.company_id else None,
+            "integration_key": c.integration.integration_key if c.integration else "unknown",
+            "integration_name": c.integration.display_name if c.integration else "Unknown",
+            "integration_type": c.integration.integration_type if c.integration else "unknown",
+            "status": c.status,
+            "last_error_at": c.last_error_at.isoformat() if c.last_error_at else None,
+            "last_error_message": c.last_error_message,
+            "consecutive_failures": c.consecutive_failures or 0,
+        }
+        for c in connections
+        if c.status == "error" or (c.consecutive_failures or 0) > 0
+    ][:10]  # Limit to 10 most recent
+
+    return {
+        "total_connections": total,
+        "active_connections": active,
+        "error_connections": error,
+        "healthy_connections": healthy,
+        "warning_connections": warning,
+        "critical_connections": critical,
+        "by_type": list(by_type.values()),
+        "recent_errors": recent_errors,
+    }
+
+
+# ============================================================================
 # HQ Chat Endpoints (Unified Team + AI Chat)
 # ============================================================================
 
@@ -2107,6 +2363,208 @@ async def mark_messages_read(
 ) -> None:
     """Mark all messages in a channel as read."""
     await service.mark_messages_read(channel_id, current_employee.id)
+
+
+@router.get("/chat/employees", response_model=List[dict])
+async def list_chat_employees(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> List[dict]:
+    """List all employees available for chat (for starting DMs or group chats)."""
+    return await service.list_employees_for_chat(exclude_id=str(current_employee.id))
+
+
+@router.post("/chat/dm", response_model=HQChatChannelResponse, status_code=status.HTTP_201_CREATED)
+async def create_direct_message(
+    payload: dict,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+    db: AsyncSession = Depends(get_db),
+) -> HQChatChannelResponse:
+    """Create or get existing direct message channel with another employee."""
+    from sqlalchemy import select
+
+    target_id = payload.get("employeeId") or payload.get("employee_id")
+    if not target_id:
+        raise HTTPException(status_code=400, detail="employeeId is required")
+
+    # Get target employee's name
+    result = await db.execute(
+        select(HQEmployee).where(HQEmployee.id == target_id)
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    return await service.create_direct_message(
+        current_employee_id=str(current_employee.id),
+        current_employee_name=f"{current_employee.first_name} {current_employee.last_name}",
+        target_employee_id=target_id,
+        target_employee_name=f"{target.first_name} {target.last_name}"
+    )
+
+
+@router.post("/chat/group", response_model=HQChatChannelResponse, status_code=status.HTTP_201_CREATED)
+async def create_group_chat(
+    payload: dict,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+    db: AsyncSession = Depends(get_db),
+) -> HQChatChannelResponse:
+    """Create a new group chat with multiple participants."""
+    from sqlalchemy import select
+
+    name = payload.get("name")
+    description = payload.get("description")
+    participant_ids = payload.get("participantIds") or payload.get("participant_ids") or []
+
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not participant_ids:
+        raise HTTPException(status_code=400, detail="participantIds is required")
+
+    # Get participant names
+    result = await db.execute(
+        select(HQEmployee).where(HQEmployee.id.in_(participant_ids))
+    )
+    employees = result.scalars().all()
+    participant_names = {str(e.id): f"{e.first_name} {e.last_name}" for e in employees}
+
+    return await service.create_group_chat(
+        creator_id=str(current_employee.id),
+        creator_name=f"{current_employee.first_name} {current_employee.last_name}",
+        name=name,
+        description=description,
+        participant_ids=participant_ids,
+        participant_names=participant_names
+    )
+
+
+@router.post("/chat/channels/{channel_id}/participants", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def add_channel_participant(
+    channel_id: str,
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Add a participant to a channel."""
+    from sqlalchemy import select
+
+    employee_id = payload.get("employeeId") or payload.get("employee_id")
+    if not employee_id:
+        raise HTTPException(status_code=400, detail="employeeId is required")
+
+    # Get employee's name
+    result = await db.execute(
+        select(HQEmployee).where(HQEmployee.id == employee_id)
+    )
+    employee = result.scalar_one_or_none()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    try:
+        participant = await service.add_participant(
+            channel_id=channel_id,
+            employee_id=employee_id,
+            employee_name=f"{employee.first_name} {employee.last_name}"
+        )
+        return participant.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/chat/channels/{channel_id}/participants/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_channel_participant(
+    channel_id: str,
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> None:
+    """Remove a participant from a channel."""
+    try:
+        await service.remove_participant(channel_id, employee_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/chat/upload", response_model=dict)
+async def upload_chat_file(
+    file: UploadFile = File(...),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+) -> dict:
+    """
+    Upload a file for chat attachment using Cloudflare R2.
+
+    Supports images, documents, and other file types.
+    Returns the file metadata including the public URL.
+    """
+    import uuid
+    from app.services.storage import StorageService
+
+    # Validate file size (max 25MB)
+    max_size = 25 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size is 25MB."
+        )
+
+    # Validate file type
+    allowed_types = {
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain", "text/csv",
+    }
+    content_type = file.content_type or "application/octet-stream"
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type '{content_type}' not allowed."
+        )
+
+    try:
+        # Upload to Cloudflare R2
+        storage = StorageService()
+        key = await storage.upload_file(
+            file_content=content,
+            filename=file.filename or "unnamed_file",
+            prefix="hq-chat",
+            content_type=content_type,
+        )
+
+        # Get public URL
+        public_url = storage.get_public_url(key)
+        if not public_url:
+            # Fall back to presigned URL if no public URL configured
+            public_url = storage.get_file_url(key, expires_in=86400 * 7)  # 7 days
+
+        # Generate thumbnail URL for images
+        thumbnail_url = None
+        if content_type.startswith("image/"):
+            thumbnail_url = public_url  # Could add image processing for thumbnails
+
+        file_id = str(uuid.uuid4())
+
+        return {
+            "id": file_id,
+            "filename": file.filename or "unnamed_file",
+            "fileType": content_type,
+            "fileSize": len(content),
+            "url": public_url,
+            "thumbnailUrl": thumbnail_url,
+            "key": key,  # Store key for potential deletion
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload file: {str(e)}"
+        )
 
 
 # ============================================================================
@@ -4689,3 +5147,221 @@ async def get_subscription_rate_changes(
 
     sub_service = HQSubscriptionsService(db)
     return await sub_service.get_rate_changes(subscription_id)
+
+
+# ============================================================================
+# WebSocket Endpoint for HQ Real-time Chat
+# ============================================================================
+
+from fastapi import WebSocket, WebSocketDisconnect
+from app.services.hq_websocket_manager import hq_manager
+
+
+async def _get_hq_employee_from_ws_token(token: str, db: AsyncSession) -> Optional[HQEmployee]:
+    """Authenticate HQ employee from WebSocket token."""
+    from sqlalchemy import select
+
+    if not token:
+        return None
+
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+
+    # Verify this is an HQ token
+    if payload.get("type") != "hq":
+        return None
+
+    employee_id = payload.get("sub")
+    if not employee_id:
+        return None
+
+    result = await db.execute(
+        select(HQEmployee).where(HQEmployee.id == employee_id, HQEmployee.is_active == True)
+    )
+    return result.scalar_one_or_none()
+
+
+@router.websocket("/ws")
+async def hq_websocket_endpoint(
+    websocket: WebSocket,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    WebSocket endpoint for HQ real-time chat updates.
+
+    Clients connect with token as query parameter:
+    ws://host/api/hq/ws?token=<hq_access_token>
+
+    Message Types (Client -> Server):
+    - ping: Keep-alive
+    - subscribe_channel: Subscribe to a channel's messages
+    - unsubscribe_channel: Unsubscribe from a channel
+    - chat_message: Send a message to a channel (also posts via REST)
+    - typing: Typing indicator
+
+    Message Types (Server -> Client):
+    - pong: Response to ping
+    - system_message: System notifications
+    - chat_message / message_received: New chat message
+    - channel_created: New channel created
+    - channel_deleted: Channel deleted
+    - presence_update: Employee online/offline status
+    - typing: Typing indicator from other employees
+    - error: Error message
+    """
+    employee = None
+    try:
+        # Accept the WebSocket connection first
+        await websocket.accept()
+
+        # Get token from query params
+        token = websocket.query_params.get("token")
+
+        # Authenticate employee from token
+        employee = await _get_hq_employee_from_ws_token(token, db)
+
+        if not employee:
+            await websocket.send_json({
+                "type": "error",
+                "data": {"message": "Authentication failed", "code": "auth_failed"}
+            })
+            await websocket.close(code=1008, reason="Authentication failed")
+            return
+
+        # Register with the HQ WebSocket manager
+        await hq_manager.connect(websocket, employee)
+
+        # Send welcome message
+        await websocket.send_json({
+            "type": "system_message",
+            "data": {
+                "message": "Connected to HQ real-time updates",
+                "employee_id": str(employee.id),
+                "employee_name": f"{employee.first_name} {employee.last_name}",
+            }
+        })
+
+        # Broadcast presence update
+        await hq_manager.broadcast_to_all({
+            "type": "presence_update",
+            "data": {
+                "employeeId": str(employee.id),
+                "employeeName": f"{employee.first_name} {employee.last_name}",
+                "status": "online",
+                "lastSeen": None,
+            }
+        })
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+
+            elif msg_type == "subscribe_channel":
+                channel_id = data.get("data", {}).get("channel_id")
+                if channel_id:
+                    await hq_manager.subscribe_to_channel(str(employee.id), channel_id)
+                    await websocket.send_json({
+                        "type": "subscription_ack",
+                        "data": {"channel_id": channel_id, "status": "subscribed"}
+                    })
+
+            elif msg_type == "unsubscribe_channel":
+                channel_id = data.get("data", {}).get("channel_id")
+                if channel_id:
+                    await hq_manager.unsubscribe_from_channel(str(employee.id), channel_id)
+                    await websocket.send_json({
+                        "type": "subscription_ack",
+                        "data": {"channel_id": channel_id, "status": "unsubscribed"}
+                    })
+
+            elif msg_type == "chat_message":
+                # Handle chat message - broadcast to channel subscribers
+                msg_data = data.get("data", {})
+                channel_id = msg_data.get("channel_id")
+                content = msg_data.get("content")
+
+                if channel_id and content:
+                    # Broadcast message to all subscribers of this channel
+                    await hq_manager.broadcast_to_channel({
+                        "type": "chat_message",
+                        "data": {
+                            "channelId": channel_id,
+                            "authorId": str(employee.id),
+                            "authorName": f"{employee.first_name} {employee.last_name}",
+                            "content": content,
+                            "isAiResponse": False,
+                        }
+                    }, channel_id)
+
+            elif msg_type == "typing":
+                # Broadcast typing indicator
+                channel_id = data.get("data", {}).get("channel_id")
+                if channel_id:
+                    await hq_manager.broadcast_to_channel({
+                        "type": "typing",
+                        "data": {
+                            "channelId": channel_id,
+                            "employeeId": str(employee.id),
+                            "employeeName": f"{employee.first_name} {employee.last_name}",
+                        }
+                    }, channel_id)
+
+            elif msg_type == "get_messages":
+                # Client requesting message history via WebSocket
+                channel_id = data.get("data", {}).get("channel_id")
+                limit = data.get("data", {}).get("limit", 100)
+
+                if channel_id:
+                    try:
+                        service = HQChatService(db)
+                        messages = await service.list_messages(channel_id, limit)
+                        await websocket.send_json({
+                            "type": "message_history",
+                            "data": {
+                                "channel_id": channel_id,
+                                "messages": [msg.model_dump() for msg in messages]
+                            }
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to fetch messages: {e}")
+
+            else:
+                logger.warning(f"Unknown HQ WebSocket message type from employee {employee.email}: {msg_type}")
+
+    except WebSocketDisconnect:
+        logger.info(f"HQ WebSocket disconnected normally - Employee: {employee.email if employee else 'Unknown'}")
+        if employee:
+            await hq_manager.disconnect(websocket, employee)
+            # Broadcast offline presence
+            await hq_manager.broadcast_to_all({
+                "type": "presence_update",
+                "data": {
+                    "employeeId": str(employee.id),
+                    "employeeName": f"{employee.first_name} {employee.last_name}",
+                    "status": "offline",
+                    "lastSeen": None,
+                }
+            })
+
+    except Exception as e:
+        logger.error(f"HQ WebSocket error - Employee: {employee.email if employee else 'Unknown'}: {e}", exc_info=True)
+        if employee:
+            await hq_manager.disconnect(websocket, employee)
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except:
+            pass
+
+
+# Helper function to broadcast chat messages from REST endpoints
+async def broadcast_hq_chat_message(channel_id: str, message_data: dict) -> None:
+    """Broadcast a chat message to all WebSocket subscribers of a channel."""
+    await hq_manager.broadcast_to_channel({
+        "type": "message_received",
+        "data": message_data
+    }, channel_id)

@@ -54,6 +54,7 @@ class SessionUser(BaseModel):
     avatar_url: Optional[str] = None
     must_change_password: bool = False
     email_verified: bool = False
+    driver_id: Optional[str] = None  # Set if user is linked to a driver profile
 
 
 class SessionCompany(BaseModel):
