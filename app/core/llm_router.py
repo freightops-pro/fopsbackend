@@ -48,8 +48,11 @@ class LLMRouter:
             try:
                 from groq import AsyncGroq
                 self.groq = AsyncGroq(api_key=self.groq_api_key)
+                print(f"[LLM Router] Groq initialized (key: {self.groq_api_key[:10]}...)")
             except ImportError:
                 print("[LLM Router] Warning: groq package not installed. Install with: pip install groq")
+        else:
+            print("[LLM Router] Warning: GROQ_API_KEY not set")
 
         # Provider 3: Google Gemini (fallback)
         self.google_api_key = os.getenv("GOOGLE_AI_API_KEY")
@@ -59,8 +62,11 @@ class LLMRouter:
                 import google.generativeai as genai
                 genai.configure(api_key=self.google_api_key)
                 self.gemini = genai
+                print(f"[LLM Router] Gemini initialized (key: {self.google_api_key[:10]}...)")
             except ImportError:
                 print("[LLM Router] Warning: google-generativeai not installed. Install with: pip install google-generativeai")
+        else:
+            print("[LLM Router] Warning: GOOGLE_AI_API_KEY not set")
 
         # Provider 4: AWS Bedrock (enterprise fallback)
         self.aws_region = os.getenv("AWS_REGION", "us-east-1")
@@ -74,8 +80,19 @@ class LLMRouter:
                     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
                 )
+                print("[LLM Router] Bedrock initialized")
             except ImportError:
                 print("[LLM Router] Warning: boto3 not installed. Install with: pip install boto3")
+
+        # Log provider summary
+        providers = []
+        if self.groq:
+            providers.append("Groq")
+        if self.gemini:
+            providers.append("Gemini")
+        if self.bedrock:
+            providers.append("Bedrock")
+        print(f"[LLM Router] Active providers: {providers if providers else 'NONE'}")
 
     def get_model_config(self, agent_role: AgentRole) -> dict:
         """
