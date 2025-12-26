@@ -32,7 +32,7 @@ from app.schemas.invitation import (
     InvitationStats,
 )
 from app.services.email import EmailService
-from app.core.security import get_password_hash
+from app.core.security import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ class InvitationService:
         user = User(
             id=str(uuid4()),
             email=invitation.email,
-            hashed_password=get_password_hash(data.password),
+            hashed_password=hash_password(data.password),
             first_name=data.first_name,
             last_name=data.last_name,
             company_id=invitation.company_id,
