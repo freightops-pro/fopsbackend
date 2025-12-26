@@ -35,8 +35,7 @@ class ConnectionManager:
                     self.company_users[company_id] = set()
                 self.company_users[company_id].add(user_id)
 
-            logger.info(f"WebSocket connected - User: {user.email} ({user_id}), Company: {company_id}")
-            logger.debug(f"Active connections: {len(self.active_connections)} users, {sum(len(conns) for conns in self.active_connections.values())} total connections")
+            logger.debug(f"WebSocket connected - User: {user_id}")
 
     async def disconnect(self, websocket: WebSocket, user: User) -> None:
         """Remove a WebSocket connection."""
@@ -59,13 +58,11 @@ class ConnectionManager:
                         if not self.company_users[company_id]:
                             del self.company_users[company_id]
 
-            logger.info(f"WebSocket disconnected - User: {user.email} ({user_id})")
-            logger.debug(f"Active connections: {len(self.active_connections)} users, {sum(len(conns) for conns in self.active_connections.values())} total connections")
+            logger.debug(f"WebSocket disconnected - User: {user_id}")
 
     async def send_personal_message(self, message: dict, user_id: str) -> None:
         """Send a message to all connections of a specific user."""
         if user_id not in self.active_connections:
-            logger.debug(f"No active connections for user {user_id}")
             return
 
         connections = self.active_connections[user_id].copy()
@@ -74,8 +71,7 @@ class ConnectionManager:
         for connection in connections:
             try:
                 await connection.send_json(message)
-            except Exception as e:
-                logger.warning(f"Failed to send message to user {user_id}: {e}")
+            except Exception:
                 disconnected.append(connection)
 
         # Clean up disconnected connections
@@ -90,7 +86,6 @@ class ConnectionManager:
     async def send_company_message(self, message: dict, company_id: str) -> None:
         """Send a message to all users in a company."""
         if company_id not in self.company_users:
-            logger.debug(f"No active connections for company {company_id}")
             return
 
         user_ids = self.company_users[company_id].copy()

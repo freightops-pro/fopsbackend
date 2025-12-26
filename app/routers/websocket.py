@@ -84,7 +84,6 @@ async def websocket_endpoint(
         if driver:
             driver_id = str(driver.id)
             driver_connections[driver_id] = str(user.id)
-            logger.info(f"Driver {driver_id} connected via WebSocket")
 
         # Send welcome message
         await websocket.send_json({
@@ -112,7 +111,6 @@ async def websocket_endpoint(
                 driver_id = reg_data.get("driver_id")
                 if driver_id:
                     driver_connections[driver_id] = str(user.id)
-                    logger.info(f"Registered driver {driver_id} for user {user.id}")
                     await websocket.send_json({
                         "type": "registration_ack",
                         "data": {"driver_id": driver_id, "status": "registered"}
@@ -424,7 +422,6 @@ async def broadcast_driver_update(driver_id: str, company_id: str, event_type: s
         }
     }
     await manager.send_company_message(message, company_id)
-    logger.debug(f"Broadcast driver update: {event_type} for driver {driver_id}")
 
 
 async def broadcast_load_update(load_id: str, company_id: str, event_type: str, data: dict) -> None:
@@ -439,7 +436,6 @@ async def broadcast_load_update(load_id: str, company_id: str, event_type: str, 
         }
     }
     await manager.send_company_message(message, company_id)
-    logger.debug(f"Broadcast load update: {event_type} for load {load_id}")
 
 
 async def broadcast_location_update(driver_id: str, company_id: str, location_data: dict) -> None:
@@ -452,7 +448,6 @@ async def broadcast_location_update(driver_id: str, company_id: str, location_da
         }
     }
     await manager.send_company_message(message, company_id)
-    logger.debug(f"Broadcast location for driver {driver_id}")
 
 
 async def broadcast_document_event(load_id: str, company_id: str, event_type: str, data: dict) -> None:
@@ -469,7 +464,6 @@ async def broadcast_document_event(load_id: str, company_id: str, event_type: st
         }
     }
     await manager.send_company_message(message, company_id)
-    logger.debug(f"Broadcast document event: {event_type} for load {load_id}")
 
 
 async def broadcast_equipment_update(equipment_id: str, company_id: str, event_type: str, data: dict) -> None:
@@ -484,7 +478,6 @@ async def broadcast_equipment_update(equipment_id: str, company_id: str, event_t
         }
     }
     await manager.send_company_message(message, company_id)
-    logger.debug(f"Broadcast equipment update: {event_type} for equipment {equipment_id}")
 
 
 async def send_user_notification(user_id: str, notification_type: str, data: dict) -> None:
@@ -498,7 +491,6 @@ async def send_user_notification(user_id: str, notification_type: str, data: dic
         }
     }
     await manager.send_personal_message(message, user_id)
-    logger.debug(f"Sent {notification_type} notification to user {user_id}")
 
 
 # ==================== DRIVER-SPECIFIC MESSAGING ====================
@@ -515,9 +507,6 @@ async def send_to_driver(driver_id: str, message_type: str, data: dict) -> None:
             }
         }
         await manager.send_personal_message(message, user_id)
-        logger.debug(f"Sent {message_type} to driver {driver_id}")
-    else:
-        logger.debug(f"Driver {driver_id} not connected, message not sent")
 
 
 async def notify_load_assigned(driver_id: str, load_data: dict) -> None:

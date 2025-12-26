@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from typing import Generator
 
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import get_settings
 from app.models.base import Base
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 def get_async_database_url(url: str) -> str:
@@ -37,18 +39,17 @@ if "postgresql" in database_url or "postgres" in database_url:
         "connect_timeout": 10,
     }
 
-print(f"[DB] Creating database engine with URL: {database_url.split('@')[0]}@***")
+logger.debug(f"Creating database engine")
 engine: AsyncEngine = create_async_engine(
     database_url,
     future=True,
-    echo=settings.debug,
-    pool_pre_ping=True,  # Verify connections before using
-    pool_recycle=3600,   # Recycle connections after 1 hour
-    pool_timeout=10,     # Wait up to 10 seconds for a connection from pool
-    max_overflow=10,     # Allow extra connections beyond pool_size
+    echo=False,  # Disable SQL echo to reduce logs
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_timeout=10,
+    max_overflow=10,
     connect_args=connect_args,
 )
-print("[DB] Database engine created")
 
 AsyncSessionFactory = async_sessionmaker(
     bind=engine,
@@ -59,7 +60,7 @@ AsyncSessionFactory = async_sessionmaker(
 sync_database_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
 sync_engine = create_engine(
     sync_database_url,
-    echo=settings.debug,
+    echo=False,  # Disable SQL echo to reduce logs
     pool_pre_ping=True,
     pool_recycle=3600,
     pool_timeout=10,
@@ -90,7 +91,7 @@ def run_alembic_migrations() -> None:
     """Run Alembic migrations synchronously."""
     import subprocess
     import sys
-    print("[DB] Running Alembic migrations...")
+    logger.info("Running Alembic migrations")
     try:
         result = subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
@@ -99,63 +100,44 @@ def run_alembic_migrations() -> None:
             timeout=60
         )
         if result.returncode == 0:
-            print("[DB] Alembic migrations completed successfully")
-            if result.stdout:
-                print(f"[DB] Migration output: {result.stdout[:500]}")
+            logger.info("Alembic migrations completed")
         else:
-            print(f"[DB] Alembic migration warning: {result.stderr[:500]}")
+            logger.warning(f"Alembic migration warning: {result.stderr[:200]}")
     except subprocess.TimeoutExpired:
-        print("[DB] WARNING: Alembic migration timed out after 60s")
+        logger.warning("Alembic migration timed out after 60s")
     except Exception as e:
-        print(f"[DB] WARNING: Alembic migration failed: {e}")
+        logger.warning(f"Alembic migration failed: {e}")
 
 
 async def init_database() -> None:
-    """Run migrations and create tables.
-
-    1. First try to run Alembic migrations (source of truth)
-    2. Fall back to create_all for any missing tables
-    """
-    print("[DB] Initializing database tables...")
-
-    # Run Alembic migrations first
+    """Run migrations and create tables."""
     import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, run_alembic_migrations)
 
-    # Then try create_all as fallback
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[DB] Database tables verified successfully")
-    except Exception as e:
-        # Don't fail startup - migrations are the source of truth
-        print(f"[DB] WARNING: create_all failed (expected if using Alembic): {e}")
-        print("[DB] Continuing with existing schema from migrations...")
+    except Exception:
+        pass  # Expected if using Alembic migrations
 
 
 async def test_database_connection() -> bool:
     """Test database connection with timeout."""
     import asyncio
     from sqlalchemy import text
-    print("[DB] Testing database connection...")
-    
+
     async def _test_connection():
         async with engine.connect() as conn:
             result = await conn.execute(text("SELECT 1"))
             result.fetchone()
-    
+
     try:
         await asyncio.wait_for(_test_connection(), timeout=10.0)
-        print("[DB] Database connection test successful")
         return True
     except asyncio.TimeoutError:
-        print("[DB] ERROR: Database connection test timed out after 10 seconds")
-        print("[DB] Check your DATABASE_URL and network connectivity")
+        logger.error("Database connection timed out")
         return False
     except Exception as e:
-        print(f"[DB] ERROR: Database connection test failed: {e}")
-        print(f"[DB] Error type: {type(e).__name__}")
-        import traceback
-        print(f"[DB] Traceback: {traceback.format_exc()}")
+        logger.error(f"Database connection failed: {e}")
         return False

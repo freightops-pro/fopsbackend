@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 import os
 import uuid
 
@@ -13,6 +14,18 @@ from app.core.db import init_database, AsyncSessionFactory
 from app.models.port import Port
 from app.middleware.security import setup_security_middleware
 
+# Configure logging - reduce verbosity in production
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s: %(message)s",
+)
+# Reduce noise from third-party libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
@@ -149,7 +162,6 @@ async def seed_ports():
             db.add(port)
 
         await db.commit()
-        print(f"Seeded {len(ports_data)} ports")
 
 
 db_initialized = False
@@ -158,100 +170,70 @@ db_error: str | None = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global db_initialized, db_error
-    print("[LIFESPAN] Starting application initialization...")
     import asyncio
     from app.core.db import test_database_connection, init_database
-    
+
     async def initialize_database():
-        """Initialize database in background - non-blocking for health checks."""
+        """Initialize database in background."""
         global db_initialized, db_error
         try:
-            # Step 1: Test database connection
-            print("[LIFESPAN] Testing database connection...")
             db_connected = await test_database_connection()
             if not db_connected:
                 db_error = "Database connection failed"
-                print(f"[LIFESPAN] ERROR: {db_error}")
+                logger.error(db_error)
                 return
-            print("[LIFESPAN] Database connection successful")
-            
-            # Step 2: Initialize database tables
-            print("[LIFESPAN] Initializing database tables...")
+
             await asyncio.wait_for(init_database(), timeout=30.0)
-            print("[LIFESPAN] Database tables initialized successfully")
-            
-            # Step 3: Seed ports (optional - can fail)
+
             try:
-                print("[LIFESPAN] Seeding ports...")
                 await asyncio.wait_for(seed_ports(), timeout=10.0)
-                print("[LIFESPAN] Ports seeded successfully")
-            except asyncio.TimeoutError:
-                print("[LIFESPAN] WARNING: Port seeding timed out after 10s - continuing anyway")
-            except Exception as e:
-                print(f"[LIFESPAN] WARNING: Error seeding ports: {e} - continuing anyway")
-            
+            except Exception:
+                pass  # Port seeding is optional
+
             db_initialized = True
-            print("[LIFESPAN] Database initialization complete")
-            
+            logger.info("Database ready")
+
         except asyncio.TimeoutError:
-            db_error = "Database initialization timed out after 30s"
-            print(f"[LIFESPAN] ERROR: {db_error}")
+            db_error = "Database initialization timed out"
+            logger.error(db_error)
         except Exception as e:
             db_error = str(e)
-            print(f"[LIFESPAN] ERROR initializing database: {e}")
-    
-    # Start database initialization in background - DON'T BLOCK STARTUP
-    # This allows health checks to respond while DB is still connecting
-    asyncio.create_task(initialize_database())
-    
-    # Step 4: Start scheduler (can work without DB initially)
-    try:
-        print("[LIFESPAN] Starting scheduler...")
-        start_scheduler()
-        print("[LIFESPAN] Scheduler started")
-    except Exception as e:
-        print(f"[LIFESPAN] WARNING: Error starting scheduler: {e}")
+            logger.error(f"Database init failed: {e}")
 
-    # Step 5: Register WebSocket event handlers
+    asyncio.create_task(initialize_database())
+
     try:
-        print("[LIFESPAN] Registering WebSocket event handlers...")
+        start_scheduler()
+    except Exception as e:
+        logger.warning(f"Scheduler error: {e}")
+
+    try:
         from app.services.websocket_events import register_websocket_handlers
         register_websocket_handlers()
-        print("[LIFESPAN] WebSocket event handlers registered")
     except Exception as e:
-        print(f"[LIFESPAN] WARNING: Error registering WebSocket handlers: {e}")
+        logger.warning(f"WebSocket handlers error: {e}")
 
-    # Step 6: Run initial automation cycle (optional - run in background after DB ready)
     async def run_automation_background():
-        # Wait for database to be ready before running automation
-        for _ in range(60):  # Wait up to 60 seconds
+        for _ in range(60):
             if db_initialized:
                 break
             await asyncio.sleep(1)
-        
+
         if not db_initialized:
-            print("[LIFESPAN] WARNING: Database not ready, skipping automation cycle")
             return
-            
+
         try:
-            print("[LIFESPAN] Running initial automation cycle...")
             await asyncio.wait_for(run_automation_cycle(), timeout=60.0)
-            print("[LIFESPAN] Initial automation cycle completed")
-        except asyncio.TimeoutError:
-            print("[LIFESPAN] WARNING: Automation cycle timed out after 60s")
-        except Exception as e:
-            print(f"[LIFESPAN] WARNING: Error in automation cycle: {e}")
-    
-    # Start automation cycle in background - don't block startup
+        except Exception:
+            pass  # Automation cycle is optional
+
     asyncio.create_task(run_automation_background())
-    
-    print("[LIFESPAN] Application startup complete - ready to accept requests")
-    
+
+    logger.info("Application started")
+
     yield
-    
-    print("[LIFESPAN] Shutting down...")
+
     shutdown_scheduler()
-    print("[LIFESPAN] Shutdown complete")
 
 
 app = FastAPI(
@@ -260,11 +242,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Debug: Log CORS origins at startup
-print(f"[CORS] Raw env CORS_ORIGINS: {os.environ.get('CORS_ORIGINS', 'NOT SET')}")
-print(f"[CORS] Settings cors_origins_raw: {settings.cors_origins_raw}")
-print(f"[CORS] Parsed origins list: {settings.backend_cors_origins}")
-print(f"[CORS] Origins count: {len(settings.backend_cors_origins)}")
 
 app.add_middleware(
     CORSMiddleware,
