@@ -2001,3 +2001,246 @@ class HQFollowUpAlerts(BaseModel):
     upcoming: List[HQDueFollowUp] = []
 
     model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# Deal Schemas (Unified Sales Pipeline)
+# ============================================================================
+
+DealStageType = Literal["lead", "contacted", "qualified", "demo", "closing", "won", "lost"]
+DealSourceType = Literal["referral", "website", "cold_call", "partner", "trade_show", "linkedin", "fmcsa", "other"]
+
+
+class HQDealBase(BaseModel):
+    company_name: str = Field(alias="companyName", serialization_alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName", serialization_alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail", serialization_alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone", serialization_alias="contactPhone")
+    contact_title: Optional[str] = Field(None, alias="contactTitle", serialization_alias="contactTitle")
+    source: DealSourceType = "other"
+    estimated_mrr: Optional[Decimal] = Field(None, alias="estimatedMrr", serialization_alias="estimatedMrr")
+    estimated_setup_fee: Optional[Decimal] = Field(None, alias="estimatedSetupFee", serialization_alias="estimatedSetupFee")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks", serialization_alias="estimatedTrucks")
+    estimated_close_date: Optional[datetime] = Field(None, alias="estimatedCloseDate", serialization_alias="estimatedCloseDate")
+    next_follow_up_date: Optional[datetime] = Field(None, alias="nextFollowUpDate", serialization_alias="nextFollowUpDate")
+    notes: Optional[str] = None
+    # FMCSA data
+    dot_number: Optional[str] = Field(None, alias="dotNumber", serialization_alias="dotNumber")
+    mc_number: Optional[str] = Field(None, alias="mcNumber", serialization_alias="mcNumber")
+    state: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealCreate(HQDealBase):
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+
+
+class HQDealUpdate(BaseModel):
+    company_name: Optional[str] = Field(None, alias="companyName")
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_title: Optional[str] = Field(None, alias="contactTitle")
+    source: Optional[DealSourceType] = None
+    stage: Optional[DealStageType] = None
+    probability: Optional[Decimal] = None
+    estimated_mrr: Optional[Decimal] = Field(None, alias="estimatedMrr")
+    estimated_setup_fee: Optional[Decimal] = Field(None, alias="estimatedSetupFee")
+    estimated_trucks: Optional[str] = Field(None, alias="estimatedTrucks")
+    estimated_close_date: Optional[datetime] = Field(None, alias="estimatedCloseDate")
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId")
+    next_follow_up_date: Optional[datetime] = Field(None, alias="nextFollowUpDate")
+    notes: Optional[str] = None
+    lost_reason: Optional[str] = Field(None, alias="lostReason")
+    competitor: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealResponse(HQDealBase):
+    id: str
+    deal_number: str = Field(alias="dealNumber", serialization_alias="dealNumber")
+    stage: DealStageType
+    probability: Decimal
+    assigned_sales_rep_id: Optional[str] = Field(None, alias="assignedSalesRepId", serialization_alias="assignedSalesRepId")
+    assigned_sales_rep_name: Optional[str] = Field(None, alias="assignedSalesRepName", serialization_alias="assignedSalesRepName")
+    last_contacted_at: Optional[datetime] = Field(None, alias="lastContactedAt", serialization_alias="lastContactedAt")
+    carrier_type: Optional[str] = Field(None, alias="carrierType", serialization_alias="carrierType")
+    lost_reason: Optional[str] = Field(None, alias="lostReason", serialization_alias="lostReason")
+    competitor: Optional[str] = None
+    won_at: Optional[datetime] = Field(None, alias="wonAt", serialization_alias="wonAt")
+    lost_at: Optional[datetime] = Field(None, alias="lostAt", serialization_alias="lostAt")
+    subscription_id: Optional[str] = Field(None, alias="subscriptionId", serialization_alias="subscriptionId")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQDealStageSummary(BaseModel):
+    """Summary of deals for a single pipeline stage."""
+    stage: DealStageType
+    count: int
+    total_value: Decimal = Field(alias="totalValue", serialization_alias="totalValue")
+    weighted_value: Decimal = Field(alias="weightedValue", serialization_alias="weightedValue")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealImportRequest(BaseModel):
+    """Request to import deals from AI-parsed content."""
+    content: str = Field(..., min_length=10, max_length=100000)
+    content_type: Literal["csv", "email", "spreadsheet", "text"] = Field("text", alias="contentType")
+    assign_to_sales_rep_id: Optional[str] = Field(None, alias="assignToSalesRepId")
+    auto_assign_round_robin: bool = Field(False, alias="autoAssignRoundRobin")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealImportResponse(BaseModel):
+    """Response from deal import."""
+    deals_created: List[dict] = Field(alias="dealsCreated", serialization_alias="dealsCreated")
+    errors: List[dict] = []
+    total_parsed: int = Field(alias="totalParsed", serialization_alias="totalParsed")
+    total_created: int = Field(alias="totalCreated", serialization_alias="totalCreated")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealFMCSAImportRequest(BaseModel):
+    """Request to import deals from FMCSA Census data."""
+    state: Optional[str] = Field(None, min_length=2, max_length=2)
+    min_trucks: int = Field(5, ge=1, alias="minTrucks")
+    max_trucks: int = Field(500, ge=1, alias="maxTrucks")
+    limit: int = Field(50, ge=1, le=200)
+    authority_days: Optional[int] = Field(None, ge=1, le=365, alias="authorityDays")
+    assign_to_sales_rep_id: Optional[str] = Field(None, alias="assignToSalesRepId")
+    auto_assign_round_robin: bool = Field(False, alias="autoAssignRoundRobin")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealActivityCreate(BaseModel):
+    """Create a deal activity."""
+    activity_type: str = Field(alias="activityType")
+    description: str
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealActivityResponse(BaseModel):
+    """Deal activity response."""
+    id: str
+    deal_id: str = Field(alias="dealId", serialization_alias="dealId")
+    activity_type: str = Field(alias="activityType", serialization_alias="activityType")
+    description: str
+    from_stage: Optional[str] = Field(None, alias="fromStage", serialization_alias="fromStage")
+    to_stage: Optional[str] = Field(None, alias="toStage", serialization_alias="toStage")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_by_name: Optional[str] = Field(None, alias="createdByName", serialization_alias="createdByName")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Subscription Schemas
+# ============================================================================
+
+SubscriptionStatusType = Literal["active", "paused", "cancelled", "past_due", "trialing"]
+BillingIntervalType = Literal["monthly", "annual"]
+
+
+class HQSubscriptionBase(BaseModel):
+    billing_interval: BillingIntervalType = Field("monthly", alias="billingInterval", serialization_alias="billingInterval")
+    monthly_rate: Decimal = Field(alias="monthlyRate", serialization_alias="monthlyRate")
+    annual_rate: Optional[Decimal] = Field(None, alias="annualRate", serialization_alias="annualRate")
+    setup_fee: Optional[Decimal] = Field(None, alias="setupFee", serialization_alias="setupFee")
+    truck_limit: Optional[str] = Field(None, alias="truckLimit", serialization_alias="truckLimit")
+    user_limit: Optional[str] = Field(None, alias="userLimit", serialization_alias="userLimit")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSubscriptionCreate(HQSubscriptionBase):
+    tenant_id: str = Field(alias="tenantId")
+    deal_id: Optional[str] = Field(None, alias="dealId")
+    trial_ends_at: Optional[datetime] = Field(None, alias="trialEndsAt")
+    started_at: Optional[datetime] = Field(None, alias="startedAt")
+
+
+class HQSubscriptionFromDeal(BaseModel):
+    """Create subscription from a won deal."""
+    tenant_id: str = Field(alias="tenantId")
+    billing_interval: BillingIntervalType = Field("monthly", alias="billingInterval")
+    monthly_rate: Optional[Decimal] = Field(None, alias="monthlyRate")
+    annual_rate: Optional[Decimal] = Field(None, alias="annualRate")
+    setup_fee: Optional[Decimal] = Field(None, alias="setupFee")
+    setup_fee_paid: bool = Field(False, alias="setupFeePaid")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSubscriptionUpdate(BaseModel):
+    status: Optional[SubscriptionStatusType] = None
+    billing_interval: Optional[BillingIntervalType] = Field(None, alias="billingInterval")
+    monthly_rate: Optional[Decimal] = Field(None, alias="monthlyRate")
+    annual_rate: Optional[Decimal] = Field(None, alias="annualRate")
+    setup_fee_paid: Optional[bool] = Field(None, alias="setupFeePaid")
+    truck_limit: Optional[str] = Field(None, alias="truckLimit")
+    user_limit: Optional[str] = Field(None, alias="userLimit")
+    next_billing_date: Optional[datetime] = Field(None, alias="nextBillingDate")
+    notes: Optional[str] = None
+    cancellation_reason: Optional[str] = Field(None, alias="cancellationReason")
+    rate_change_reason: Optional[str] = Field(None, alias="rateChangeReason")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQSubscriptionResponse(HQSubscriptionBase):
+    id: str
+    subscription_number: str = Field(alias="subscriptionNumber", serialization_alias="subscriptionNumber")
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    tenant_name: Optional[str] = Field(None, alias="tenantName", serialization_alias="tenantName")
+    deal_id: Optional[str] = Field(None, alias="dealId", serialization_alias="dealId")
+    status: SubscriptionStatusType
+    current_mrr: Decimal = Field(alias="currentMrr", serialization_alias="currentMrr")
+    setup_fee_paid: bool = Field(alias="setupFeePaid", serialization_alias="setupFeePaid")
+    trial_ends_at: Optional[datetime] = Field(None, alias="trialEndsAt", serialization_alias="trialEndsAt")
+    started_at: Optional[datetime] = Field(None, alias="startedAt", serialization_alias="startedAt")
+    paused_at: Optional[datetime] = Field(None, alias="pausedAt", serialization_alias="pausedAt")
+    cancelled_at: Optional[datetime] = Field(None, alias="cancelledAt", serialization_alias="cancelledAt")
+    cancellation_reason: Optional[str] = Field(None, alias="cancellationReason", serialization_alias="cancellationReason")
+    next_billing_date: Optional[datetime] = Field(None, alias="nextBillingDate", serialization_alias="nextBillingDate")
+    created_by_id: Optional[str] = Field(None, alias="createdById", serialization_alias="createdById")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQMRRSummary(BaseModel):
+    """MRR summary statistics."""
+    active_mrr: Decimal = Field(alias="activeMrr", serialization_alias="activeMrr")
+    total_subscriptions: int = Field(alias="totalSubscriptions", serialization_alias="totalSubscriptions")
+    status_counts: dict = Field(alias="statusCounts", serialization_alias="statusCounts")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQRateChangeResponse(BaseModel):
+    """Rate change history entry."""
+    id: str
+    previous_mrr: Decimal = Field(alias="previousMrr", serialization_alias="previousMrr")
+    new_mrr: Decimal = Field(alias="newMrr", serialization_alias="newMrr")
+    reason: Optional[str] = None
+    effective_date: datetime = Field(alias="effectiveDate", serialization_alias="effectiveDate")
+    changed_by_id: Optional[str] = Field(None, alias="changedById", serialization_alias="changedById")
+    changed_by_name: Optional[str] = Field(None, alias="changedByName", serialization_alias="changedByName")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}

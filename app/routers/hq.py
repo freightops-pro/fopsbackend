@@ -77,6 +77,23 @@ from app.schemas.hq import (
     HQCommissionPaymentApprove,
     HQSalesRepEarnings,
     HQSalesRepAccountSummary,
+    # Deal schemas
+    HQDealCreate,
+    HQDealUpdate,
+    HQDealResponse,
+    HQDealStageSummary,
+    HQDealImportRequest,
+    HQDealImportResponse,
+    HQDealFMCSAImportRequest,
+    HQDealActivityCreate,
+    HQDealActivityResponse,
+    # Subscription schemas
+    HQSubscriptionCreate,
+    HQSubscriptionUpdate,
+    HQSubscriptionResponse,
+    HQSubscriptionFromDeal,
+    HQMRRSummary,
+    HQRateChangeResponse,
 )
 from app.services.hq import (
     HQAuthService,
@@ -4185,3 +4202,367 @@ async def render_email_template(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
     return HQRenderTemplateResponse(subject=subject, body=body)
+
+
+# ============================================================================
+# Deals Endpoints (Unified Sales Pipeline)
+# ============================================================================
+
+@router.get("/deals", response_model=List[dict])
+async def list_deals(
+    stage: Optional[str] = None,
+    source: Optional[str] = None,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List deals. Sales managers only see their own deals."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    return await deal_service.get_deals(
+        current_user_id=current_employee.id,
+        current_user_role=current_employee.role,
+        stage=stage,
+        source=source,
+    )
+
+
+@router.get("/deals/summary", response_model=List[dict])
+async def get_deals_summary(
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get pipeline summary with counts and values per stage."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    return await deal_service.get_pipeline_summary(
+        current_user_id=current_employee.id,
+        current_user_role=current_employee.role,
+    )
+
+
+@router.get("/deals/{deal_id}", response_model=dict)
+async def get_deal(
+    deal_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single deal by ID."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deal = await deal_service.get_deal(deal_id)
+    if not deal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+    return deal
+
+
+@router.post("/deals", response_model=dict)
+async def create_deal(
+    data: HQDealCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deal_data = data.model_dump(by_alias=False)
+    return await deal_service.create_deal(deal_data, current_employee.id)
+
+
+@router.put("/deals/{deal_id}", response_model=dict)
+async def update_deal(
+    deal_id: str,
+    data: HQDealUpdate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deal_data = data.model_dump(exclude_unset=True, by_alias=False)
+    deal = await deal_service.update_deal(deal_id, deal_data, current_employee.id)
+    if not deal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+    return deal
+
+
+@router.delete("/deals/{deal_id}")
+async def delete_deal(
+    deal_id: str,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deleted = await deal_service.delete_deal(deal_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+    return {"status": "deleted"}
+
+
+@router.post("/deals/import", response_model=HQDealImportResponse)
+async def import_deals_ai(
+    data: HQDealImportRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import deals using AI parsing from CSV, spreadsheet, email, or text content."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deals_created, errors = await deal_service.import_deals_from_content(
+        content=data.content,
+        content_type=data.content_type,
+        assign_to_sales_rep_id=data.assign_to_sales_rep_id,
+        created_by_id=current_employee.id,
+        auto_assign_round_robin=data.auto_assign_round_robin,
+    )
+    return HQDealImportResponse(
+        deals_created=deals_created,
+        errors=errors,
+        total_parsed=len(deals_created) + len(errors),
+        total_created=len(deals_created),
+    )
+
+
+@router.post("/deals/import-fmcsa", response_model=HQDealImportResponse)
+async def import_deals_from_fmcsa(
+    data: HQDealFMCSAImportRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import deals from FMCSA Motor Carrier Census data."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deals_created, errors = await deal_service.import_deals_from_fmcsa(
+        state=data.state,
+        min_trucks=data.min_trucks,
+        max_trucks=data.max_trucks,
+        limit=data.limit,
+        assign_to_sales_rep_id=data.assign_to_sales_rep_id,
+        created_by_id=current_employee.id,
+        auto_assign_round_robin=data.auto_assign_round_robin,
+        authority_days=data.authority_days,
+    )
+    return HQDealImportResponse(
+        deals_created=deals_created,
+        errors=errors,
+        total_parsed=len(deals_created) + len(errors),
+        total_created=len(deals_created),
+    )
+
+
+@router.post("/deals/{deal_id}/enrich", response_model=dict)
+async def enrich_deal(
+    deal_id: str,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Use AI to find and add contact information to a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    result = await deal_service.enrich_deal_with_ai(deal_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+    return result
+
+
+@router.get("/deals/{deal_id}/activities", response_model=List[dict])
+async def get_deal_activities(
+    deal_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get activities for a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    return await deal_service.get_activities(deal_id)
+
+
+@router.post("/deals/{deal_id}/activities", response_model=dict)
+async def add_deal_activity(
+    deal_id: str,
+    data: HQDealActivityCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add an activity to a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    return await deal_service.add_activity(
+        deal_id=deal_id,
+        activity_type=data.activity_type,
+        description=data.description,
+        created_by_id=current_employee.id,
+    )
+
+
+# ============================================================================
+# Subscription Endpoints
+# ============================================================================
+
+@router.get("/subscriptions", response_model=List[dict])
+async def list_subscriptions(
+    status: Optional[str] = None,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all subscriptions."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    return await sub_service.get_subscriptions(status=status)
+
+
+@router.get("/subscriptions/summary", response_model=dict)
+async def get_subscriptions_summary(
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get MRR summary and subscription statistics."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    return await sub_service.get_mrr_summary()
+
+
+@router.get("/subscriptions/{subscription_id}", response_model=dict)
+async def get_subscription(
+    subscription_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single subscription by ID."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    subscription = await sub_service.get_subscription(subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return subscription
+
+
+@router.post("/subscriptions", response_model=dict)
+async def create_subscription(
+    data: HQSubscriptionCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    sub_data = data.model_dump(by_alias=False)
+    return await sub_service.create_subscription(sub_data, current_employee.id)
+
+
+@router.post("/subscriptions/from-deal/{deal_id}", response_model=dict)
+async def create_subscription_from_deal(
+    deal_id: str,
+    data: HQSubscriptionFromDeal,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a subscription from a won deal."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    sub_data = data.model_dump(by_alias=False)
+    try:
+        subscription = await sub_service.create_subscription_from_deal(deal_id, sub_data, current_employee.id)
+        if not subscription:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+        return subscription
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/subscriptions/{subscription_id}", response_model=dict)
+async def update_subscription(
+    subscription_id: str,
+    data: HQSubscriptionUpdate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    sub_data = data.model_dump(exclude_unset=True, by_alias=False)
+    subscription = await sub_service.update_subscription(subscription_id, sub_data, current_employee.id)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return subscription
+
+
+@router.post("/subscriptions/{subscription_id}/pause", response_model=dict)
+async def pause_subscription(
+    subscription_id: str,
+    reason: Optional[str] = None,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pause a subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    subscription = await sub_service.pause_subscription(subscription_id, reason)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return subscription
+
+
+@router.post("/subscriptions/{subscription_id}/resume", response_model=dict)
+async def resume_subscription(
+    subscription_id: str,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume a paused subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    subscription = await sub_service.resume_subscription(subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return subscription
+
+
+@router.post("/subscriptions/{subscription_id}/cancel", response_model=dict)
+async def cancel_subscription(
+    subscription_id: str,
+    reason: Optional[str] = None,
+    _: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    subscription = await sub_service.cancel_subscription(subscription_id, reason)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return subscription
+
+
+@router.get("/subscriptions/{subscription_id}/rate-changes", response_model=List[dict])
+async def get_subscription_rate_changes(
+    subscription_id: str,
+    _: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get rate change history for a subscription."""
+    from app.services.hq_subscriptions import HQSubscriptionsService
+
+    sub_service = HQSubscriptionsService(db)
+    return await sub_service.get_rate_changes(subscription_id)
