@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.hq_subscription import (
     HQSubscription, HQSubscriptionRateChange,
-    SubscriptionStatus, BillingInterval
+    HQSubscriptionStatus, HQBillingInterval
 )
 from app.models.hq_tenant import HQTenant
 from app.models.hq_deal import HQDeal, DealStage
@@ -85,12 +85,12 @@ class HQSubscriptionsService:
         subscription_number = await self._generate_subscription_number()
 
         # Parse billing interval
-        billing_interval = BillingInterval.MONTHLY
+        billing_interval = HQBillingInterval.MONTHLY
         if data.get("billing_interval"):
             try:
-                billing_interval = BillingInterval(data["billing_interval"])
+                billing_interval = HQBillingInterval(data["billing_interval"])
             except ValueError:
-                billing_interval = BillingInterval.MONTHLY
+                billing_interval = HQBillingInterval.MONTHLY
 
         # Calculate current MRR
         monthly_rate = Decimal(str(data.get("monthly_rate", 0)))
@@ -101,7 +101,7 @@ class HQSubscriptionsService:
             subscription_number=subscription_number,
             tenant_id=data["tenant_id"],
             deal_id=data.get("deal_id"),
-            status=SubscriptionStatus.ACTIVE,
+            status=HQSubscriptionStatus.ACTIVE,
             billing_interval=billing_interval,
             monthly_rate=monthly_rate,
             annual_rate=Decimal(str(data.get("annual_rate", 0))) if data.get("annual_rate") else None,
@@ -157,8 +157,8 @@ class HQSubscriptionsService:
             subscription_number=subscription_number,
             tenant_id=data["tenant_id"],
             deal_id=deal_id,
-            status=SubscriptionStatus.ACTIVE,
-            billing_interval=BillingInterval(data.get("billing_interval", "monthly")),
+            status=HQSubscriptionStatus.ACTIVE,
+            billing_interval=HQBillingInterval(data.get("billing_interval", "monthly")),
             monthly_rate=monthly_rate,
             annual_rate=Decimal(str(data.get("annual_rate", 0))) if data.get("annual_rate") else None,
             current_mrr=monthly_rate,
@@ -205,18 +205,18 @@ class HQSubscriptionsService:
 
         # Handle status
         if "status" in data:
-            new_status = SubscriptionStatus(data["status"])
+            new_status = HQSubscriptionStatus(data["status"])
             subscription.status = new_status
 
-            if new_status == SubscriptionStatus.PAUSED:
+            if new_status == HQSubscriptionStatus.PAUSED:
                 subscription.paused_at = datetime.utcnow()
-            elif new_status == SubscriptionStatus.CANCELLED:
+            elif new_status == HQSubscriptionStatus.CANCELLED:
                 subscription.cancelled_at = datetime.utcnow()
                 subscription.cancellation_reason = data.get("cancellation_reason")
 
         # Handle billing interval
         if "billing_interval" in data:
-            subscription.billing_interval = BillingInterval(data["billing_interval"])
+            subscription.billing_interval = HQBillingInterval(data["billing_interval"])
 
         # Handle rates
         if "monthly_rate" in data:
@@ -259,7 +259,7 @@ class HQSubscriptionsService:
         if not subscription:
             return None
 
-        subscription.status = SubscriptionStatus.PAUSED
+        subscription.status = HQSubscriptionStatus.PAUSED
         subscription.paused_at = datetime.utcnow()
         if reason:
             subscription.notes = f"{subscription.notes or ''}\n\nPaused: {reason}".strip()
@@ -279,7 +279,7 @@ class HQSubscriptionsService:
         if not subscription:
             return None
 
-        subscription.status = SubscriptionStatus.ACTIVE
+        subscription.status = HQSubscriptionStatus.ACTIVE
         subscription.paused_at = None
 
         await self.db.commit()
@@ -298,7 +298,7 @@ class HQSubscriptionsService:
         if not subscription:
             return None
 
-        subscription.status = SubscriptionStatus.CANCELLED
+        subscription.status = HQSubscriptionStatus.CANCELLED
         subscription.cancelled_at = datetime.utcnow()
         subscription.cancellation_reason = reason
 
@@ -310,13 +310,13 @@ class HQSubscriptionsService:
         # Total active MRR
         active_result = await self.db.execute(
             select(func.coalesce(func.sum(HQSubscription.current_mrr), 0))
-            .where(HQSubscription.status == SubscriptionStatus.ACTIVE)
+            .where(HQSubscription.status == HQSubscriptionStatus.ACTIVE)
         )
         active_mrr = float(active_result.scalar() or 0)
 
         # Count by status
         status_counts = {}
-        for status in SubscriptionStatus:
+        for status in HQSubscriptionStatus:
             count_result = await self.db.execute(
                 select(func.count(HQSubscription.id))
                 .where(HQSubscription.status == status)

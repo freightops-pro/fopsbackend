@@ -7,8 +7,8 @@ import enum
 from app.models.base import Base
 
 
-class SubscriptionStatus(str, enum.Enum):
-    """Subscription status values."""
+class HQSubscriptionStatus(str, enum.Enum):
+    """HQ Subscription status values."""
     ACTIVE = "active"
     PAUSED = "paused"
     CANCELLED = "cancelled"
@@ -16,8 +16,8 @@ class SubscriptionStatus(str, enum.Enum):
     TRIALING = "trialing"
 
 
-class BillingInterval(str, enum.Enum):
-    """Billing interval options."""
+class HQBillingInterval(str, enum.Enum):
+    """HQ Billing interval options."""
     MONTHLY = "monthly"
     ANNUAL = "annual"
 
@@ -38,21 +38,21 @@ class HQSubscription(Base):
     tenant_id = Column(String, ForeignKey("hq_tenant.id"), nullable=False, index=True)
 
     # Source deal (optional - could be created without a deal)
-    deal_id = Column(String, nullable=True, index=True)
+    deal_id = Column(String, ForeignKey("hq_deal.id"), nullable=True, index=True)
 
     # Status
     status = Column(
-        Enum(SubscriptionStatus, values_callable=lambda enum_class: [e.value for e in enum_class]),
+        Enum(HQSubscriptionStatus, values_callable=lambda enum_class: [e.value for e in enum_class]),
         nullable=False,
-        default=SubscriptionStatus.ACTIVE,
+        default=HQSubscriptionStatus.ACTIVE,
         index=True
     )
 
     # Billing configuration
     billing_interval = Column(
-        Enum(BillingInterval, values_callable=lambda enum_class: [e.value for e in enum_class]),
+        Enum(HQBillingInterval, values_callable=lambda enum_class: [e.value for e in enum_class]),
         nullable=False,
-        default=BillingInterval.MONTHLY
+        default=HQBillingInterval.MONTHLY
     )
 
     # Pricing

@@ -60,7 +60,7 @@ from app.models.hq_sales_rep_commission import HQSalesRepCommission, CommissionT
 from app.models.hq_commission_record import HQCommissionRecord, CommissionRecordStatus  # noqa: F401
 from app.models.hq_commission_payment import HQCommissionPayment, CommissionPaymentStatus  # noqa: F401
 from app.models.hq_deal import HQDeal, HQDealActivity, DealStage, DealSource  # noqa: F401
-from app.models.hq_subscription import HQSubscription, HQSubscriptionRateChange, SubscriptionStatus, BillingInterval  # noqa: F401
+from app.models.hq_subscription import HQSubscription, HQSubscriptionRateChange, HQSubscriptionStatus, HQBillingInterval  # noqa: F401
 
 # Billing Models
 from app.models.billing import Subscription, SubscriptionAddOn, PaymentMethod, StripeInvoice, StripeWebhookEvent  # noqa: F401
