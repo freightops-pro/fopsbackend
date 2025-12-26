@@ -1,10 +1,10 @@
-"""Fix missing columns in hq_contract and hq_quote
+"""Fix missing columns in hq_contract, hq_quote, and hq_ai_actions
 
 Revision ID: 20251225_fix_cols
 Revises: 20251225_ai_queue
 Create Date: 2025-12-25
 
-This migration ensures the assigned_sales_rep_id column exists.
+This migration ensures missing columns exist.
 Uses IF NOT EXISTS to be safe for re-runs.
 """
 from typing import Sequence, Union
@@ -45,6 +45,32 @@ def upgrade() -> None:
             ) THEN
                 ALTER TABLE hq_quote ADD COLUMN assigned_sales_rep_id VARCHAR(36);
                 CREATE INDEX IF NOT EXISTS ix_hq_quote_assigned_sales_rep_id ON hq_quote(assigned_sales_rep_id);
+            END IF;
+        END $$;
+    """)
+
+    # Add entity_data to hq_ai_actions if missing
+    op.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'hq_ai_actions' AND column_name = 'entity_data'
+            ) THEN
+                ALTER TABLE hq_ai_actions ADD COLUMN entity_data JSON;
+            END IF;
+        END $$;
+    """)
+
+    # Add risk_factors to hq_ai_actions if missing
+    op.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'hq_ai_actions' AND column_name = 'risk_factors'
+            ) THEN
+                ALTER TABLE hq_ai_actions ADD COLUMN risk_factors JSON;
             END IF;
         END $$;
     """)
