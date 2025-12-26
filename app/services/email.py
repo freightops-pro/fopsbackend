@@ -9,9 +9,13 @@ Supports multiple email providers:
 
 import os
 import logging
+from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Base URL for invitation links
+APP_BASE_URL = os.getenv("APP_BASE_URL", "https://freightopspro.com")
 
 
 class EmailService:
@@ -201,6 +205,130 @@ Click here to reset your password: {reset_link}
 This link will expire in 1 hour.
 
 If you didn't request this password reset, please ignore this email.
+
+FreightOps TMS
+"""
+
+        return service._send_email(
+            to_email=email,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+        )
+
+    @staticmethod
+    def send_user_invitation(
+        email: str,
+        token: str,
+        company_name: str,
+        inviter_name: str,
+        expires_at: datetime,
+        message: Optional[str] = None,
+    ) -> bool:
+        """
+        Send an invitation email to a new team member.
+
+        Args:
+            email: Invitee's email address
+            token: Secure invitation token
+            company_name: Name of the company
+            inviter_name: Name of the person who sent the invite
+            expires_at: When the invitation expires
+            message: Optional personal message from inviter
+
+        Returns:
+            bool: True if email was sent successfully
+        """
+        service = EmailService()
+
+        invite_link = f"{APP_BASE_URL}/accept-invitation?token={token}"
+        expires_formatted = expires_at.strftime("%B %d, %Y at %I:%M %p UTC")
+
+        message_section = ""
+        message_text = ""
+        if message:
+            message_section = f"""
+            <div style="background-color: #f0f9ff; border-left: 4px solid #2563eb; padding: 12px; margin: 20px 0;">
+                <p style="margin: 0; font-style: italic;">"{message}"</p>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #6b7280;">— {inviter_name}</p>
+            </div>
+            """
+            message_text = f'\nPersonal message from {inviter_name}:\n"{message}"\n'
+
+        subject = f"You're invited to join {company_name} on FreightOps"
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ padding: 30px; background-color: #f9fafb; }}
+        .button {{ display: inline-block; background-color: #2563eb; color: white; padding: 14px 40px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: bold; }}
+        .button:hover {{ background-color: #1d4ed8; }}
+        .info {{ background-color: #fff; border: 1px solid #e5e7eb; padding: 15px; margin: 20px 0; border-radius: 8px; }}
+        .warning {{ background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 20px 0; }}
+        .footer {{ text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>You're Invited! 🎉</h1>
+        </div>
+        <div class="content">
+            <p>Hello,</p>
+            <p><strong>{inviter_name}</strong> has invited you to join <strong>{company_name}</strong> on FreightOps, the modern transportation management platform.</p>
+
+            {message_section}
+
+            <div style="text-align: center;">
+                <a href="{invite_link}" class="button">Accept Invitation</a>
+            </div>
+
+            <div class="info">
+                <p style="margin: 0;"><strong>What happens next?</strong></p>
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                    <li>Click the button above to accept your invitation</li>
+                    <li>Create your password and complete your profile</li>
+                    <li>Start using FreightOps with your team!</li>
+                </ul>
+            </div>
+
+            <div class="warning">
+                <strong>Note:</strong> This invitation expires on {expires_formatted}. If the button doesn't work, copy and paste this link into your browser:
+                <p style="word-break: break-all; color: #2563eb; margin: 10px 0 0 0;">{invite_link}</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>FreightOps TMS - Modern Transportation Management</p>
+            <p style="font-size: 11px;">If you didn't expect this invitation, you can safely ignore this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        text_content = f"""
+You're Invited to Join {company_name}!
+
+Hello,
+
+{inviter_name} has invited you to join {company_name} on FreightOps.
+{message_text}
+ACCEPT YOUR INVITATION:
+-----------------------
+Click here to accept: {invite_link}
+
+WHAT HAPPENS NEXT:
+- Click the link above to accept your invitation
+- Create your password and complete your profile
+- Start using FreightOps with your team!
+
+This invitation expires on {expires_formatted}.
+
+If you didn't expect this invitation, you can safely ignore this email.
 
 FreightOps TMS
 """

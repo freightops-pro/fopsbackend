@@ -6,6 +6,7 @@ from app.routers import (
     ai_usage,
     ai_tasks,
     ai_chat,
+    audit_logs,
     automation,
     auth,
     background_checks,
@@ -26,8 +27,10 @@ from app.routers import (
     fleet,
     health,
     hq,
+    hq_admin,
     hr,
     integrations,
+    invitations,
     loads,
     onboarding,
     payroll,
@@ -85,4 +88,9 @@ api_router.include_router(websocket.router, tags=["WebSocket"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
 api_router.include_router(background_checks.router, prefix="/background-checks", tags=["Background Checks"])
 api_router.include_router(dqf.router, prefix="/dqf", tags=["DQF"])
+
+# Audit & Invitations
+api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["Audit Logs"])
+api_router.include_router(invitations.router, prefix="/invitations", tags=["User Invitations"])
+api_router.include_router(hq_admin.router, prefix="/admin", tags=["HQ Platform Admin"])
 
