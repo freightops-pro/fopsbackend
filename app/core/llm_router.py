@@ -98,7 +98,7 @@ class LLMRouter:
             # Uses Llama 4 Scout with VISION for document OCR
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",  # Text-only tasks
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Text-only tasks
                 "groq_vision_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Vision/OCR tasks
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
@@ -114,7 +114,7 @@ class LLMRouter:
             # Adam - Safety/Compliance Officer (Safety-critical reasoning)
             return {
                 "model_id": "llama-4-maverick-400b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Groq fallback
                 "bedrock_model": "meta.llama-4-maverick-400b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Maverick-400B-Instruct",
                 "context_window": 128_000,
@@ -129,7 +129,7 @@ class LLMRouter:
             # Felix / Fleet Manager (Fleet operations decisions)
             return {
                 "model_id": "llama-4-maverick-400b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",
                 "bedrock_model": "meta.llama-4-maverick-400b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Maverick-400B-Instruct",
                 "context_window": 128_000,
@@ -144,7 +144,7 @@ class LLMRouter:
             # CFO Analyst (Financial analysis)
             return {
                 "model_id": "llama-4-maverick-400b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",
                 "bedrock_model": "meta.llama-4-maverick-400b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Maverick-400B-Instruct",
                 "context_window": 128_000,
@@ -159,7 +159,7 @@ class LLMRouter:
             # Harper - HR & Payroll Specialist (Precision payroll calculations)
             return {
                 "model_id": "llama-4-maverick-400b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",
                 "bedrock_model": "meta.llama-4-maverick-400b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Maverick-400B-Instruct",
                 "context_window": 128_000,
@@ -174,7 +174,7 @@ class LLMRouter:
             # Atlas - Monitoring and Exception Management (Operations oversight)
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Groq fallback
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
                 "context_window": 10_000_000,  # 10M token context
@@ -189,7 +189,7 @@ class LLMRouter:
             # Alex - Sales and Analytics (Business intelligence)
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Groq fallback
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
                 "context_window": 10_000_000,  # 10M token context
@@ -204,7 +204,7 @@ class LLMRouter:
             # Scout - Lead enrichment and FMCSA data processing
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
+                "groq_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Groq fallback
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
                 "context_window": 128_000,
@@ -361,7 +361,7 @@ class LLMRouter:
         """Generate using Google Gemini (reliable fallback)."""
         # Use Gemini 2.0 Flash for fast, reliable responses
         model = self.gemini.GenerativeModel(
-            model_name="gemini-2.0-flash-exp",
+            model_name="gemini-1.5-flash",
             system_instruction=system_prompt if system_prompt else None,
             generation_config={
                 "temperature": temperature,
@@ -383,7 +383,7 @@ class LLMRouter:
         total_tokens = input_tokens + output_tokens
 
         return content, {
-            "model": "gemini-2.0-flash-exp",
+            "model": "gemini-1.5-flash",
             "provider": "gemini",
             "tokens_used": total_tokens,
             "input_tokens": input_tokens,
