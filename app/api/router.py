@@ -92,5 +92,5 @@ api_router.include_router(dqf.router, prefix="/dqf", tags=["DQF"])
 # Audit & Invitations
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["Audit Logs"])
 api_router.include_router(invitations.router, prefix="/invitations", tags=["User Invitations"])
-api_router.include_router(hq_admin.router, prefix="/admin", tags=["HQ Platform Admin"])
+api_router.include_router(hq_admin.router, prefix="/hq-admin", tags=["HQ Platform Admin"])
 
