@@ -86,7 +86,7 @@ class LLMRouter:
             # Uses Llama 4 Scout with VISION for document OCR
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.3-70b-versatile",  # Text-only tasks
+                "groq_model": "llama-3.1-70b-versatile",  # Text-only tasks
                 "groq_vision_model": "meta-llama/llama-4-scout-17b-16e-instruct",  # Vision/OCR tasks
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
@@ -162,7 +162,7 @@ class LLMRouter:
             # Atlas - Monitoring and Exception Management (Operations oversight)
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.3-70b-versatile",  # Groq fallback
+                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
                 "context_window": 10_000_000,  # 10M token context
@@ -177,7 +177,7 @@ class LLMRouter:
             # Alex - Sales and Analytics (Business intelligence)
             return {
                 "model_id": "llama-4-scout-17b-instruct",
-                "groq_model": "llama-3.3-70b-versatile",  # Groq fallback
+                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
                 "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
                 "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
                 "context_window": 10_000_000,  # 10M token context
@@ -186,6 +186,21 @@ class LLMRouter:
                 "employee_role": "AI Sales and Analytics",
                 "monthly_capacity": "Unlimited insights",
                 "reasoning": "Scout 17B for analytics: revenue forecasting, churn prediction, KPI aggregation"
+            }
+
+        elif agent_role == "scout":
+            # Scout - Lead enrichment and FMCSA data processing
+            return {
+                "model_id": "llama-4-scout-17b-instruct",
+                "groq_model": "llama-3.1-70b-versatile",  # Groq fallback
+                "bedrock_model": "meta.llama-4-scout-17b-instruct-v1:0",
+                "self_hosted_model": "meta-llama/Llama-4-Scout-17B-Instruct",
+                "context_window": 128_000,
+                "cost_per_1m_tokens": 0.10,
+                "capabilities": ["lead_enrichment", "fmcsa_processing", "data_extraction", "outreach_generation"],
+                "employee_role": "AI Lead Scout",
+                "monthly_capacity": "Unlimited leads",
+                "reasoning": "Scout 17B for lead processing: FMCSA data enrichment, contact extraction, outreach templates"
             }
 
         else:
