@@ -359,9 +359,9 @@ class LLMRouter:
         max_tokens: int
     ) -> tuple[str, dict]:
         """Generate using Google Gemini (reliable fallback)."""
-        # Use Gemini 2.0 Flash for fast, reliable responses
+        # Use Gemini 1.5 Flash Latest for reliable fallback
         model = self.gemini.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-1.5-flash-latest",
             system_instruction=system_prompt if system_prompt else None,
             generation_config={
                 "temperature": temperature,
@@ -383,7 +383,7 @@ class LLMRouter:
         total_tokens = input_tokens + output_tokens
 
         return content, {
-            "model": "gemini-1.5-flash",
+            "model": "gemini-1.5-flash-latest",
             "provider": "gemini",
             "tokens_used": total_tokens,
             "input_tokens": input_tokens,
