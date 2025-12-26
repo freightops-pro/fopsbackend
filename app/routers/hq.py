@@ -1987,6 +1987,129 @@ async def colab_chat(
 
 
 # ============================================================================
+# HQ Chat Endpoints (Unified Team + AI Chat)
+# ============================================================================
+
+from app.services.hq_chat import HQChatService
+from app.schemas.hq import (
+    HQChatChannelCreate,
+    HQChatChannelResponse,
+    HQChatMessageCreate,
+    HQChatMessageResponse,
+)
+
+
+async def _get_chat_service(db: AsyncSession = Depends(get_db)) -> HQChatService:
+    """Get HQ Chat service instance."""
+    return HQChatService(db)
+
+
+@router.get("/chat/channels", response_model=List[HQChatChannelResponse])
+async def list_chat_channels(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> List[HQChatChannelResponse]:
+    """List all HQ chat channels."""
+    # Ensure default channels exist
+    await service.ensure_default_channels()
+    return await service.list_channels()
+
+
+@router.post("/chat/channels", response_model=HQChatChannelResponse, status_code=status.HTTP_201_CREATED)
+async def create_chat_channel(
+    payload: HQChatChannelCreate,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> HQChatChannelResponse:
+    """Create a new chat channel."""
+    return await service.create_channel(payload)
+
+
+@router.get("/chat/channels/{channel_id}", response_model=HQChatChannelResponse)
+async def get_chat_channel(
+    channel_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> HQChatChannelResponse:
+    """Get a specific chat channel."""
+    try:
+        return await service.get_channel(channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.delete("/chat/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_channel(
+    channel_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> None:
+    """Delete a chat channel."""
+    try:
+        await service.delete_channel(channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/chat/channels/{channel_id}/messages", response_model=List[HQChatMessageResponse])
+async def list_chat_messages(
+    channel_id: str,
+    limit: int = 100,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> List[HQChatMessageResponse]:
+    """Get messages for a chat channel."""
+    try:
+        await service.get_channel(channel_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return await service.list_messages(channel_id, limit=limit)
+
+
+@router.post("/chat/channels/{channel_id}/messages", response_model=List[HQChatMessageResponse], status_code=status.HTTP_201_CREATED)
+async def post_chat_message(
+    channel_id: str,
+    payload: HQChatMessageCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> List[HQChatMessageResponse]:
+    """
+    Post a message to a chat channel.
+
+    For AI channels, this will also return the AI response.
+    Returns a list containing the user message and optionally the AI response.
+    """
+    author_name = f"{current_employee.first_name} {current_employee.last_name}"
+
+    try:
+        user_msg, ai_msg = await service.post_message(
+            channel_id=channel_id,
+            author_id=current_employee.id,
+            author_name=author_name,
+            payload=payload
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    result = [user_msg]
+    if ai_msg:
+        result.append(ai_msg)
+
+    return result
+
+
+@router.post("/chat/channels/{channel_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_messages_read(
+    channel_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    service: HQChatService = Depends(_get_chat_service),
+) -> None:
+    """Mark all messages in a channel as read."""
+    await service.mark_messages_read(channel_id, current_employee.id)
+
+
+# ============================================================================
 # General Ledger Endpoints
 # ============================================================================
 

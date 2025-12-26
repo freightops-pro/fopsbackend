@@ -17,7 +17,7 @@ from app.background.motive_sync_jobs import (
     sync_motive_drivers_job,
     sync_motive_fuel_job,
 )
-from app.background.hq_sync_jobs import sync_fmcsa_leads, ai_nurture_leads
+from app.background.hq_sync_jobs import sync_fmcsa_leads
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -83,14 +83,12 @@ async def cleanup_completed_load_tracking() -> None:
             logger.exception("Container tracking cleanup job failed", extra={"error": str(exc)})
 
 
-async def run_full_lead_pipeline() -> None:
+async def run_lead_import_pipeline() -> None:
     """
-    Run the complete autonomous lead pipeline:
-    1. Sync FMCSA leads
-    2. AI qualification and outreach drafting
-    3. Auto-send emails for low-risk leads
+    Run the FMCSA lead import pipeline (no AI processing).
 
-    This is fully autonomous - no human intervention needed for low-risk leads.
+    AI enrichment is triggered manually by sales reps when they view a lead.
+    This keeps LLM costs low and avoids rate limits.
     """
     # Wait for database to be fully initialized (migrations complete)
     from sqlalchemy import text
@@ -109,24 +107,18 @@ async def run_full_lead_pipeline() -> None:
             pass
         await asyncio.sleep(1)
     else:
-        logger.warning("autonomous_pipeline_skipped", extra={"reason": "Database migrations not complete after 30s"})
+        logger.warning("lead_import_skipped", extra={"reason": "Database migrations not complete after 30s"})
         return
 
-    logger.info("autonomous_pipeline_start", extra={"message": "Starting full autonomous lead pipeline"})
+    logger.info("lead_import_start", extra={"message": "Starting FMCSA lead import"})
 
     try:
-        # Step 1: Sync new leads from FMCSA
+        # Import leads from FMCSA (no AI enrichment - that's done manually per lead)
         await sync_fmcsa_leads()
 
-        # Step 2: AI qualify and draft outreach (this handles auto-execution)
-        await ai_nurture_leads()
-
-        # Step 3: Auto-send approved emails
-        await auto_send_approved_outreach()
-
-        logger.info("autonomous_pipeline_complete", extra={"message": "Full autonomous pipeline completed"})
+        logger.info("lead_import_complete", extra={"message": "FMCSA lead import completed"})
     except Exception as exc:
-        logger.exception("autonomous_pipeline_failed", extra={"error": str(exc)})
+        logger.exception("lead_import_failed", extra={"error": str(exc)})
 
 
 async def auto_send_approved_outreach() -> None:
@@ -210,14 +202,15 @@ def start_scheduler() -> None:
     automation_scheduler.add_job(sync_motive_drivers_job, "interval", minutes=30, id="motive-sync-drivers", max_instances=1, coalesce=True)
     automation_scheduler.add_job(sync_motive_fuel_job, "interval", minutes=60, id="motive-sync-fuel", max_instances=1, coalesce=True)
 
-    # Autonomous Lead Pipeline - runs every 30 minutes (FMCSA sync + AI + auto-send)
-    automation_scheduler.add_job(run_full_lead_pipeline, "interval", minutes=30, id="autonomous-lead-pipeline", max_instances=1, coalesce=True)
+    # Lead Import Pipeline - runs every 30 minutes (FMCSA sync only, no AI)
+    # AI enrichment is triggered manually by sales reps per lead
+    automation_scheduler.add_job(run_lead_import_pipeline, "interval", minutes=30, id="lead-import-pipeline", max_instances=1, coalesce=True)
 
     # Run immediately on startup (after 10 seconds to let app initialize)
-    automation_scheduler.add_job(run_full_lead_pipeline, "date", run_date=None, id="startup-lead-pipeline")
+    automation_scheduler.add_job(run_lead_import_pipeline, "date", run_date=None, id="startup-lead-import")
 
     automation_scheduler.start()
-    logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes, "autonomous_pipeline": True})
+    logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes, "lead_import_pipeline": True})
 
 
 def shutdown_scheduler() -> None:

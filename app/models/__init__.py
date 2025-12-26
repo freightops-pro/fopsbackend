@@ -94,3 +94,6 @@ from app.models.hq_ai_queue import (  # noqa: F401
     AIActionType, AIActionRisk, AIActionStatus,
 )
 
+# HQ Chat Models
+from app.models.hq_chat import HQChatChannel, HQChatMessage, HQChatParticipant  # noqa: F401
+

@@ -71,11 +71,11 @@ async def sync_fmcsa_leads() -> None:
                 total_imported += imported_count
                 total_errors += len([e for e in errors if "Already exists" not in e.get("error", "")])
 
-                # Auto-enrich the new leads
-                if leads:
-                    lead_ids = [l.id for l in leads]
-                    enriched, enrich_errors = await lead_service.enrich_leads_batch(lead_ids)
-                    total_enriched += len(enriched)
+                # NOTE: Auto-enrichment disabled - sales reps trigger enrichment manually per lead
+                # if leads:
+                #     lead_ids = [l.id for l in leads]
+                #     enriched, enrich_errors = await lead_service.enrich_leads_batch(lead_ids)
+                #     total_enriched += len(enriched)
 
                 if imported_count > 0:
                     logger.info(
@@ -129,17 +129,12 @@ async def sync_fmcsa_single_state(
             auto_assign_round_robin=True,
         )
 
-        # Auto-enrich
-        enriched_count = 0
-        if leads:
-            lead_ids = [l.id for l in leads]
-            enriched, _ = await lead_service.enrich_leads_batch(lead_ids)
-            enriched_count = len(enriched)
+        # NOTE: Auto-enrichment disabled - sales reps trigger enrichment manually per lead
 
         return {
             "state": state,
             "imported": len(leads),
-            "enriched": enriched_count,
+            "enriched": 0,  # No auto-enrichment
             "duplicates": len([e for e in errors if "Already exists" in e.get("error", "")]),
             "errors": len([e for e in errors if "Already exists" not in e.get("error", "")]),
         }

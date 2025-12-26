@@ -1460,6 +1460,82 @@ class HQColabInitResponse(BaseModel):
 
 
 # ============================================================================
+# HQ Chat Schemas (Unified Team + AI Chat)
+# ============================================================================
+
+HQChannelType = Literal["team", "ai", "direct", "announcement"]
+
+
+class HQChatParticipant(BaseModel):
+    """Participant in an HQ chat channel."""
+    id: str
+    employee_id: str = Field(alias="employeeId", serialization_alias="employeeId")
+    display_name: str = Field(alias="displayName", serialization_alias="displayName")
+    role: Optional[str] = None
+    is_ai: bool = Field(False, alias="isAi", serialization_alias="isAi")
+    added_at: datetime = Field(alias="addedAt", serialization_alias="addedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQChatChannelCreate(BaseModel):
+    """Create a new HQ chat channel."""
+    name: str
+    channel_type: HQChannelType = Field("team", alias="channelType")
+    description: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQChatChannelResponse(BaseModel):
+    """Response for an HQ chat channel."""
+    id: str
+    name: str
+    channel_type: HQChannelType = Field(alias="channelType", serialization_alias="channelType")
+    description: Optional[str] = None
+    last_message: Optional[str] = Field(None, alias="lastMessage", serialization_alias="lastMessage")
+    last_message_at: Optional[datetime] = Field(None, alias="lastMessageAt", serialization_alias="lastMessageAt")
+    unread_count: int = Field(0, alias="unreadCount", serialization_alias="unreadCount")
+    is_pinned: bool = Field(False, alias="isPinned", serialization_alias="isPinned")
+    participants: List[HQChatParticipant] = []
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQChatMessageCreate(BaseModel):
+    """Create a new chat message."""
+    content: str
+    mentions: Optional[List[str]] = None  # Employee IDs mentioned
+
+
+class HQChatMessageResponse(BaseModel):
+    """Response for a chat message."""
+    id: str
+    channel_id: str = Field(alias="channelId", serialization_alias="channelId")
+    author_id: str = Field(alias="authorId", serialization_alias="authorId")
+    author_name: str = Field(alias="authorName", serialization_alias="authorName")
+    content: str
+    is_ai_response: bool = Field(False, alias="isAiResponse", serialization_alias="isAiResponse")
+    ai_agent: Optional[HQAgentType] = Field(None, alias="aiAgent", serialization_alias="aiAgent")
+    ai_reasoning: Optional[str] = Field(None, alias="aiReasoning", serialization_alias="aiReasoning")
+    ai_confidence: Optional[float] = Field(None, alias="aiConfidence", serialization_alias="aiConfidence")
+    mentions: Optional[List[str]] = None
+    is_read: bool = Field(False, alias="isRead", serialization_alias="isRead")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQChatAIRoutingResult(BaseModel):
+    """Result of AI routing decision."""
+    agent: HQAgentType
+    confidence: float
+    reasoning: str
+
+
+# ============================================================================
 # General Ledger Schemas
 # ============================================================================
 
