@@ -633,6 +633,9 @@ Extract all sales leads from this content and return as JSON array."""
                 add_date = get_field("add_date") or ""
 
                 # Create lead
+                # Use None for system/background jobs (created_by_id is nullable)
+                actual_created_by = None if created_by_id == "system" else created_by_id
+
                 lead_number = await self._generate_lead_number()
                 lead = HQLead(
                     id=str(uuid.uuid4()),
@@ -651,9 +654,9 @@ Extract all sales leads from this content and return as JSON array."""
                     dot_number=dot_number,
                     mc_number=mc_number,
                     carrier_type=carrier_operation,
-                    assigned_sales_rep_id=rep_id,
+                    assigned_sales_rep_id=rep_id if rep_id != "system" else None,
                     notes=f"DOT#: {dot_number}\nFleet Size: {power_units} trucks\nAdded: {add_date}\nAddress: {address}\nSource: FMCSA Census",
-                    created_by_id=created_by_id,
+                    created_by_id=actual_created_by,
                 )
 
                 self.db.add(lead)
