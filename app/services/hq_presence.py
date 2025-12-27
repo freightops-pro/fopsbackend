@@ -194,7 +194,8 @@ class HQPresenceService:
         )
         records = result.scalars().all()
 
-        changed: List[PresenceState] = []
+        # Collect records that need updating (capture all attributes before any await)
+        to_update: List[tuple] = []
         for record in records:
             if not record.last_activity_at:
                 continue
@@ -206,16 +207,30 @@ class HQPresenceService:
                 new_status = "away"
 
             if new_status and new_status != record.status:
-                record.status = new_status
-                employee_name = await self._get_employee_name(record.employee_id)
-                changed.append(PresenceState(
-                    user_id=record.employee_id,
-                    user_name=employee_name,
-                    status=record.status,
-                    away_message=record.away_message,
-                    last_seen_at=record.updated_at,
-                    last_activity_at=record.last_activity_at,
+                # Capture all attributes NOW before any async operations
+                to_update.append((
+                    record,
+                    new_status,
+                    record.employee_id,
+                    record.away_message,
+                    record.last_activity_at,
                 ))
+
+        # Now process updates with async calls
+        changed: List[PresenceState] = []
+        for record, new_status, employee_id, away_message, last_activity_at in to_update:
+            record.status = new_status
+            employee_name = await self._get_employee_name(employee_id)
+            # Access updated_at after the record is modified
+            updated_at = record.updated_at
+            changed.append(PresenceState(
+                user_id=employee_id,
+                user_name=employee_name,
+                status=new_status,
+                away_message=away_message,
+                last_seen_at=updated_at,
+                last_activity_at=last_activity_at,
+            ))
 
         if changed:
             await self.db.commit()
