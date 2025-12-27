@@ -6892,6 +6892,329 @@ async def create_hq_check_contractor(
 
 
 # ============================================================================
+# Contractor Settlements Endpoints (1099 Payments)
+# ============================================================================
+
+from app.schemas.hq import (
+    HQContractorSettlementCreate,
+    HQContractorSettlementUpdate,
+    HQContractorSettlementResponse,
+    HQContractorSettlementApproval,
+    HQContractorSettlementPayment,
+)
+from app.models.hq_contractor_settlement import HQContractorSettlement, SettlementStatus
+from decimal import Decimal
+
+
+@router.get("/contractor-settlements", response_model=List[HQContractorSettlementResponse])
+async def list_contractor_settlements(
+    contractor_id: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """List contractor settlements."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(selectinload(HQContractorSettlement.contractor))
+
+    if contractor_id:
+        query = query.where(HQContractorSettlement.contractor_id == contractor_id)
+    if status_filter:
+        query = query.where(HQContractorSettlement.status == SettlementStatus(status_filter))
+
+    query = query.order_by(HQContractorSettlement.created_at.desc())
+    result = await db.execute(query)
+    settlements = result.scalars().all()
+
+    return [HQContractorSettlementResponse.from_orm_model(s) for s in settlements]
+
+
+@router.get("/contractor-settlements/{settlement_id}", response_model=HQContractorSettlementResponse)
+async def get_contractor_settlement(
+    settlement_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Get a contractor settlement by ID."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.post("/contractor-settlements", response_model=HQContractorSettlementResponse, status_code=201)
+async def create_contractor_settlement(
+    data: HQContractorSettlementCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Create a new contractor settlement."""
+    import uuid
+    from datetime import datetime
+    from sqlalchemy import select, func
+    from sqlalchemy.orm import selectinload
+
+    # Generate settlement number
+    year = datetime.now().year
+    count_query = select(func.count()).select_from(HQContractorSettlement).where(
+        HQContractorSettlement.settlement_number.like(f"SET-{year}-%")
+    )
+    result = await db.execute(count_query)
+    count = result.scalar() or 0
+    settlement_number = f"SET-{year}-{count + 1:04d}"
+
+    # Calculate totals from items
+    total_commission = Decimal("0")
+    total_bonus = Decimal("0")
+    total_reimbursements = Decimal("0")
+    total_deductions = Decimal("0")
+
+    items_list = []
+    for item in data.items:
+        item_dict = item.model_dump()
+        items_list.append(item_dict)
+        amount = Decimal(str(item.amount))
+        if item.type == "commission":
+            total_commission += amount
+        elif item.type == "bonus":
+            total_bonus += amount
+        elif item.type == "reimbursement":
+            total_reimbursements += amount
+        elif item.type == "deduction":
+            total_deductions += amount
+
+    net_payment = total_commission + total_bonus + total_reimbursements - total_deductions
+
+    settlement = HQContractorSettlement(
+        id=str(uuid.uuid4()),
+        contractor_id=data.contractor_id,
+        period_start=data.period_start,
+        period_end=data.period_end,
+        payment_date=data.payment_date,
+        settlement_number=settlement_number,
+        status=SettlementStatus.DRAFT,
+        items=items_list,
+        total_commission=total_commission,
+        total_bonus=total_bonus,
+        total_reimbursements=total_reimbursements,
+        total_deductions=total_deductions,
+        net_payment=net_payment,
+        notes=data.notes,
+        created_by_id=current_employee.id,
+    )
+
+    db.add(settlement)
+    await db.commit()
+    await db.refresh(settlement)
+
+    # Load contractor relationship
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement.id)
+    result = await db.execute(query)
+    settlement = result.scalar_one()
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.put("/contractor-settlements/{settlement_id}", response_model=HQContractorSettlementResponse)
+async def update_contractor_settlement(
+    settlement_id: str,
+    data: HQContractorSettlementUpdate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Update a contractor settlement (only draft status)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    if settlement.status != SettlementStatus.DRAFT:
+        raise HTTPException(status_code=400, detail="Can only update draft settlements")
+
+    if data.payment_date:
+        settlement.payment_date = data.payment_date
+    if data.notes is not None:
+        settlement.notes = data.notes
+    if data.items is not None:
+        # Recalculate totals
+        total_commission = Decimal("0")
+        total_bonus = Decimal("0")
+        total_reimbursements = Decimal("0")
+        total_deductions = Decimal("0")
+
+        items_list = []
+        for item in data.items:
+            item_dict = item.model_dump()
+            items_list.append(item_dict)
+            amount = Decimal(str(item.amount))
+            if item.type == "commission":
+                total_commission += amount
+            elif item.type == "bonus":
+                total_bonus += amount
+            elif item.type == "reimbursement":
+                total_reimbursements += amount
+            elif item.type == "deduction":
+                total_deductions += amount
+
+        settlement.items = items_list
+        settlement.total_commission = total_commission
+        settlement.total_bonus = total_bonus
+        settlement.total_reimbursements = total_reimbursements
+        settlement.total_deductions = total_deductions
+        settlement.net_payment = total_commission + total_bonus + total_reimbursements - total_deductions
+
+    await db.commit()
+    await db.refresh(settlement)
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.post("/contractor-settlements/{settlement_id}/submit", response_model=HQContractorSettlementResponse)
+async def submit_contractor_settlement(
+    settlement_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Submit a settlement for approval."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    if settlement.status != SettlementStatus.DRAFT:
+        raise HTTPException(status_code=400, detail="Can only submit draft settlements")
+
+    settlement.status = SettlementStatus.PENDING_APPROVAL
+    await db.commit()
+    await db.refresh(settlement)
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.post("/contractor-settlements/{settlement_id}/approve", response_model=HQContractorSettlementResponse)
+async def approve_contractor_settlement(
+    settlement_id: str,
+    data: HQContractorSettlementApproval,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Approve a contractor settlement."""
+    from datetime import datetime
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    if settlement.status != SettlementStatus.PENDING_APPROVAL:
+        raise HTTPException(status_code=400, detail="Can only approve pending settlements")
+
+    settlement.status = SettlementStatus.APPROVED
+    settlement.approved_by_id = current_employee.id
+    settlement.approved_at = datetime.now()
+    if data.notes:
+        settlement.notes = (settlement.notes or "") + f"\n[Approval note]: {data.notes}"
+
+    await db.commit()
+    await db.refresh(settlement)
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.post("/contractor-settlements/{settlement_id}/pay", response_model=HQContractorSettlementResponse)
+async def pay_contractor_settlement(
+    settlement_id: str,
+    data: HQContractorSettlementPayment,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Mark a contractor settlement as paid."""
+    from datetime import datetime
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    query = select(HQContractorSettlement).options(
+        selectinload(HQContractorSettlement.contractor)
+    ).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    if settlement.status != SettlementStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="Can only pay approved settlements")
+
+    settlement.status = SettlementStatus.PAID
+    settlement.paid_at = datetime.now()
+    settlement.payment_reference = data.payment_reference
+    settlement.payment_method = data.payment_method
+    if data.notes:
+        settlement.notes = (settlement.notes or "") + f"\n[Payment note]: {data.notes}"
+
+    await db.commit()
+    await db.refresh(settlement)
+
+    return HQContractorSettlementResponse.from_orm_model(settlement)
+
+
+@router.delete("/contractor-settlements/{settlement_id}", status_code=204)
+async def delete_contractor_settlement(
+    settlement_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Delete a draft contractor settlement."""
+    from sqlalchemy import select
+
+    query = select(HQContractorSettlement).where(HQContractorSettlement.id == settlement_id)
+    result = await db.execute(query)
+    settlement = result.scalar_one_or_none()
+
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+
+    if settlement.status != SettlementStatus.DRAFT:
+        raise HTTPException(status_code=400, detail="Can only delete draft settlements")
+
+    await db.delete(settlement)
+    await db.commit()
+
+
+# ============================================================================
 # IT Operations Endpoints
 # ============================================================================
 
