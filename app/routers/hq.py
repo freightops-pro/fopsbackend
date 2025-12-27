@@ -6558,9 +6558,10 @@ async def _get_hq_check_service(
     db: AsyncSession = Depends(get_db),
 ) -> CheckService:
     """Get Check service for HQ (company-level Check integration)."""
-    # HQ uses a company-level Check integration, not tenant-specific
-    # This would be configured in HQ settings
-    return CheckService()
+    from app.core.config import get_settings
+    settings = get_settings()
+    # HQ uses its own Check company ID configured in settings
+    return CheckService(company_check_id=settings.check_hq_company_id)
 
 
 # ==================== Check Company Endpoints ====================
