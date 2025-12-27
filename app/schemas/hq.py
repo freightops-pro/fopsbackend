@@ -1350,18 +1350,66 @@ class HQHREmployeeUpdate(BaseModel):
     hourly_rate: Optional[Decimal] = None
 
 
-class HQHREmployeeResponse(HQHREmployeeBase):
+class HQHREmployeeResponse(BaseModel):
+    """Response model for HR employee with camelCase fields for frontend."""
     id: str
-    employee_number: str
-    status: EmployeeStatusType
-    check_employee_id: Optional[str] = None  # Check payroll ID
-    termination_date: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
-    # Joined fields
-    manager_name: Optional[str] = None
+    employeeNumber: str
+    firstName: str
+    lastName: str
+    email: str
+    phone: Optional[str] = None
+    employmentType: str
+    status: str
+    department: Optional[str] = None
+    jobTitle: Optional[str] = None
+    managerId: Optional[str] = None
+    managerName: Optional[str] = None
+    hireDate: Optional[str] = None
+    terminationDate: Optional[str] = None
+    payFrequency: str
+    annualSalary: Optional[float] = None
+    hourlyRate: Optional[float] = None
+    addressLine1: Optional[str] = None
+    addressLine2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zipCode: Optional[str] = None
+    checkEmployeeId: Optional[str] = None
+    createdAt: str
+    updatedAt: str
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_model(cls, emp) -> "HQHREmployeeResponse":
+        """Convert ORM model to response with camelCase."""
+        return cls(
+            id=emp.id,
+            employeeNumber=emp.employee_number,
+            firstName=emp.first_name,
+            lastName=emp.last_name,
+            email=emp.email,
+            phone=emp.phone,
+            employmentType=emp.employment_type.value if hasattr(emp.employment_type, 'value') else str(emp.employment_type),
+            status=emp.status.value if hasattr(emp.status, 'value') else str(emp.status),
+            department=emp.department,
+            jobTitle=emp.job_title,
+            managerId=emp.manager_id,
+            managerName=None,  # TODO: Join manager name
+            hireDate=emp.hire_date.isoformat() if emp.hire_date else None,
+            terminationDate=emp.termination_date.isoformat() if emp.termination_date else None,
+            payFrequency=emp.pay_frequency.value if hasattr(emp.pay_frequency, 'value') else str(emp.pay_frequency),
+            annualSalary=float(emp.annual_salary) if emp.annual_salary else None,
+            hourlyRate=float(emp.hourly_rate) if emp.hourly_rate else None,
+            addressLine1=emp.address_line1,
+            addressLine2=emp.address_line2,
+            city=emp.city,
+            state=emp.state,
+            zipCode=emp.zip_code,
+            checkEmployeeId=emp.check_employee_id,
+            createdAt=emp.created_at.isoformat() if emp.created_at else "",
+            updatedAt=emp.updated_at.isoformat() if emp.updated_at else "",
+        )
 
 
 class HQPayrollRunBase(BaseModel):
@@ -1379,24 +1427,54 @@ class HQPayrollRunCreate(HQPayrollRunBase):
     employee_ids: Optional[List[str]] = None  # If None, all active employees
 
 
-class HQPayrollRunResponse(HQPayrollRunBase):
+class HQPayrollRunResponse(BaseModel):
+    """Payroll run response with camelCase fields for frontend."""
     id: str
-    payroll_number: str
-    status: PayrollStatusType
-    check_payroll_id: Optional[str] = None  # Check payroll ID
-    total_gross: Decimal = Decimal("0")
-    total_taxes: Decimal = Decimal("0")
-    total_deductions: Decimal = Decimal("0")
-    total_net: Decimal = Decimal("0")
-    employee_count: int = 0
-    approved_by_id: Optional[str] = None
-    approved_at: Optional[datetime] = None
-    processed_at: Optional[datetime] = None
-    created_by_id: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    payrollNumber: str
+    status: str
+    payPeriodStart: str
+    payPeriodEnd: str
+    payDate: str
+    description: Optional[str] = None
+    checkPayrollId: Optional[str] = None
+    totalGross: float = 0
+    totalTaxes: float = 0
+    totalDeductions: float = 0
+    totalNet: float = 0
+    employeeCount: int = 0
+    approvedById: Optional[str] = None
+    approvedAt: Optional[str] = None
+    processedAt: Optional[str] = None
+    createdById: Optional[str] = None
+    createdAt: str
+    updatedAt: str
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_model(cls, pr) -> "HQPayrollRunResponse":
+        """Convert ORM model to response with camelCase."""
+        return cls(
+            id=pr.id,
+            payrollNumber=pr.payroll_number,
+            status=pr.status.value if hasattr(pr.status, 'value') else str(pr.status),
+            payPeriodStart=pr.pay_period_start.isoformat() if pr.pay_period_start else "",
+            payPeriodEnd=pr.pay_period_end.isoformat() if pr.pay_period_end else "",
+            payDate=pr.pay_date.isoformat() if pr.pay_date else "",
+            description=pr.description,
+            checkPayrollId=pr.check_payroll_id,
+            totalGross=float(pr.total_gross) if pr.total_gross else 0,
+            totalTaxes=float(pr.total_taxes) if pr.total_taxes else 0,
+            totalDeductions=float(pr.total_deductions) if pr.total_deductions else 0,
+            totalNet=float(pr.total_net) if pr.total_net else 0,
+            employeeCount=pr.employee_count or 0,
+            approvedById=pr.approved_by_id,
+            approvedAt=pr.approved_at.isoformat() if pr.approved_at else None,
+            processedAt=pr.processed_at.isoformat() if pr.processed_at else None,
+            createdById=pr.created_by_id,
+            createdAt=pr.created_at.isoformat() if pr.created_at else "",
+            updatedAt=pr.updated_at.isoformat() if pr.updated_at else "",
+        )
 
 
 class HQPayrollItemResponse(BaseModel):

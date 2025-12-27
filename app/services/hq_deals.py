@@ -59,7 +59,8 @@ class HQDealsService:
     ) -> List[Dict[str, Any]]:
         """Get deals with optional filtering. Sales reps only see their own deals."""
         query = select(HQDeal).options(
-            selectinload(HQDeal.assigned_sales_rep)
+            selectinload(HQDeal.assigned_sales_rep),
+            selectinload(HQDeal.subscription)
         )
 
         # Sales managers only see their own deals
@@ -82,7 +83,10 @@ class HQDealsService:
         """Get a single deal by ID."""
         result = await self.db.execute(
             select(HQDeal)
-            .options(selectinload(HQDeal.assigned_sales_rep))
+            .options(
+                selectinload(HQDeal.assigned_sales_rep),
+                selectinload(HQDeal.subscription)
+            )
             .where(HQDeal.id == deal_id)
         )
         deal = result.scalar_one_or_none()
