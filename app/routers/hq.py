@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status, Query
 from pydantic import BaseModel
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6912,7 +6912,7 @@ async def list_contractor_settlements(
     contractor_id: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db)
 ):
     """List contractor settlements."""
     from sqlalchemy import select
@@ -6936,7 +6936,7 @@ async def list_contractor_settlements(
 async def get_contractor_settlement(
     settlement_id: str,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a contractor settlement by ID."""
     from sqlalchemy import select
@@ -6958,7 +6958,7 @@ async def get_contractor_settlement(
 async def create_contractor_settlement(
     data: HQContractorSettlementCreate,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new contractor settlement."""
     import uuid
@@ -7034,7 +7034,7 @@ async def update_contractor_settlement(
     settlement_id: str,
     data: HQContractorSettlementUpdate,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update a contractor settlement (only draft status)."""
     from sqlalchemy import select
@@ -7094,7 +7094,7 @@ async def update_contractor_settlement(
 async def submit_contractor_settlement(
     settlement_id: str,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Submit a settlement for approval."""
     from sqlalchemy import select
@@ -7124,7 +7124,7 @@ async def approve_contractor_settlement(
     settlement_id: str,
     data: HQContractorSettlementApproval,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Approve a contractor settlement."""
     from datetime import datetime
@@ -7160,7 +7160,7 @@ async def pay_contractor_settlement(
     settlement_id: str,
     data: HQContractorSettlementPayment,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Mark a contractor settlement as paid."""
     from datetime import datetime
@@ -7196,7 +7196,7 @@ async def pay_contractor_settlement(
 async def delete_contractor_settlement(
     settlement_id: str,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete a draft contractor settlement."""
     from sqlalchemy import select

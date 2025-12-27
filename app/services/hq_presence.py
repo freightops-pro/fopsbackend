@@ -221,14 +221,13 @@ class HQPresenceService:
         for record, new_status, employee_id, away_message, last_activity_at in to_update:
             record.status = new_status
             employee_name = await self._get_employee_name(employee_id)
-            # Access updated_at after the record is modified
-            updated_at = record.updated_at
+            # Use current time instead of trying to get updated_at
             changed.append(PresenceState(
                 user_id=employee_id,
                 user_name=employee_name,
                 status=new_status,
                 away_message=away_message,
-                last_seen_at=updated_at,
+                last_seen_at=datetime.utcnow(),  # FIX: Use current time
                 last_activity_at=last_activity_at,
             ))
 

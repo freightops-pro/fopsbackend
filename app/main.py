@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import sys
 import os
 import uuid
 
@@ -17,19 +18,52 @@ from app.core.db import init_database, AsyncSessionFactory
 from app.models.port import Port
 from app.middleware.security import setup_security_middleware
 
-# Configure logging - reduce verbosity in production
+# ========== ENHANCED LOGGING CONFIGURATION ==========
+# Configure logging to properly separate stdout and stderr
+# This helps container platforms correctly identify log levels
+
+class InfoFilter(logging.Filter):
+    """Filter to allow only INFO level messages."""
+    def filter(self, record):
+        return record.levelno <= logging.INFO
+
+class ErrorFilter(logging.Filter):
+    """Filter to allow only WARNING and ERROR level messages."""
+    def filter(self, record):
+        return record.levelno >= logging.WARNING
+
+# Create formatters
+info_formatter = logging.Formatter("%(levelname)s: %(message)s")
+error_formatter = logging.Formatter("%(levelname)s: [PID:%(process)d] %(message)s")
+
+# Create handlers
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.addFilter(InfoFilter())
+stdout_handler.setFormatter(info_formatter)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.WARNING)
+stderr_handler.addFilter(ErrorFilter())
+stderr_handler.setFormatter(error_formatter)
+
+# Configure root logger
 logging.basicConfig(
     level=logging.INFO,
-    format="%(levelname)s: %(message)s",
+    handlers=[stdout_handler, stderr_handler]
 )
+
 # Reduce noise from third-party libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("alembic").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+# ========== END LOGGING CONFIGURATION ==========
 
 
 async def seed_ports():
@@ -190,31 +224,33 @@ async def lifespan(_: FastAPI):
 
             try:
                 await asyncio.wait_for(seed_ports(), timeout=10.0)
-            except Exception:
-                pass  # Port seeding is optional
+            except Exception as e:
+                logger.warning(f"Port seeding optional step skipped: {e}")
 
             db_initialized = True
-            logger.info("Database ready")
+            logger.info("Database initialized and ready")
 
         except asyncio.TimeoutError:
             db_error = "Database initialization timed out"
             logger.error(db_error)
         except Exception as e:
             db_error = str(e)
-            logger.error(f"Database init failed: {e}")
+            logger.error(f"Database initialization failed: {e}")
 
     asyncio.create_task(initialize_database())
 
     try:
         start_scheduler()
+        logger.info("Background scheduler started")
     except Exception as e:
-        logger.warning(f"Scheduler error: {e}")
+        logger.warning(f"Scheduler startup warning: {e}")
 
     try:
         from app.services.websocket_events import register_websocket_handlers
         register_websocket_handlers()
+        logger.info("WebSocket handlers registered")
     except Exception as e:
-        logger.warning(f"WebSocket handlers error: {e}")
+        logger.warning(f"WebSocket handlers registration warning: {e}")
 
     async def run_automation_background():
         for _ in range(60):
@@ -223,20 +259,23 @@ async def lifespan(_: FastAPI):
             await asyncio.sleep(1)
 
         if not db_initialized:
+            logger.warning("Skipping automation cycle - database not initialized")
             return
 
         try:
             await asyncio.wait_for(run_automation_cycle(), timeout=60.0)
-        except Exception:
-            pass  # Automation cycle is optional
+            logger.info("Initial automation cycle completed")
+        except Exception as e:
+            logger.warning(f"Initial automation cycle optional step skipped: {e}")
 
     asyncio.create_task(run_automation_background())
 
-    logger.info("Application started")
+    logger.info("Application startup complete")
 
     yield
 
     shutdown_scheduler()
+    logger.info("Application shutdown initiated")
 
 
 app = FastAPI(
@@ -282,8 +321,6 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions with proper CORS headers."""
-    import logging
-    logger = logging.getLogger(__name__)
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
 
     origin = request.headers.get("origin")
@@ -308,11 +345,13 @@ app.include_router(api_router, prefix="/api")
 
 @app.get("/", tags=["Health"])
 async def root() -> dict[str, str]:
+    logger.info("Root endpoint accessed")
     return {"status": "ok", "environment": settings.environment}
 
 @app.get("/debug/cors", tags=["Debug"])
 async def debug_cors() -> dict:
     """Debug endpoint to check CORS configuration."""
+    logger.info("CORS debug endpoint accessed")
     return {
         "cors_origins": settings.backend_cors_origins,
         "cors_origins_raw": settings.cors_origins_raw,
@@ -324,6 +363,7 @@ async def debug_cors() -> dict:
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict:
     """Health check endpoint - responds immediately, reports database status."""
+    logger.info("Health check endpoint accessed")
     return {
         "status": "ok",
         "service": "FreightOps API",
@@ -335,10 +375,10 @@ async def health_check() -> dict:
 async def readiness_check() -> dict:
     """Readiness check - only returns ok when database is ready."""
     from fastapi import HTTPException
+    logger.info("Readiness check endpoint accessed")
     if not db_initialized:
         raise HTTPException(
             status_code=503,
             detail={"status": "not_ready", "database_ready": False, "error": db_error}
         )
     return {"status": "ready", "database_ready": True}
-
