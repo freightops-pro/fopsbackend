@@ -395,6 +395,14 @@ class HQCreditCreate(HQCreditBase):
     tenant_id: str
 
 
+class HQCreditCreateForTenant(HQCreditBase):
+    """Schema for creating credit via /tenants/{tenant_id}/credits endpoint.
+
+    tenant_id is not required in body since it comes from URL path parameter.
+    """
+    pass
+
+
 class HQCreditApprove(BaseModel):
     pass
 
@@ -2447,3 +2455,121 @@ class HQRateChangeResponse(BaseModel):
     created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# ============================================================================
+# Contractor Settlement Schemas (1099 Payments)
+# ============================================================================
+
+SettlementStatusType = Literal[
+    "draft", "pending_approval", "approved", "processing", "paid", "failed", "cancelled"
+]
+SettlementItemType = Literal["commission", "bonus", "reimbursement", "deduction"]
+
+
+class HQContractorSettlementItem(BaseModel):
+    """Line item in a contractor settlement."""
+    type: SettlementItemType
+    description: str
+    amount: Decimal
+    reference_id: Optional[str] = Field(None, alias="referenceId", serialization_alias="referenceId")
+    rate: Optional[Decimal] = None  # Commission percentage if applicable
+    base_amount: Optional[Decimal] = Field(None, alias="baseAmount", serialization_alias="baseAmount")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQContractorSettlementCreate(BaseModel):
+    """Create a new contractor settlement."""
+    contractor_id: str = Field(alias="contractorId")
+    period_start: datetime = Field(alias="periodStart")
+    period_end: datetime = Field(alias="periodEnd")
+    payment_date: datetime = Field(alias="paymentDate")
+    items: List[HQContractorSettlementItem] = []
+    notes: Optional[str] = None
+    include_pending_commissions: bool = Field(True, alias="includePendingCommissions")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQContractorSettlementUpdate(BaseModel):
+    """Update a contractor settlement."""
+    payment_date: Optional[datetime] = Field(None, alias="paymentDate")
+    items: Optional[List[HQContractorSettlementItem]] = None
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQContractorSettlementResponse(BaseModel):
+    """Contractor settlement response."""
+    id: str
+    contractor_id: str = Field(alias="contractorId", serialization_alias="contractorId")
+    contractor_name: str = Field(alias="contractorName", serialization_alias="contractorName")
+    contractor_email: str = Field(alias="contractorEmail", serialization_alias="contractorEmail")
+    settlement_number: str = Field(alias="settlementNumber", serialization_alias="settlementNumber")
+    period_start: datetime = Field(alias="periodStart", serialization_alias="periodStart")
+    period_end: datetime = Field(alias="periodEnd", serialization_alias="periodEnd")
+    payment_date: datetime = Field(alias="paymentDate", serialization_alias="paymentDate")
+    status: SettlementStatusType
+    items: List[HQContractorSettlementItem] = []
+    total_commission: Decimal = Field(alias="totalCommission", serialization_alias="totalCommission")
+    total_bonus: Decimal = Field(alias="totalBonus", serialization_alias="totalBonus")
+    total_reimbursements: Decimal = Field(alias="totalReimbursements", serialization_alias="totalReimbursements")
+    total_deductions: Decimal = Field(alias="totalDeductions", serialization_alias="totalDeductions")
+    net_payment: Decimal = Field(alias="netPayment", serialization_alias="netPayment")
+    notes: Optional[str] = None
+    approved_by_id: Optional[str] = Field(None, alias="approvedById", serialization_alias="approvedById")
+    approved_at: Optional[datetime] = Field(None, alias="approvedAt", serialization_alias="approvedAt")
+    paid_at: Optional[datetime] = Field(None, alias="paidAt", serialization_alias="paidAt")
+    payment_reference: Optional[str] = Field(None, alias="paymentReference", serialization_alias="paymentReference")
+    payment_method: Optional[str] = Field(None, alias="paymentMethod", serialization_alias="paymentMethod")
+    created_at: datetime = Field(alias="createdAt", serialization_alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt", serialization_alias="updatedAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+    @classmethod
+    def from_orm_model(cls, s, contractor_name: str = "", contractor_email: str = "") -> "HQContractorSettlementResponse":
+        """Convert ORM model to response."""
+        return cls(
+            id=s.id,
+            contractorId=s.contractor_id,
+            contractorName=contractor_name or (
+                f"{s.contractor.first_name} {s.contractor.last_name}" if s.contractor else ""
+            ),
+            contractorEmail=contractor_email or (s.contractor.email if s.contractor else ""),
+            settlementNumber=s.settlement_number,
+            periodStart=s.period_start,
+            periodEnd=s.period_end,
+            paymentDate=s.payment_date,
+            status=s.status.value if hasattr(s.status, 'value') else str(s.status),
+            items=s.items or [],
+            totalCommission=s.total_commission or 0,
+            totalBonus=s.total_bonus or 0,
+            totalReimbursements=s.total_reimbursements or 0,
+            totalDeductions=s.total_deductions or 0,
+            netPayment=s.net_payment or 0,
+            notes=s.notes,
+            approvedById=s.approved_by_id,
+            approvedAt=s.approved_at,
+            paidAt=s.paid_at,
+            paymentReference=s.payment_reference,
+            paymentMethod=s.payment_method,
+            createdAt=s.created_at,
+            updatedAt=s.updated_at,
+        )
+
+
+class HQContractorSettlementApproval(BaseModel):
+    """Approve a contractor settlement."""
+    notes: Optional[str] = None
+
+
+class HQContractorSettlementPayment(BaseModel):
+    """Mark a contractor settlement as paid."""
+    payment_reference: str = Field(alias="paymentReference")
+    payment_method: str = Field(alias="paymentMethod")  # check, direct_deposit, wire
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}

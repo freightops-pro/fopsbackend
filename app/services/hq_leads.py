@@ -20,14 +20,12 @@ from app.schemas.hq import (
 )
 from app.core.llm_router import LLMRouter
 
-# FMCSA Census Data - Socrata v3 API with SoQL
+# FMCSA Census Data - SoDA 2.1 API with SoQL
 # Dataset: Company Census File (az4n-8mr2) - has add_date, power_units, etc.
 # Docs: https://catalog.data.gov/dataset/motor-carrier-registrations-census-files
-FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/az4n-8mr2/query.json"
+FMCSA_CENSUS_API = "https://data.transportation.gov/resource/az4n-8mr2.json"
 
-import os
-FMCSA_APP_TOKEN = os.getenv("FMCSA_APP_TOKEN", "")
-FMCSA_SECRET_TOKEN = os.getenv("FMCSA_SECRET_TOKEN", "")
+from app.core.config import get_settings
 
 
 class HQLeadService:
@@ -59,8 +57,16 @@ class HQLeadService:
             selectinload(HQLead.assigned_sales_rep)
         )
 
-        # Sales managers only see their own leads
-        if current_user_role == HQRole.SALES_MANAGER or assigned_to_me:
+        # Sales managers see their own leads + unassigned leads (for claiming)
+        if current_user_role == HQRole.SALES_MANAGER:
+            from sqlalchemy import or_
+            query = query.where(
+                or_(
+                    HQLead.assigned_sales_rep_id == current_user_id,
+                    HQLead.assigned_sales_rep_id.is_(None)  # Unassigned leads visible to all sales reps
+                )
+            )
+        elif assigned_to_me:
             query = query.where(HQLead.assigned_sales_rep_id == current_user_id)
 
         if status:
@@ -449,80 +455,77 @@ Extract all sales leads from this content and return as JSON array."""
         Returns:
             Tuple of (created_leads, errors)
         """
-        # Build Socrata v3 API query using SoQL
-        # Dataset fields: LEGAL_NAME, DBA_NAME, BUS_STREET_PO, BUS_CITY, BUS_STATE_CODE,
-        #                 BUS_ZIP_CODE, BUS_TELNO, DOT_NUMBER, DOCKET_NUMBER
+        # Build SoDA 2.1 API query using SoQL
+        # Dataset fields: legal_name, dba_name, phy_street, phy_city, phy_state,
+        #                 phy_zip, phone, dot_number, power_units, status_code, add_date
+        settings = get_settings()
 
         # Build SoQL WHERE clause for Company Census File (az4n-8mr2)
         where_conditions = []
 
         # State filter (using phy_state - physical address state)
         if state:
-            where_conditions.append(f"`phy_state` = '{state.upper()}'")
+            where_conditions.append(f"phy_state = '{state.upper()}'")
 
         # Active carriers only
-        where_conditions.append("`status_code` = 'A'")
+        where_conditions.append("status_code = 'A'")
 
         # Authority age filter - add_date is in YYYYMMDD format
         if authority_days:
             from datetime import datetime, timedelta
             cutoff_date = (datetime.utcnow() - timedelta(days=authority_days)).strftime("%Y%m%d")
-            where_conditions.append(f"`add_date` >= '{cutoff_date}'")
+            where_conditions.append(f"add_date >= '{cutoff_date}'")
 
-        # Build the SoQL query
+        # Build the SoQL WHERE clause
         # Note: power_units filtering is done client-side since SoQL doesn't support CAST
         # Request more records than limit to account for filtering
         query_limit = limit * 3 if (min_trucks or max_trucks) else limit
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-        soql_query = f"SELECT * WHERE {where_clause} ORDER BY `add_date` DESC LIMIT {query_limit}"
+        where_clause = " AND ".join(where_conditions)
 
-        # v3 API uses POST with JSON body containing the query
-        query_payload = {
-            "query": soql_query
+        # SoDA 2.1 uses URL query parameters
+        import urllib.parse
+        params = {
+            "$where": where_clause,
+            "$order": "add_date DESC",
+            "$limit": str(query_limit),
         }
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{FMCSA_CENSUS_API}?{query_string}"
 
         try:
-            # Build headers with app token and secret for authentication
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            if FMCSA_APP_TOKEN:
-                headers["X-App-Token"] = FMCSA_APP_TOKEN
-            if FMCSA_SECRET_TOKEN:
-                headers["X-App-Secret"] = FMCSA_SECRET_TOKEN
+            # Build headers with app token for authentication (increases rate limit)
+            headers = {"Accept": "application/json"}
+            if settings.fmcsa_app_token:
+                headers["X-App-Token"] = settings.fmcsa_app_token
+
+            import logging
+            logging.info(f"FMCSA API request: {full_url}")
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    FMCSA_CENSUS_API,
-                    json=query_payload,
+                async with session.get(
+                    full_url,
                     timeout=aiohttp.ClientTimeout(total=60),
                     headers=headers
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
+                        logging.error(f"FMCSA API error: {response.status} - {error_text[:500]}")
                         return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:500]}"}]
                     data = await response.json()
-                    # v3 API returns data in a specific structure
-                    # Check for error in response
-                    if isinstance(data, dict) and data.get("error"):
-                        return [], [{"error": f"FMCSA API error: {data.get('message', data.get('error'))}"}]
-                    # Parse carriers from response
+
+                    # SoDA 2.1 returns a list directly
                     if isinstance(data, list):
                         carriers = data
-                    elif isinstance(data, dict):
-                        carriers = data.get("rows", data.get("data", data.get("results", [])))
                     else:
                         carriers = []
 
-                    import logging
-                    logging.info(f"FMCSA API returned {len(carriers)} carriers")
+                    logging.info(f"FMCSA API returned {len(carriers)} carriers for state {state}")
         except Exception as e:
             import traceback
             return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}", "traceback": traceback.format_exc()}]
 
         if not carriers:
-            return [], [{"error": f"No carriers found matching criteria. Query: {soql_query}"}]
+            return [], [{"error": f"No carriers found matching criteria. URL: {full_url}"}]
 
         # Client-side filtering for power_units (fleet size)
         # SoQL doesn't support CAST, so we filter here

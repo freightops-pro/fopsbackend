@@ -3,6 +3,9 @@ import logging
 import os
 import uuid
 
+# Apply bcrypt patch for passlib compatibility BEFORE importing auth modules
+import app.core  # noqa: F401 - triggers bcrypt patch
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select

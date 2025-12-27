@@ -15,10 +15,10 @@ from app.models.hq_deal import HQDeal, HQDealActivity, DealStage, DealSource
 from app.models.hq_employee import HQEmployee, HQRole
 from app.core.llm_router import LLMRouter
 
-import os
-FMCSA_CENSUS_API = "https://data.transportation.gov/api/v3/views/az4n-8mr2/query.json"
-FMCSA_APP_TOKEN = os.getenv("FMCSA_APP_TOKEN", "")
-FMCSA_SECRET_TOKEN = os.getenv("FMCSA_SECRET_TOKEN", "")
+# FMCSA Census Data - SoDA 2.1 API
+FMCSA_CENSUS_API = "https://data.transportation.gov/resource/az4n-8mr2.json"
+
+from app.core.config import get_settings
 
 
 # Stage probability mappings
@@ -285,42 +285,45 @@ class HQDealsService:
         authority_days: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], List[dict]]:
         """Import deals from FMCSA Motor Carrier Census data."""
-        # Build Socrata v3 API query
+        settings = get_settings()
+
+        # Build SoDA 2.1 API query
         where_conditions = []
 
         if state:
-            where_conditions.append(f"`phy_state` = '{state.upper()}'")
+            where_conditions.append(f"phy_state = '{state.upper()}'")
 
         # Active carriers only
-        where_conditions.append("`status_code` = 'A'")
+        where_conditions.append("status_code = 'A'")
 
         # Authority age filter
         if authority_days:
             from datetime import timedelta
             cutoff_date = (datetime.utcnow() - timedelta(days=authority_days)).strftime("%Y%m%d")
-            where_conditions.append(f"`add_date` >= '{cutoff_date}'")
+            where_conditions.append(f"add_date >= '{cutoff_date}'")
 
         # Build query
         query_limit = limit * 3 if (min_trucks or max_trucks) else limit
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-        soql_query = f"SELECT * WHERE {where_clause} ORDER BY `add_date` DESC LIMIT {query_limit}"
+        where_clause = " AND ".join(where_conditions)
 
-        query_payload = {"query": soql_query}
+        # SoDA 2.1 uses URL query parameters
+        import urllib.parse
+        params = {
+            "$where": where_clause,
+            "$order": "add_date DESC",
+            "$limit": str(query_limit),
+        }
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{FMCSA_CENSUS_API}?{query_string}"
 
         try:
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            if FMCSA_APP_TOKEN:
-                headers["X-App-Token"] = FMCSA_APP_TOKEN
-            if FMCSA_SECRET_TOKEN:
-                headers["X-App-Secret"] = FMCSA_SECRET_TOKEN
+            headers = {"Accept": "application/json"}
+            if settings.fmcsa_app_token:
+                headers["X-App-Token"] = settings.fmcsa_app_token
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    FMCSA_CENSUS_API,
-                    json=query_payload,
+                async with session.get(
+                    full_url,
                     timeout=aiohttp.ClientTimeout(total=60),
                     headers=headers
                 ) as response:
@@ -329,13 +332,9 @@ class HQDealsService:
                         return [], [{"error": f"FMCSA API returned status {response.status}: {error_text[:500]}"}]
                     data = await response.json()
 
-                    if isinstance(data, dict) and data.get("error"):
-                        return [], [{"error": f"FMCSA API error: {data.get('message', data.get('error'))}"}]
-
+                    # SoDA 2.1 returns a list directly
                     if isinstance(data, list):
                         carriers = data
-                    elif isinstance(data, dict):
-                        carriers = data.get("rows", data.get("data", data.get("results", [])))
                     else:
                         carriers = []
 
@@ -344,7 +343,7 @@ class HQDealsService:
             return [], [{"error": f"Failed to fetch FMCSA data: {str(e)}", "traceback": traceback.format_exc()}]
 
         if not carriers:
-            return [], [{"error": f"No carriers found matching criteria. Query: {soql_query}"}]
+            return [], [{"error": f"No carriers found matching criteria. URL: {full_url}"}]
 
         # Client-side filtering for power_units
         if min_trucks or max_trucks:

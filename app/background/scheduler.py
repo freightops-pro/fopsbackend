@@ -270,35 +270,108 @@ async def auto_send_approved_outreach() -> None:
             logger.info("auto_outreach_sent", extra={"sent_count": sent_count})
 
 
+# Global lock to ensure only one worker runs the scheduler
+_scheduler_lock_acquired = False
+_scheduler_lock_file = None
+
+
+def _try_acquire_scheduler_lock() -> bool:
+    """Try to acquire a file lock to ensure only one worker runs the scheduler.
+
+    Returns True if lock was acquired, False if another worker has the lock.
+    """
+    global _scheduler_lock_file, _scheduler_lock_acquired
+    import os
+    import tempfile
+
+    if _scheduler_lock_acquired:
+        return True
+
+    lock_path = os.path.join(tempfile.gettempdir(), "fops_scheduler.lock")
+
+    try:
+        # Try to acquire an exclusive lock
+        _scheduler_lock_file = open(lock_path, "w")
+
+        # Use fcntl for Unix/Linux file locking (non-blocking)
+        try:
+            import fcntl
+            fcntl.flock(_scheduler_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _scheduler_lock_acquired = True
+            _scheduler_lock_file.write(str(os.getpid()))
+            _scheduler_lock_file.flush()
+            logger.info("Scheduler lock acquired", extra={"pid": os.getpid()})
+            return True
+        except (IOError, OSError, ImportError):
+            # Lock held by another process or fcntl not available
+            _scheduler_lock_file.close()
+            _scheduler_lock_file = None
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to acquire scheduler lock: {e}")
+        return False
+
+
+def _release_scheduler_lock() -> None:
+    """Release the scheduler lock."""
+    global _scheduler_lock_file, _scheduler_lock_acquired
+    import os
+
+    if _scheduler_lock_file:
+        try:
+            import fcntl
+            fcntl.flock(_scheduler_lock_file.fileno(), fcntl.LOCK_UN)
+        except (ImportError, Exception):
+            pass
+        try:
+            _scheduler_lock_file.close()
+        except Exception:
+            pass
+        _scheduler_lock_file = None
+        _scheduler_lock_acquired = False
+        logger.info("Scheduler lock released", extra={"pid": os.getpid()})
+
+
 def start_scheduler() -> None:
+    """Start the background scheduler.
+
+    Uses file locking to ensure only one gunicorn worker runs the scheduler.
+    """
     if automation_scheduler.running:
         return
-    automation_scheduler.add_job(run_automation_cycle, "interval", minutes=settings.automation_interval_minutes, id="automation-cycle", max_instances=1, coalesce=True)
+
+    # Only one worker should run the scheduler
+    if not _try_acquire_scheduler_lock():
+        logger.info("Scheduler lock held by another worker, skipping scheduler start")
+        return
+
+    automation_scheduler.add_job(run_automation_cycle, "interval", minutes=settings.automation_interval_minutes, id="run_automation_cycle", replace_existing=True, max_instances=1, coalesce=True)
     # Run cleanup job daily at 2 AM
-    automation_scheduler.add_job(cleanup_completed_load_tracking, "cron", hour=2, minute=0, id="container-tracking-cleanup", max_instances=1, coalesce=True)
+    automation_scheduler.add_job(cleanup_completed_load_tracking, "cron", hour=2, minute=0, id="cleanup_completed_load_tracking", replace_existing=True, max_instances=1, coalesce=True)
     # Motive sync jobs
-    automation_scheduler.add_job(sync_motive_integrations, "interval", minutes=15, id="motive-sync-all", max_instances=1, coalesce=True)
-    automation_scheduler.add_job(sync_motive_vehicles_job, "interval", minutes=15, id="motive-sync-vehicles", max_instances=1, coalesce=True)
-    automation_scheduler.add_job(sync_motive_drivers_job, "interval", minutes=30, id="motive-sync-drivers", max_instances=1, coalesce=True)
-    automation_scheduler.add_job(sync_motive_fuel_job, "interval", minutes=60, id="motive-sync-fuel", max_instances=1, coalesce=True)
+    automation_scheduler.add_job(sync_motive_integrations, "interval", minutes=15, id="sync_motive_integrations", replace_existing=True, max_instances=1, coalesce=True)
+    automation_scheduler.add_job(sync_motive_vehicles_job, "interval", minutes=15, id="sync_motive_vehicles_job", replace_existing=True, max_instances=1, coalesce=True)
+    automation_scheduler.add_job(sync_motive_drivers_job, "interval", minutes=30, id="sync_motive_drivers_job", replace_existing=True, max_instances=1, coalesce=True)
+    automation_scheduler.add_job(sync_motive_fuel_job, "interval", minutes=60, id="sync_motive_fuel_job", replace_existing=True, max_instances=1, coalesce=True)
 
     # Lead Import Pipeline - runs every 30 minutes (FMCSA sync only, no AI)
     # AI enrichment is triggered manually by sales reps per lead
-    automation_scheduler.add_job(run_lead_import_pipeline, "interval", minutes=30, id="lead-import-pipeline", max_instances=1, coalesce=True)
+    automation_scheduler.add_job(run_lead_import_pipeline, "interval", minutes=30, id="run_lead_import_pipeline", replace_existing=True, max_instances=1, coalesce=True)
 
     # Run immediately on startup (after 10 seconds to let app initialize)
-    automation_scheduler.add_job(run_lead_import_pipeline, "date", run_date=None, id="startup-lead-import")
+    automation_scheduler.add_job(run_lead_import_pipeline, "date", run_date=None, id="startup-lead-import", replace_existing=True)
 
     # Presence auto-away jobs - run every minute to check for idle users
-    automation_scheduler.add_job(check_presence_idle_users, "interval", minutes=1, id="presence-idle-check", max_instances=1, coalesce=True)
-    automation_scheduler.add_job(check_hq_presence_idle, "interval", minutes=1, id="hq-presence-idle-check", max_instances=1, coalesce=True)
+    automation_scheduler.add_job(check_presence_idle_users, "interval", minutes=1, id="check_presence_idle_users", replace_existing=True, max_instances=1, coalesce=True)
+    automation_scheduler.add_job(check_hq_presence_idle, "interval", minutes=1, id="check_hq_presence_idle", replace_existing=True, max_instances=1, coalesce=True)
 
     automation_scheduler.start()
-    logger.info("Automation scheduler started", extra={"interval_minutes": settings.automation_interval_minutes, "lead_import_pipeline": True, "presence_check": True, "hq_presence_check": True})
+    logger.info("Scheduler started", extra={"interval_minutes": settings.automation_interval_minutes})
 
 
 def shutdown_scheduler() -> None:
     if automation_scheduler.running:
         automation_scheduler.shutdown(wait=False)
-        logger.info("Automation scheduler stopped")
+        logger.info("Scheduler stopped")
+    _release_scheduler_lock()
 

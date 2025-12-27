@@ -31,6 +31,7 @@ from app.schemas.hq import (
     HQQuoteResponse,
     HQQuoteSend,
     HQCreditCreate,
+    HQCreditCreateForTenant,
     HQCreditReject,
     HQCreditResponse,
     HQPayoutCreate,
@@ -1000,11 +1001,14 @@ async def get_tenant_credits(
 @router.post("/tenants/{tenant_id}/credits", response_model=HQCreditResponse, status_code=status.HTTP_201_CREATED)
 async def add_tenant_credit(
     tenant_id: str,
-    payload: HQCreditCreate,
+    payload: HQCreditCreateForTenant,
     current_employee: HQEmployee = Depends(get_current_hq_employee),
     db: AsyncSession = Depends(get_db)
 ) -> HQCreditResponse:
-    """Add a credit to a tenant's account."""
+    """Add a credit to a tenant's account.
+
+    tenant_id comes from URL path, not request body.
+    """
     from sqlalchemy import select
     from app.models.company import Company
 
@@ -1014,12 +1018,14 @@ async def add_tenant_credit(
     if not company:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
-    # Ensure tenant_id is set in payload
-    payload_dict = payload.model_dump()
-    payload_dict["tenant_id"] = tenant_id
+    # Build full payload with tenant_id from URL
+    full_payload = HQCreditCreate(
+        tenant_id=tenant_id,
+        **payload.model_dump()
+    )
 
     service = HQCreditService(db)
-    credit = await service.create_credit(HQCreditCreate(**payload_dict), current_employee.id)
+    credit = await service.create_credit(full_payload, current_employee.id)
     return HQCreditResponse.model_validate(credit, from_attributes=True)
 
 
@@ -6539,3 +6545,593 @@ async def broadcast_hq_chat_message(channel_id: str, message_data: dict) -> None
         "type": "message_received",
         "data": message_data
     }, channel_id)
+
+
+# ============================================================================
+# HQ Check Payroll Proxy Endpoints
+# ============================================================================
+
+from app.services.check import CheckService
+
+
+async def _get_hq_check_service(
+    db: AsyncSession = Depends(get_db),
+) -> CheckService:
+    """Get Check service for HQ (company-level Check integration)."""
+    # HQ uses a company-level Check integration, not tenant-specific
+    # This would be configured in HQ settings
+    return CheckService()
+
+
+# ==================== Check Company Endpoints ====================
+
+
+@router.get("/check/company", summary="Get HQ Check company")
+async def get_hq_check_company(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Get the Check company for HQ."""
+    try:
+        return await service.get_company()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/company", status_code=status.HTTP_201_CREATED, summary="Create HQ Check company")
+async def create_hq_check_company(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create Check company for HQ."""
+    try:
+        return await service.create_company(payload)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ==================== Check Employee Endpoints ====================
+
+
+@router.get("/check/employees", summary="List Check employees")
+async def list_hq_check_employees(
+    page: int = 1,
+    per_page: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> List[dict]:
+    """List all Check employees."""
+    try:
+        return await service.list_employees(page=page, per_page=per_page)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.get("/check/employees/{employee_id}", summary="Get Check employee")
+async def get_hq_check_employee(
+    employee_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Get a Check employee."""
+    try:
+        return await service.get_employee(employee_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/employees", status_code=status.HTTP_201_CREATED, summary="Create Check employee")
+async def create_hq_check_employee(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create a Check employee."""
+    try:
+        return await service.create_employee(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.patch("/check/employees/{employee_id}", summary="Update Check employee")
+async def update_hq_check_employee(
+    employee_id: str,
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Update a Check employee."""
+    try:
+        return await service.update_employee(employee_id, payload)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ==================== Check Payroll Endpoints ====================
+
+
+@router.get("/check/payrolls", summary="List Check payrolls")
+async def list_hq_check_payrolls(
+    page: int = 1,
+    per_page: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> List[dict]:
+    """List Check payroll runs."""
+    try:
+        return await service.list_payrolls(page=page, per_page=per_page)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.get("/check/payrolls/{payroll_id}", summary="Get Check payroll")
+async def get_hq_check_payroll(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Get a Check payroll run."""
+    try:
+        return await service.get_payroll(payroll_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/payrolls", status_code=status.HTTP_201_CREATED, summary="Create Check payroll")
+async def create_hq_check_payroll(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create a Check payroll run."""
+    try:
+        return await service.create_payroll(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.get("/check/payrolls/{payroll_id}/preview", summary="Preview Check payroll")
+async def preview_hq_check_payroll(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Preview a Check payroll."""
+    try:
+        return await service.preview_payroll(payroll_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/payrolls/{payroll_id}/approve", summary="Approve Check payroll")
+async def approve_hq_check_payroll(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Approve a Check payroll."""
+    try:
+        return await service.approve_payroll(payroll_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/payrolls/{payroll_id}/cancel", summary="Cancel Check payroll")
+async def cancel_hq_check_payroll(
+    payroll_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Cancel a Check payroll."""
+    try:
+        return await service.cancel_payroll(payroll_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ==================== Check Benefits Endpoints ====================
+
+
+@router.get("/check/benefits", summary="List Check benefits")
+async def list_hq_check_benefits(
+    employee: Optional[str] = None,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> List[dict]:
+    """List Check benefits."""
+    try:
+        return await service.list_benefits(employee_id=employee)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/benefits", status_code=status.HTTP_201_CREATED, summary="Create Check benefit")
+async def create_hq_check_benefit(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create a Check benefit."""
+    try:
+        return await service.create_benefit(payload)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.patch("/check/benefits/{benefit_id}", summary="Update Check benefit")
+async def update_hq_check_benefit(
+    benefit_id: str,
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Update a Check benefit."""
+    try:
+        return await service.update_benefit(benefit_id, payload)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.delete("/check/benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, summary="Delete Check benefit")
+async def delete_hq_check_benefit(
+    benefit_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+):
+    """Delete a Check benefit."""
+    try:
+        await service.delete_benefit(benefit_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ==================== Check Company Benefits Endpoints ====================
+
+
+@router.get("/check/company-benefits", summary="List Check company benefits")
+async def list_hq_check_company_benefits(
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> List[dict]:
+    """List Check company benefits."""
+    try:
+        return await service.list_company_benefits()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/company-benefits", status_code=status.HTTP_201_CREATED, summary="Create Check company benefit")
+async def create_hq_check_company_benefit(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create a Check company benefit."""
+    try:
+        return await service.create_company_benefit(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.patch("/check/company-benefits/{benefit_id}", summary="Update Check company benefit")
+async def update_hq_check_company_benefit(
+    benefit_id: str,
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Update a Check company benefit."""
+    try:
+        return await service.update_company_benefit(benefit_id, payload)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.delete("/check/company-benefits/{benefit_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None, summary="Delete Check company benefit")
+async def delete_hq_check_company_benefit(
+    benefit_id: str,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+):
+    """Delete a Check company benefit."""
+    try:
+        await service.delete_company_benefit(benefit_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ==================== Check Contractors Endpoints ====================
+
+
+@router.get("/check/contractors", summary="List Check contractors")
+async def list_hq_check_contractors(
+    page: int = 1,
+    per_page: int = 50,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> List[dict]:
+    """List Check contractors."""
+    try:
+        return await service.list_contractors(page=page, per_page=per_page)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+@router.post("/check/contractors", status_code=status.HTTP_201_CREATED, summary="Create Check contractor")
+async def create_hq_check_contractor(
+    payload: dict,
+    _: HQEmployee = Depends(get_current_hq_employee),
+    service: CheckService = Depends(_get_hq_check_service),
+) -> dict:
+    """Create a Check contractor."""
+    try:
+        return await service.create_contractor(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+
+
+# ============================================================================
+# IT Operations Endpoints
+# ============================================================================
+
+from app.schemas.hq_it_operations import (
+    FeatureFlagCreate,
+    FeatureFlagUpdate,
+    FeatureFlagResponse,
+    ServiceHealthCreate,
+    ServiceHealthUpdate,
+    ServiceHealthResponse,
+    ServiceHealthCheckResult,
+    DeploymentCreate,
+    DeploymentResponse,
+    BackgroundJobResponse,
+    ITOperationsDashboard,
+)
+from app.services.hq_it_operations import (
+    HQFeatureFlagService,
+    HQServiceHealthService,
+    HQDeploymentService,
+    HQBackgroundJobService,
+    HQITOperationsService,
+)
+
+
+@router.get("/it-ops/dashboard", response_model=ITOperationsDashboard)
+async def get_it_operations_dashboard(
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get IT Operations dashboard summary."""
+    service = HQITOperationsService(db)
+    return await service.get_dashboard()
+
+
+# Feature Flags
+@router.get("/it-ops/feature-flags", response_model=List[FeatureFlagResponse])
+async def list_feature_flags(
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all feature flags."""
+    service = HQFeatureFlagService(db)
+    flags = await service.list_flags()
+    return [FeatureFlagResponse.model_validate(f, from_attributes=True) for f in flags]
+
+
+@router.post("/it-ops/feature-flags", response_model=FeatureFlagResponse, status_code=status.HTTP_201_CREATED)
+async def create_feature_flag(
+    data: FeatureFlagCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new feature flag."""
+    service = HQFeatureFlagService(db)
+
+    # Check if key already exists
+    existing = await service.get_flag_by_key(data.key)
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feature flag key already exists")
+
+    flag = await service.create_flag(
+        data,
+        created_by_id=current_employee.id,
+        created_by_name=f"{current_employee.first_name} {current_employee.last_name}",
+    )
+    return FeatureFlagResponse.model_validate(flag, from_attributes=True)
+
+
+@router.put("/it-ops/feature-flags/{flag_id}", response_model=FeatureFlagResponse)
+async def update_feature_flag(
+    flag_id: str,
+    data: FeatureFlagUpdate,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a feature flag."""
+    service = HQFeatureFlagService(db)
+    flag = await service.update_flag(flag_id, data)
+    if not flag:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found")
+    return FeatureFlagResponse.model_validate(flag, from_attributes=True)
+
+
+@router.post("/it-ops/feature-flags/{flag_id}/toggle", response_model=FeatureFlagResponse)
+async def toggle_feature_flag(
+    flag_id: str,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle a feature flag on/off."""
+    service = HQFeatureFlagService(db)
+    flag = await service.toggle_flag(flag_id)
+    if not flag:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found")
+    return FeatureFlagResponse.model_validate(flag, from_attributes=True)
+
+
+@router.delete("/it-ops/feature-flags/{flag_id}")
+async def delete_feature_flag(
+    flag_id: str,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a feature flag."""
+    service = HQFeatureFlagService(db)
+    deleted = await service.delete_flag(flag_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found")
+    return {"status": "deleted"}
+
+
+# Service Health
+@router.get("/it-ops/services", response_model=List[ServiceHealthResponse])
+async def list_services(
+    include_inactive: bool = False,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all monitored services."""
+    service = HQServiceHealthService(db)
+    services = await service.list_services(include_inactive=include_inactive)
+    return [ServiceHealthResponse.model_validate(s, from_attributes=True) for s in services]
+
+
+@router.post("/it-ops/services", response_model=ServiceHealthResponse, status_code=status.HTTP_201_CREATED)
+async def create_service(
+    data: ServiceHealthCreate,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a new service to monitor."""
+    service = HQServiceHealthService(db)
+    new_service = await service.create_service(data)
+    return ServiceHealthResponse.model_validate(new_service, from_attributes=True)
+
+
+@router.post("/it-ops/services/check-all", response_model=List[ServiceHealthCheckResult])
+async def check_all_services(
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Perform health check on all active services."""
+    service = HQServiceHealthService(db)
+    return await service.check_all_services()
+
+
+@router.post("/it-ops/services/{service_id}/check", response_model=ServiceHealthCheckResult)
+async def check_service(
+    service_id: str,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Perform health check on a specific service."""
+    health_service = HQServiceHealthService(db)
+    service = await health_service.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    return await health_service.check_service_health(service)
+
+
+@router.post("/it-ops/services/seed")
+async def seed_default_services(
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Seed default services (Core API, database, etc.)."""
+    service = HQServiceHealthService(db)
+    await service.seed_default_services()
+    return {"status": "seeded"}
+
+
+# Deployments
+@router.get("/it-ops/deployments", response_model=List[DeploymentResponse])
+async def list_deployments(
+    environment: Optional[str] = None,
+    limit: int = 50,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List deployment history."""
+    service = HQDeploymentService(db)
+    deployments = await service.list_deployments(environment=environment, limit=limit)
+    return [DeploymentResponse.model_validate(d, from_attributes=True) for d in deployments]
+
+
+@router.post("/it-ops/deployments", response_model=DeploymentResponse, status_code=status.HTTP_201_CREATED)
+async def create_deployment(
+    data: DeploymentCreate,
+    current_employee: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a new deployment."""
+    service = HQDeploymentService(db)
+    deployment = await service.create_deployment(
+        data,
+        deployed_by_id=current_employee.id,
+        deployed_by_name=f"{current_employee.first_name} {current_employee.last_name}",
+    )
+    return DeploymentResponse.model_validate(deployment, from_attributes=True)
+
+
+@router.post("/it-ops/deployments/{deployment_id}/complete", response_model=DeploymentResponse)
+async def complete_deployment(
+    deployment_id: str,
+    success: bool = True,
+    error_message: Optional[str] = None,
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a deployment as completed."""
+    service = HQDeploymentService(db)
+    deployment = await service.complete_deployment(deployment_id, success, error_message)
+    if not deployment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    return DeploymentResponse.model_validate(deployment, from_attributes=True)
+
+
+@router.post("/it-ops/deployments/{deployment_id}/rollback", response_model=DeploymentResponse)
+async def rollback_deployment(
+    deployment_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("system_admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Initiate a rollback to a previous deployment."""
+    service = HQDeploymentService(db)
+    deployment = await service.rollback_deployment(
+        deployment_id,
+        rolled_back_by_id=current_employee.id,
+        rolled_back_by_name=f"{current_employee.first_name} {current_employee.last_name}",
+    )
+    if not deployment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    return DeploymentResponse.model_validate(deployment, from_attributes=True)
+
+
+# Background Jobs
+@router.get("/it-ops/jobs", response_model=List[BackgroundJobResponse])
+async def list_background_jobs(
+    _: HQEmployee = Depends(require_hq_permission("system_admin")),
+):
+    """List background jobs from the scheduler."""
+    return HQBackgroundJobService.get_jobs()
