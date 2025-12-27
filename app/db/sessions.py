@@ -1,28 +1,30 @@
-# app/db/session.py
-"""
-Database session configuration for FreightOps Backend.
-Handles async database connections to Neon PostgreSQL.
-"""
+# /app/app/db/session.py
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+import os
+from typing import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+# Database URL - adjust based on your configuration
+# Common patterns:
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql+asyncpg://user:password@localhost/dbname"
+)
 
-# Your Neon PostgreSQL connection URL
-DATABASE_URL = "postgresql+psycopg://neondb_owner:npg_5uN2QZBeqpKo@ep-purple-moon-ahj5tx9w-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=prefer&connect_timeout=10"
+# For SQLite (development/testing):
+# DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
-# Create the async engine
+# Create async engine
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,  # Shows SQL queries in logs (set to False in production)
+    echo=True,  # Set to False in production
     future=True,
-    pool_size=10,  # Connection pool size
-    max_overflow=20,  # Max overflow connections
-    pool_pre_ping=True,  # Verify connections before using
-    pool_recycle=3600,  # Recycle connections after 1 hour
+    pool_pre_ping=True,  # Optional: verify connections are alive
+    pool_recycle=300,    # Optional: recycle connections after 5 minutes
 )
 
 # Create async session factory
-AsyncSessionLocal = sessionmaker(
+AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
@@ -30,19 +32,23 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
 )
 
-async def get_async_session() -> AsyncSession:
+# Dependency to get database session
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency function to get a database session.
+    Dependency function that yields db sessions.
     Used in FastAPI route dependencies.
-    
-    Example usage in routes:
-    @router.get("/items")
-    async def get_items(db: AsyncSession = Depends(get_async_session)):
-        # Use db session here
-        pass
     """
     async with AsyncSessionLocal() as session:
         try:
             yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
+
+# Base class for models (optional but recommended)
+# If you have this in another file (like database.py), import it instead
+# from .database import Base
+Base = declarative_base()
