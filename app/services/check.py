@@ -129,6 +129,10 @@ class CheckService:
         """Delete an employee."""
         await self._request("DELETE", f"/employees/{employee_id}")
 
+    async def get_employee_onboarding_link(self, employee_id: str) -> dict:
+        """Get onboarding link for an employee."""
+        return await self._request("POST", f"/employees/{employee_id}/onboarding_link")
+
     # ==================== Payroll Endpoints ====================
 
     async def list_payrolls(self, page: int = 1, per_page: int = 50) -> List[dict]:
