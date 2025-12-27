@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status, Query
-from app.db.session import get_async_session
 from pydantic import BaseModel
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
