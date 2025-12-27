@@ -216,20 +216,20 @@ class HQPresenceService:
                     record.last_activity_at,
                 ))
 
-# Now process updates with async calls
-changed: List[PresenceState] = []
-for record, new_status, employee_id, away_message, last_activity_at in to_update:
-    record.status = new_status
-    employee_name = await self._get_employee_name(employee_id)
-    # Use current time instead of trying to get updated_at
-    changed.append(PresenceState(
-        user_id=employee_id,
-        user_name=employee_name,
-        status=new_status,
-        away_message=away_message,
-        last_seen_at=datetime.utcnow(),  # FIX: Use current time
-        last_activity_at=last_activity_at,
-    ))
+        # Now process updates with async calls
+        changed: List[PresenceState] = []
+        for record, new_status, employee_id, away_message, last_activity_at in to_update:
+            record.status = new_status
+            employee_name = await self._get_employee_name(employee_id)
+            # Use current time instead of trying to get updated_at
+            changed.append(PresenceState(
+                user_id=employee_id,
+                user_name=employee_name,
+                status=new_status,
+                away_message=away_message,
+                last_seen_at=datetime.utcnow(),  # FIX: Use current time
+                last_activity_at=last_activity_at,
+            ))
 
         if changed:
             await self.db.commit()
