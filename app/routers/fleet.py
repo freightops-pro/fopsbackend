@@ -108,6 +108,23 @@ async def update_driver_profile(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+@router.patch(
+    "/users/{user_id}/driver-profile",
+    response_model=DriverComplianceProfileResponse,
+)
+async def update_driver_profile_by_user_id(
+    user_id: str,
+    payload: DriverProfileUpdate,
+    company_id: str = Depends(_company_id),
+    service: DriverService = Depends(_driver_service),
+) -> DriverComplianceProfileResponse:
+    """Update driver profile information by user_id, creating Driver record if needed."""
+    try:
+        return await service.update_driver_profile_by_user_id(company_id, user_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
 @router.get(
     "/drivers/{driver_id}/user-access",
     response_model=UserAccessInfo,
@@ -152,6 +169,22 @@ async def activate_driver_user_access(
     """Activate user access for a driver."""
     try:
         return await service.activate_user_access(company_id, driver_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post(
+    "/users/{user_id}/activate-access",
+    response_model=UserAccessActionResponse,
+)
+async def activate_user_access_by_user_id(
+    user_id: str,
+    company_id: str = Depends(_company_id),
+    service: DriverService = Depends(_driver_service),
+) -> UserAccessActionResponse:
+    """Activate user access for a user, creating a Driver record if needed."""
+    try:
+        return await service.activate_user_access_by_user_id(company_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 

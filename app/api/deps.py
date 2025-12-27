@@ -42,6 +42,29 @@ async def get_current_user(
     return result
 
 
+async def get_current_company(
+    current_user: User = Depends(get_current_user),
+) -> str:
+    """
+    FastAPI dependency that extracts company_id from the current user.
+    
+    This ensures all endpoints using this dependency have access to the
+    authenticated user's company_id for proper tenant isolation.
+    
+    Usage:
+        @router.get("/items")
+        async def list_items(company_id: str = Depends(get_current_company)):
+            # company_id is guaranteed to be from authenticated user
+            ...
+    """
+    if not current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a company"
+        )
+    return current_user.company_id
+
+
 def build_user_response(user: User) -> UserResponse:
     return UserResponse.model_validate(
         {

@@ -83,13 +83,19 @@ async def get_role(
     db: AsyncSession = Depends(get_db),
 ) -> RoleWithPermissionsResponse:
     """Get a role with its permissions."""
-    role = await db.get(Role, role_id)
+    # Filter by company_id in the query to prevent data leakage
+    result = await db.execute(
+        select(Role).where(
+            Role.id == role_id,
+            (
+                (Role.company_id == None) |  # System roles
+                (Role.company_id == current_user.company_id)  # Tenant's custom roles
+            )
+        )
+    )
+    role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-
-    # Check access (system roles or tenant's custom roles)
-    if role.company_id and role.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Get permissions for this role
     result = await db.execute(
@@ -151,12 +157,16 @@ async def get_user_roles(
     db: AsyncSession = Depends(get_db),
 ) -> List[RoleResponse]:
     """Get all roles assigned to a user."""
-    # Check user belongs to same company
-    user = await db.get(User, user_id)
+    # Filter by company_id in the query to prevent data leakage
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.company_id == current_user.company_id
+        )
+    )
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if user.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     result = await db.execute(
         select(Role)
@@ -237,19 +247,30 @@ async def assign_role_to_user(
     db: AsyncSession = Depends(get_db),
 ):
     """Assign a role to a user."""
-    # Check user belongs to same company
-    user = await db.get(User, user_id)
+    # Filter by company_id in the query to prevent data leakage
+    user_result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.company_id == current_user.company_id
+        )
+    )
+    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if user.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Check role exists and is accessible
-    role = await db.get(Role, role_id)
+    # Check role exists and is accessible (system roles or tenant's custom roles)
+    role_result = await db.execute(
+        select(Role).where(
+            Role.id == role_id,
+            (
+                (Role.company_id == None) |  # System roles
+                (Role.company_id == current_user.company_id)  # Tenant's custom roles
+            )
+        )
+    )
+    role = role_result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    if role.company_id and role.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to role")
     if not role.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Role is inactive")
 
@@ -291,15 +312,28 @@ async def remove_role_from_user(
     db: AsyncSession = Depends(get_db),
 ):
     """Remove a role from a user."""
-    # Check user belongs to same company
-    user = await db.get(User, user_id)
+    # Filter by company_id in the query to prevent data leakage
+    user_result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.company_id == current_user.company_id
+        )
+    )
+    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    if user.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Prevent removing own TENANT_ADMIN role
-    role = await db.get(Role, role_id)
+    role_result = await db.execute(
+        select(Role).where(
+            Role.id == role_id,
+            (
+                (Role.company_id == None) |  # System roles
+                (Role.company_id == current_user.company_id)  # Tenant's custom roles
+            )
+        )
+    )
+    role = role_result.scalar_one_or_none()
     if role and role.name == "TENANT_ADMIN" and user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -395,18 +429,23 @@ async def update_role(
     db: AsyncSession = Depends(get_db),
 ) -> RoleResponse:
     """Update a custom role. System roles cannot be modified."""
-    role = await db.get(Role, role_id)
+    # Filter by company_id in the query to prevent data leakage
+    result = await db.execute(
+        select(Role).where(
+            Role.id == role_id,
+            Role.company_id == current_user.company_id  # Only tenant's custom roles
+        )
+    )
+    role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-    # Can only modify tenant's own custom roles
+    # Can only modify tenant's own custom roles (system roles have company_id=None)
     if role.is_system_role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System roles cannot be modified"
         )
-    if role.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Update fields
     if payload.display_name is not None:
@@ -458,7 +497,14 @@ async def delete_role(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a custom role. System roles cannot be deleted."""
-    role = await db.get(Role, role_id)
+    # Filter by company_id in the query to prevent data leakage
+    result = await db.execute(
+        select(Role).where(
+            Role.id == role_id,
+            Role.company_id == current_user.company_id  # Only tenant's custom roles
+        )
+    )
+    role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
@@ -467,8 +513,6 @@ async def delete_role(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System roles cannot be deleted"
         )
-    if role.company_id != current_user.company_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # Check if role is assigned to any users
     result = await db.execute(

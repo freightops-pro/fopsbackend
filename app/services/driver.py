@@ -658,6 +658,19 @@ class DriverService:
 
         return await self._build_profile(driver)
 
+    async def update_driver_profile_by_user_id(
+        self,
+        company_id: str,
+        user_id: str,
+        payload: DriverProfileUpdate,
+    ) -> DriverComplianceProfileResponse:
+        """Update driver profile information by user_id, creating Driver record if needed."""
+        # Get or create driver for user
+        driver = await self.get_or_create_driver_for_user(company_id, user_id)
+        
+        # Now use the regular update method with the driver_id
+        return await self.update_driver_profile(company_id, driver.id, payload)
+
     async def get_user_access(self, company_id: str, driver_id: str) -> UserAccessInfo:
         """Get user access information for a driver."""
         driver = await self._get_driver(company_id, driver_id)
@@ -702,6 +715,64 @@ class DriverService:
             success=True, message=f"User access suspended for {user.email}"
         )
 
+    async def get_or_create_driver_for_user(self, company_id: str, user_id: str) -> Driver:
+        """Get or create a Driver record for a User if it doesn't exist."""
+        # First, try to find existing driver by user_id
+        result = await self.db.execute(
+            select(Driver).where(Driver.company_id == company_id, Driver.user_id == user_id)
+        )
+        driver = result.scalar_one_or_none()
+        
+        if driver:
+            return driver
+        
+        # Driver doesn't exist, get user to create driver
+        user_result = await self.db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            raise ValueError("User not found")
+        
+        if user.company_id != company_id:
+            raise ValueError("User does not belong to this company")
+        
+        # Create a minimal Driver record linked to the user
+        driver_id = str(uuid.uuid4())
+        
+        # Create Worker record first (drivers are workers in the payroll system)
+        worker_id = str(uuid.uuid4())
+        worker = Worker(
+            id=worker_id,
+            company_id=company_id,
+            type=WorkerType.EMPLOYEE,  # Default to employee, can be updated later
+            role=WorkerRole.DRIVER,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            email=user.email,
+            phone=None,
+            status=WorkerStatus.ACTIVE,
+        )
+        self.db.add(worker)
+        await self.db.flush()
+        
+        # Create driver record with minimal data
+        driver = Driver(
+            id=driver_id,
+            company_id=company_id,
+            user_id=user_id,
+            worker_id=worker_id,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            email=user.email,
+            phone=None,
+            profile_metadata={"status": "ACTIVE"},
+        )
+        self.db.add(driver)
+        await self.db.commit()
+        await self.db.refresh(driver)
+        
+        return driver
+
     async def activate_user_access(self, company_id: str, driver_id: str) -> UserAccessActionResponse:
         """Activate user access for a driver."""
         driver = await self._get_driver(company_id, driver_id)
@@ -720,6 +791,29 @@ class DriverService:
 
         return UserAccessActionResponse(
             success=True, message=f"User access activated for {user.email}"
+        )
+    
+    async def activate_user_access_by_user_id(self, company_id: str, user_id: str) -> UserAccessActionResponse:
+        """Activate user access for a user, creating a Driver record if needed."""
+        # Get or create driver for user
+        driver = await self.get_or_create_driver_for_user(company_id, user_id)
+        
+        # Verify user exists and is in the same company
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise ValueError("User account not found")
+        
+        if user.company_id != company_id:
+            raise ValueError("User does not belong to this company")
+
+        user.is_active = True
+        await self.db.commit()
+
+        return UserAccessActionResponse(
+            success=True, 
+            message=f"User access activated for {user.email}. Driver record created if it didn't exist."
         )
 
     async def send_password_reset_email(
