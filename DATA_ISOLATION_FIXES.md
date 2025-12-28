@@ -207,3 +207,4 @@ Consider adding database-level constraints to prevent accidental cross-tenant da
 - **HQ routes**: Routes under `/hq` are for platform administrators and may intentionally access cross-tenant data
 - **System roles**: Roles with `company_id=NULL` are system roles accessible to all tenants
 
+

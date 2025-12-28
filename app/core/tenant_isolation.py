@@ -90,3 +90,4 @@ async def verify_entity_belongs_to_company(
     result = await db.execute(query)
     return result.scalar_one_or_none() is not None
 
+

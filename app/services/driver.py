@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import secrets
 import string
 import uuid
@@ -12,8 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
-
-logger = logging.getLogger(__name__)
 from app.models.driver import Driver, DriverDocument, DriverIncident, DriverTraining
 from app.models.user import User
 from app.models.worker import Worker, WorkerType, WorkerRole, WorkerStatus
@@ -483,9 +480,6 @@ class DriverService:
             # Generate temporary password
             temporary_password = self._generate_temporary_password()
 
-            # Generate email verification token for driver accounts
-            verification_token = secrets.token_urlsafe(32)
-
             # Create user account
             user = User(
                 id=str(uuid.uuid4()),
@@ -497,9 +491,6 @@ class DriverService:
                 role="driver",
                 is_active=True,
                 must_change_password=True,  # Force password change on first login
-                email_verified=True,  # Drivers created by admins are pre-verified
-                email_verification_token=verification_token,  # Set token for consistency
-                email_verification_sent_at=datetime.utcnow(),
             )
             self.db.add(user)
             await self.db.flush()
@@ -509,18 +500,15 @@ class DriverService:
             driver.user_id = user_id
 
             # Send invitation email with credentials
-            email_sent = False
             try:
-                email_sent = EmailService.send_driver_invitation(
+                EmailService.send_driver_invitation(
                     email=email_lower,
                     first_name=payload.firstName,
                     last_name=payload.lastName,
                     temporary_password=temporary_password,
                 )
-                if not email_sent:
-                    logger.warning(f"Email service returned False for {email_lower}")
             except Exception as e:
-                logger.error(f"Failed to send invitation email to {email_lower}: {e}", exc_info=True)
+                print(f"Warning: Failed to send invitation email to {email_lower}: {e}")
 
         self.db.add(driver)
         await self.db.commit()
@@ -583,7 +571,6 @@ class DriverService:
                 if not existing_user:
                     # Auto-create user account when email is added
                     temporary_password = self._generate_temporary_password()
-                    verification_token = secrets.token_urlsafe(32)
 
                     user = User(
                         id=str(uuid.uuid4()),
@@ -595,9 +582,6 @@ class DriverService:
                         role="driver",
                         is_active=True,
                         must_change_password=True,  # Force password change on first login
-                        email_verified=True,  # Drivers created by admins are pre-verified
-                        email_verification_token=verification_token,
-                        email_verification_sent_at=datetime.utcnow(),
                     )
                     self.db.add(user)
                     await self.db.flush()
@@ -606,18 +590,15 @@ class DriverService:
                     driver.user_id = user.id
 
                     # Send invitation email with credentials
-                    email_sent = False
                     try:
-                        email_sent = EmailService.send_driver_invitation(
+                        EmailService.send_driver_invitation(
                             email=email_lower,
                             first_name=driver.first_name,
                             last_name=driver.last_name,
                             temporary_password=temporary_password,
                         )
-                        if not email_sent:
-                            logger.warning(f"Email service returned False for {email_lower}")
                     except Exception as e:
-                        logger.error(f"Failed to send invitation email to {email_lower}: {e}", exc_info=True)
+                        print(f"Warning: Failed to send invitation email to {email_lower}: {e}")
 
         # Update basic driver fields
         if payload.first_name is not None:
@@ -695,14 +676,29 @@ class DriverService:
         driver = await self._get_driver(company_id, driver_id)
 
         if not driver.user_id:
-            return UserAccessInfo(status="none")
+            # Return driver's email even if no user account exists yet
+            # This allows the UI to show the email in the authentication section
+            return UserAccessInfo(
+                user_id=None,
+                email=driver.email,  # Include driver's email even without user account
+                status="none",
+                last_login=None,
+                created_at=None,
+            )
 
         # Fetch user information
         result = await self.db.execute(select(User).where(User.id == driver.user_id))
         user = result.scalar_one_or_none()
 
         if not user:
-            return UserAccessInfo(status="none")
+            # User account was deleted but driver still exists
+            return UserAccessInfo(
+                user_id=None,
+                email=driver.email,  # Fallback to driver's email
+                status="none",
+                last_login=None,
+                created_at=None,
+            )
 
         status = "active" if user.is_active else "suspended"
 
@@ -905,7 +901,6 @@ class DriverService:
 
         # Generate temporary password
         temporary_password = self._generate_temporary_password()
-        verification_token = secrets.token_urlsafe(32)
 
         # Create user account
         user = User(
@@ -918,9 +913,6 @@ class DriverService:
             role="driver",
             is_active=True,
             must_change_password=True,
-            email_verified=True,  # Drivers created by admins are pre-verified
-            email_verification_token=verification_token,
-            email_verification_sent_at=datetime.utcnow(),
         )
         self.db.add(user)
         await self.db.flush()
@@ -930,18 +922,15 @@ class DriverService:
         await self.db.commit()
 
         # Send invitation email with credentials
-        email_sent = False
         try:
-            email_sent = EmailService.send_driver_invitation(
+            EmailService.send_driver_invitation(
                 email=email_lower,
                 first_name=driver.first_name,
                 last_name=driver.last_name,
                 temporary_password=temporary_password,
             )
-            if not email_sent:
-                logger.warning(f"Email service returned False for {email_lower}")
         except Exception as e:
-            logger.error(f"Failed to send invitation email to {email_lower}: {e}", exc_info=True)
+            print(f"Warning: Failed to send invitation email to {email_lower}: {e}")
 
         return GeneratePasswordResponse(
             temporary_password=temporary_password,
