@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import secrets
 import string
 import uuid
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
+
+logger = logging.getLogger(__name__)
 from app.models.driver import Driver, DriverDocument, DriverIncident, DriverTraining
 from app.models.user import User
 from app.models.worker import Worker, WorkerType, WorkerRole, WorkerStatus
@@ -834,7 +838,9 @@ class DriverService:
     async def send_password_reset_email(
         self, company_id: str, driver_id: str
     ) -> UserAccessActionResponse:
-        """Send password reset email (stub for now)."""
+        """Send password reset email to driver."""
+        from app.core.config import get_settings
+        
         driver = await self._get_driver(company_id, driver_id)
 
         if not driver.user_id:
@@ -846,12 +852,33 @@ class DriverService:
         if not user:
             raise ValueError("User account not found")
 
-        # TODO: Implement actual email sending logic
-        # For now, just return success
-        return UserAccessActionResponse(
-            success=True,
-            message=f"Password reset email would be sent to {user.email} (not implemented)",
-        )
+        # Generate password reset token
+        reset_token = secrets.token_urlsafe(32)
+        # Store in email_verification_token temporarily (reusing existing field)
+        user.email_verification_token = f"reset:{reset_token}"
+        user.email_verification_sent_at = datetime.utcnow()
+        await self.db.commit()
+
+        # Get frontend URL from settings or environment
+        settings = get_settings()
+        frontend_url = os.getenv("APP_BASE_URL", "https://app.freightopspro.com")
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
+
+        # Send password reset email
+        try:
+            EmailService.send_password_reset(user.email, reset_link)
+            
+            return UserAccessActionResponse(
+                success=True,
+                message=f"Password reset email sent to {user.email}",
+            )
+        except Exception as e:
+            logger.error(f"Failed to send password reset email: {e}")
+            # Still return success since token was generated
+            return UserAccessActionResponse(
+                success=True,
+                message=f"Password reset link generated. Email sending failed: {str(e)}",
+            )
 
     async def generate_new_password(
         self, company_id: str, driver_id: str
