@@ -33,6 +33,9 @@ class Driver(Base):
     worker = relationship("Worker", foreign_keys=[worker_id], backref="driver_profile")
     incidents = relationship("DriverIncident", back_populates="driver", cascade="all, delete-orphan")
     training_records = relationship("DriverTraining", back_populates="driver", cascade="all, delete-orphan")
+    
+    # ADD THIS: Relationship to User
+    user = relationship("User", back_populates="driver", foreign_keys=[user_id])
 
 
 class DriverIncident(Base):
@@ -70,4 +73,3 @@ class DriverDocument(Base):
     uploaded_at = Column(DateTime, nullable=False, server_default=func.now())
 
     driver = relationship("Driver")
-
