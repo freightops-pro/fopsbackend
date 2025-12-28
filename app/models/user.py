@@ -49,4 +49,11 @@ class User(Base):
         foreign_keys="UserRole.user_id",
         cascade="all, delete-orphan"
     )
-
+    
+    # ADD THIS: Relationship to Driver (one-to-one)
+    driver = relationship(
+        "Driver", 
+        back_populates="user", 
+        uselist=False, 
+        foreign_keys="Driver.user_id"
+    )
