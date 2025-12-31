@@ -331,8 +331,10 @@ class LoadService:
         # Update assignment
         if driver_id:
             metadata["assigned_driver_id"] = driver_id
+            load.driver_id = driver_id  # Set on model for driver app queries
         if truck_id:
             metadata["assigned_truck_id"] = truck_id
+            load.truck_id = truck_id  # Set on model for queries
 
         load.metadata_json = metadata
 
