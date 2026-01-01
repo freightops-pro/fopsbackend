@@ -378,7 +378,7 @@ class LLMRouter:
         """Generate using Google Gemini (reliable fallback)."""
         # Use Gemini 1.5 Flash Latest for reliable fallback
         model = self.gemini.GenerativeModel(
-            model_name="gemini-1.5-flash-latest",
+            model_name="gemini-2.0-flash-exp",
             system_instruction=system_prompt if system_prompt else None,
             generation_config={
                 "temperature": temperature,
@@ -400,7 +400,7 @@ class LLMRouter:
         total_tokens = input_tokens + output_tokens
 
         return content, {
-            "model": "gemini-1.5-flash-latest",
+            "model": "gemini-2.0-flash-exp",
             "provider": "gemini",
             "tokens_used": total_tokens,
             "input_tokens": input_tokens,

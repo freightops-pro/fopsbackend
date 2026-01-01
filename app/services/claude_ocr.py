@@ -7,7 +7,7 @@ import os
 from typing import Tuple
 
 import pdfplumber
-from pdf2image import convert_from_bytes
+import fitz  # PyMuPDF - no external dependencies like poppler
 
 
 class ClaudeOCRService:
@@ -81,29 +81,40 @@ class ClaudeOCRService:
                 # Text-based extraction failed - this is the real error we want to see
                 raise ValueError(f"Text-based AI extraction failed: {str(e)}")
 
-        # No extractable text found - need image extraction which requires poppler
-        print("[INFO] No extractable text found in PDF - requires image conversion (poppler)")
+        # No extractable text found - this is a scanned/image-based PDF
+        print("[INFO] No extractable text found in PDF - attempting image-based AI extraction")
         try:
             image_data = await self._prepare_document(file_bytes, filename)
             parsed_data, confidence = await self._call_claude_api(image_data, prompt)
             return parsed_data, confidence, raw_text
         except Exception as e:
-            raise ValueError(f"Image extraction failed: {str(e)}. Install poppler for image-based PDFs.")
+            raise ValueError(f"Image-based extraction failed: {str(e)}. The PDF may be corrupted or in an unsupported format.")
 
     async def _prepare_document(self, file_bytes: bytes, filename: str) -> str:
-        """Convert document to base64-encoded image for Claude."""
+        """Convert document to base64-encoded image for AI vision processing."""
         lower_filename = filename.lower()
 
         if lower_filename.endswith(".pdf"):
-            # Convert PDF first page to image
+            # Convert PDF first page to image using PyMuPDF (no poppler required)
             try:
-                images = convert_from_bytes(file_bytes, first_page=1, last_page=1, dpi=200)
-                if images:
-                    # Convert PIL Image to bytes
-                    img_byte_arr = io.BytesIO()
-                    images[0].save(img_byte_arr, format='PNG')
-                    img_bytes = img_byte_arr.getvalue()
-                    return base64.standard_b64encode(img_bytes).decode('utf-8')
+                # Open PDF with PyMuPDF
+                pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
+
+                if pdf_document.page_count == 0:
+                    raise ValueError("PDF has no pages")
+
+                # Get first page
+                page = pdf_document[0]
+
+                # Render page to image (matrix for 200 DPI: 200/72 = 2.78)
+                mat = fitz.Matrix(2.78, 2.78)
+                pix = page.get_pixmap(matrix=mat)
+
+                # Convert to PNG bytes
+                img_bytes = pix.tobytes("png")
+                pdf_document.close()
+
+                return base64.standard_b64encode(img_bytes).decode('utf-8')
             except Exception as e:
                 raise ValueError(f"Failed to convert PDF to image: {str(e)}")
 

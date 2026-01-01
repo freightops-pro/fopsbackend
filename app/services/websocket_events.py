@@ -251,6 +251,10 @@ def register_websocket_handlers() -> None:
     # Message events
     subscribe(EventType.MESSAGE_SENT, handle_message_event)
 
+    # Notification events
+    subscribe(EventType.NOTIFICATION_CREATED, handle_notification_event)
+    subscribe(EventType.NOTIFICATION_BROADCAST, handle_notification_event)
+
     logger.info("WebSocket event handlers registered")
 
 
@@ -284,3 +288,33 @@ async def handle_message_event(event: Event) -> None:
     if company_id:
         await manager.send_company_message(message, company_id)
         logger.debug(f"Broadcast chat message to company {company_id}")
+
+
+async def handle_notification_event(event: Event) -> None:
+    """Handle notification events - push to users via WebSocket."""
+    data = event.data
+    user_id = event.target_user_id or data.get("user_id")
+    company_id = event.company_id or data.get("company_id")
+
+    message = {
+        "type": "notification",
+        "data": {
+            "id": data.get("id"),
+            "type": data.get("notification_type"),
+            "title": data.get("title"),
+            "message": data.get("message"),
+            "link": data.get("link"),
+            "priority": data.get("priority", "normal"),
+            "created_at": data.get("created_at"),
+            "timestamp": event.timestamp,
+        }
+    }
+
+    # If targeted to specific user, send directly to them
+    if user_id:
+        await manager.send_personal_message(message, user_id)
+        logger.debug(f"Sent notification to user {user_id}")
+    # If broadcast (no specific user), send to all company users
+    elif company_id:
+        await manager.send_company_message(message, company_id)
+        logger.debug(f"Broadcast notification to company {company_id}")

@@ -64,6 +64,10 @@ class EventType(str, Enum):
     MESSAGE_RECEIVED = "message.received"
     CHANNEL_CREATED = "channel.created"
 
+    # Notification events
+    NOTIFICATION_CREATED = "notification.created"
+    NOTIFICATION_BROADCAST = "notification.broadcast"
+
 
 @dataclass
 class Event:

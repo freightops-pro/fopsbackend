@@ -5,7 +5,9 @@ from app.models.company import Company  # noqa: F401
 from app.models.driver import Driver, DriverIncident, DriverTraining, DriverDocument  # noqa: F401
 from app.models.fuel import FuelTransaction, JurisdictionRollup  # noqa: F401
 from app.models.notification import NotificationLog  # noqa: F401
+from app.models.user_notification import UserNotification  # noqa: F401
 from app.models.load import Load, LoadStop  # noqa: F401
+from app.models.location import Location  # noqa: F401
 from app.models.accounting import Customer, Invoice, LedgerEntry, Settlement  # noqa: F401
 from app.models.banking import BankingAccount, BankingCard, BankingCustomer, BankingTransaction  # noqa: F401
 from app.models.collaboration import Channel, Message, Presence  # noqa: F401

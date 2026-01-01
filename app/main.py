@@ -4,6 +4,10 @@ import sys
 import os
 import uuid
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Apply bcrypt patch for passlib compatibility BEFORE importing auth modules
 import app.core  # noqa: F401 - triggers bcrypt patch
 

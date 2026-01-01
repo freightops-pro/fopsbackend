@@ -553,17 +553,20 @@ manage pickup/delivery workflows, and handle check calls autonomously."""
             except Exception as e:
                 raw_text = f"PDF text extraction failed: {e}"
 
-            # Convert PDF to image for vision
+            # Convert PDF to image for vision using PyMuPDF (no poppler required)
             try:
-                from pdf2image import convert_from_bytes
-                images = convert_from_bytes(file_bytes, first_page=1, last_page=1, dpi=150)
-                if images:
-                    img_buffer = io.BytesIO()
-                    images[0].save(img_buffer, format='PNG')
-                    image_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+                import fitz  # PyMuPDF
+                pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
+                if pdf_document.page_count > 0:
+                    page = pdf_document[0]
+                    mat = fitz.Matrix(2.08, 2.08)  # 150 DPI: 150/72 = 2.08
+                    pix = page.get_pixmap(matrix=mat)
+                    img_bytes = pix.tobytes("png")
+                    pdf_document.close()
+                    image_base64 = base64.b64encode(img_bytes).decode('utf-8')
                     return f"data:image/png;base64,{image_base64}", raw_text
-            except ImportError:
-                # pdf2image not available, fall back to text-only
+            except Exception as e:
+                # PDF to image conversion failed, fall back to text-only
                 # If we have text, we can still process without image
                 if raw_text and not raw_text.startswith("PDF"):
                     return None, raw_text

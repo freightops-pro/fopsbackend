@@ -32,6 +32,7 @@ from app.routers import (
     integrations,
     invitations,
     loads,
+    locations,
     onboarding,
     payroll,
     ports,
@@ -40,6 +41,7 @@ from app.routers import (
     settlements,
     tenant,
     usage_ledger,
+    user_notifications,
     webhooks,
     websocket,
     wex,
@@ -53,6 +55,7 @@ api_router.include_router(automation.router, prefix="/automation", tags=["Automa
 api_router.include_router(company.router, tags=["Companies"])
 api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"])
 api_router.include_router(loads.router, prefix="/dispatch/loads", tags=["Dispatch"])  # Mount loads under dispatch
+api_router.include_router(locations.router, prefix="/locations", tags=["Locations"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(ai_usage.router, prefix="/ai", tags=["AI Usage"])
 api_router.include_router(ai_tasks.router, prefix="/ai", tags=["AI Agents"])
@@ -93,4 +96,7 @@ api_router.include_router(dqf.router, prefix="/dqf", tags=["DQF"])
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["Audit Logs"])
 api_router.include_router(invitations.router, prefix="/invitations", tags=["User Invitations"])
 api_router.include_router(hq_admin.router, prefix="/hq-admin", tags=["HQ Platform Admin"])
+
+# Notifications
+api_router.include_router(user_notifications.router, prefix="/notifications", tags=["Notifications"])
 
