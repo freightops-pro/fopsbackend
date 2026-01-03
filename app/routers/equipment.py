@@ -52,9 +52,13 @@ async def create_equipment(
     company_id: str = Depends(_company_id),
     service: EquipmentService = Depends(_service),
 ) -> EquipmentResponse:
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[create_equipment] Received payload: {payload.model_dump() if hasattr(payload, 'model_dump') else payload}")
     try:
         return await service.create_equipment(company_id, payload)
     except ValueError as exc:
+        logger.error(f"[create_equipment] ValueError: {str(exc)}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 

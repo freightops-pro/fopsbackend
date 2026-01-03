@@ -130,6 +130,8 @@ class EquipmentService:
                 selectinload(Equipment.maintenance_events),
                 selectinload(Equipment.usage_events),
                 selectinload(Equipment.maintenance_forecasts),
+                selectinload(Equipment.permits),
+                selectinload(Equipment.insurance_policies),
             )
         )
         equipment_with_relations = result.scalar_one()
@@ -410,6 +412,8 @@ class EquipmentService:
                 selectinload(Equipment.maintenance_events),
                 selectinload(Equipment.usage_events),
                 selectinload(Equipment.maintenance_forecasts),
+                selectinload(Equipment.permits),
+                selectinload(Equipment.insurance_policies),
             )
         )
         equipment_with_relations = result.scalar_one()

@@ -61,9 +61,9 @@ class ReportingService:
         )
         equipment = list(equipment_result.scalars().all())
         
-        active_trucks = sum(1 for e in equipment if 
-                           e.equipment_type and "TRACTOR" in e.equipment_type.upper() and
-                           (e.status == "ACTIVE" or e.operational_status == "IN_SERVICE"))
+        active_trucks = sum(1 for e in equipment if
+                           e.equipment_type and ("TRACTOR" in e.equipment_type.upper() or "TRUCK" in e.equipment_type.upper()) and
+                           (e.status == "ACTIVE" or e.operational_status == "IN_SERVICE" or e.status == "AVAILABLE"))
         
         operational_trailers = sum(1 for e in equipment if
                                  e.equipment_type and "TRAILER" in e.equipment_type.upper() and

@@ -29,6 +29,7 @@ from app.routers import (
     hq,
     hq_admin,
     hr,
+    imports,
     integrations,
     invitations,
     loads,
@@ -57,6 +58,7 @@ api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"]
 api_router.include_router(loads.router, prefix="/dispatch/loads", tags=["Dispatch"])  # Mount loads under dispatch
 api_router.include_router(locations.router, prefix="/locations", tags=["Locations"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
+api_router.include_router(imports.router, prefix="/imports", tags=["Imports"])
 api_router.include_router(ai_usage.router, prefix="/ai", tags=["AI Usage"])
 api_router.include_router(ai_tasks.router, prefix="/ai", tags=["AI Agents"])
 api_router.include_router(ai_chat.router, tags=["AI Chat"])
