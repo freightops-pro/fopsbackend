@@ -11,8 +11,10 @@ load_dotenv()
 # Apply bcrypt patch for passlib compatibility BEFORE importing auth modules
 import app.core  # noqa: F401 - triggers bcrypt patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy import select
 
 from app.api.router import api_router
@@ -345,6 +347,36 @@ async def general_exception_handler(request: Request, exc: Exception):
 setup_security_middleware(app)
 
 app.include_router(api_router, prefix="/api")
+
+
+@app.get("/templates/{entity_type}", tags=["Templates"])
+async def download_public_template(entity_type: str) -> FileResponse:
+    """
+    Public endpoint for downloading CSV import templates.
+    No authentication required since templates are just format examples.
+
+    Supported entity types: drivers, equipment, loads
+    """
+    if entity_type not in ["drivers", "equipment", "loads"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid entity type: {entity_type}. Must be one of: drivers, equipment, loads",
+        )
+
+    template_dir = Path(__file__).parent.parent / "templates"
+    template_file = template_dir / f"{entity_type}_import_template.csv"
+
+    if not template_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template file not found for {entity_type}",
+        )
+
+    return FileResponse(
+        path=template_file,
+        media_type="text/csv",
+        filename=f"{entity_type}_import_template.csv",
+    )
 
 
 @app.get("/", tags=["Health"])

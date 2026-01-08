@@ -76,8 +76,12 @@ async def extract_from_rate_confirmation(
 
 
 @router.get("", response_model=List[LoadResponse])
-async def list_loads(company_id: str = Depends(_company_id), service: LoadService = Depends(_service)) -> List[LoadResponse]:
-    loads_with_expenses = await service.list_loads_with_expenses(company_id)
+async def list_loads(
+    company_id: str = Depends(_company_id),
+    service: LoadService = Depends(_service),
+    status: Optional[str] = Query(None, description="Filter loads by status (e.g., READY_TO_INVOICE, INVOICED, COMPLETED)")
+) -> List[LoadResponse]:
+    loads_with_expenses = await service.list_loads_with_expenses(company_id, status_filter=status)
     return [LoadResponse.model_validate(load) for load in loads_with_expenses]
 
 
@@ -637,12 +641,13 @@ async def update_load_status(
     request: LoadStatusUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(deps.get_current_user),
+    company_id: str = Depends(_company_id),
 ):
-    """Update load status from driver app."""
+    """Update load status. Can be used by drivers, dispatchers, or accounting staff."""
     try:
         # Get load and verify access
         load_service = LoadService(db)
-        load = await load_service.get_load(load_id)
+        load = await load_service.get_load(company_id, load_id)
 
         if not load:
             raise HTTPException(
@@ -650,12 +655,15 @@ async def update_load_status(
                 detail=f"Load {load_id} not found"
             )
 
-        # Verify driver has access to this load
-        if current_user.role == "DRIVER" and load.driver_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to this load"
-            )
+        # Verify access based on role
+        if current_user.role == "DRIVER":
+            # Drivers can only update loads assigned to them
+            if load.driver_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have access to this load"
+                )
+        # Dispatchers, accountants, and admins can update any load in their company
 
         # Update load status
         old_status = load.status
@@ -665,6 +673,8 @@ async def update_load_status(
         if request.latitude and request.longitude:
             load.last_known_lat = request.latitude
             load.last_known_lng = request.longitude
+            from datetime import datetime, timezone
+            load.last_location_update = datetime.now(timezone.utc)
 
         db.add(load)
         await db.commit()

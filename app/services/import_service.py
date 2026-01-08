@@ -1,4 +1,4 @@
-"""CSV import service for bulk data imports."""
+"""CSV and Excel import service for bulk data imports."""
 
 import csv
 import io
@@ -7,6 +7,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from openpyxl import load_workbook
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +46,145 @@ class ImportService:
         ],
     }
 
+    # Field name variations - maps alternative column names to standard names
+    FIELD_MAPPINGS = {
+        "drivers": {
+            # Name variations
+            "firstname": "first_name",
+            "first": "first_name",
+            "fname": "first_name",
+            "driver_first_name": "first_name",
+            "driver_firstname": "first_name",
+            "lastname": "last_name",
+            "last": "last_name",
+            "lname": "last_name",
+            "driver_last_name": "last_name",
+            "driver_lastname": "last_name",
+            "name": "first_name",  # If only "name" field, map to first_name
+            "full_name": "first_name",  # If full_name, map to first_name (user may need to split)
+            "driver_name": "first_name",
+            # License/CDL number variations
+            "cdl_number": "license_number",
+            "cdl": "license_number",
+            "cdl_no": "license_number",
+            "license_no": "license_number",
+            "driver_license": "license_number",
+            "dl_number": "license_number",
+            # License state variations
+            "cdl_state": "license_state",
+            "license_state_code": "license_state",
+            "dl_state": "license_state",
+            # License expiry variations
+            "cdl_expiration": "license_expiry",
+            "cdl_exp": "license_expiry",
+            "license_expiration": "license_expiry",
+            "license_exp": "license_expiry",
+            "dl_expiry": "license_expiry",
+            "dl_expiration": "license_expiry",
+            # Employment variations
+            "emp_type": "employment_type",
+            "employee_type": "employment_type",
+            "worker_type": "employment_type",
+            # Pay variations
+            "rate": "pay_rate",
+            "compensation_rate": "pay_rate",
+            "pay_per_mile": "pay_rate",
+            "rate_type": "pay_type",
+            "compensation_type": "pay_type",
+            # Date variations
+            "start_date": "hire_date",
+            "employment_start": "hire_date",
+            "hired_date": "hire_date",
+            # Contact variations
+            "phone_number": "phone",
+            "mobile": "phone",
+            "cell": "phone",
+            "telephone": "phone",
+            "contact_number": "phone",
+            "driver_phone": "phone",
+            "email_address": "email",
+            "driver_email": "email",
+            "contact_email": "email",
+            # Address variations
+            "street": "address",
+            "address_line_1": "address",
+            "street_address": "address",
+            "zip_code": "zip",
+            "postal_code": "zip",
+            "zipcode": "zip",
+        },
+        "equipment": {
+            # Equipment type variations
+            "type": "equipment_type",
+            "vehicle_type": "equipment_type",
+            "asset_type": "equipment_type",
+            # Unit number variations
+            "unit": "unit_number",
+            "unit_no": "unit_number",
+            "truck_number": "unit_number",
+            "trailer_number": "unit_number",
+            "asset_number": "unit_number",
+            # VIN variations
+            "vin_number": "vin",
+            "vehicle_identification_number": "vin",
+            # Mileage variations
+            "mileage": "current_mileage",
+            "odometer": "current_mileage",
+            "miles": "current_mileage",
+            # GPS variations
+            "gps_vendor": "gps_provider",
+            "telematics_provider": "gps_provider",
+            "gps_id": "gps_device_id",
+            "device_id": "gps_device_id",
+            "telematics_id": "gps_device_id",
+        },
+        "loads": {
+            # Customer variations
+            "customer": "customer_name",
+            "client": "customer_name",
+            "shipper": "customer_name",
+            # Pickup variations
+            "origin_city": "pickup_city",
+            "pickup_location_city": "pickup_city",
+            "origin_state": "pickup_state",
+            "pickup_location_state": "pickup_state",
+            "origin_zip": "pickup_zip",
+            "pickup_postal_code": "pickup_zip",
+            "pickup_date_time": "pickup_date",
+            "scheduled_pickup": "pickup_date",
+            "pickup_appointment": "pickup_date",
+            # Delivery variations
+            "destination_city": "delivery_city",
+            "delivery_location_city": "delivery_city",
+            "destination_state": "delivery_state",
+            "delivery_location_state": "delivery_state",
+            "destination_zip": "delivery_zip",
+            "delivery_postal_code": "delivery_zip",
+            "delivery_date_time": "delivery_date",
+            "scheduled_delivery": "delivery_date",
+            "delivery_appointment": "delivery_date",
+            # Rate variations
+            "rate": "base_rate",
+            "freight_rate": "base_rate",
+            "line_haul": "base_rate",
+            "price": "base_rate",
+            # Weight variations
+            "total_weight": "weight",
+            "gross_weight": "weight",
+            # Reference variations
+            "reference": "reference_number",
+            "ref_number": "reference_number",
+            "ref_no": "reference_number",
+            "load_number": "reference_number",
+            "pro_number": "reference_number",
+            # Notes variations
+            "notes": "special_instructions",
+            "instructions": "special_instructions",
+            "comments": "special_instructions",
+            "remarks": "special_instructions",
+        },
+    }
+
     # Schema mapping
     SCHEMAS = {
         "drivers": DriverImportRow,
@@ -54,6 +194,73 @@ class ImportService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    def validate_import(
+        self, file_bytes: bytes, filename: str, entity_type: str
+    ) -> tuple[int, int, List[ImportError], List[str], List[Dict[str, Any]]]:
+        """
+        Validate import file without actually importing.
+
+        Returns: (total_rows, valid_rows, errors, warnings, sample_data)
+        """
+        try:
+            # Parse file
+            rows = self.parse_csv(file_bytes, filename, entity_type=entity_type)
+
+            if not rows:
+                return 0, 0, [], ["File is empty"], []
+
+            # Validate headers
+            headers = list(rows[0].keys())
+            logger.info(f"DEBUG: Parsed headers from {filename}: {headers}")
+            validation = self.validate_headers(headers, entity_type)
+
+            if not validation.valid:
+                errors = [ImportError(row=0, error=err) for err in validation.errors]
+                return len(rows), 0, errors, validation.warnings, []
+
+            # Validate each row
+            schema = self.SCHEMAS[entity_type]
+            errors = []
+            warnings = []
+            valid_count = 0
+
+            for idx, row in enumerate(rows, start=1):
+                is_valid, validation_errors, validated_data = self.validate_row(row, schema)
+
+                if not is_valid:
+                    errors.append(
+                        ImportError(
+                            row=idx,
+                            error="; ".join(validation_errors),
+                        )
+                    )
+                else:
+                    valid_count += 1
+
+            # Get sample data (first 3 valid rows)
+            sample_data = []
+            for row in rows[:3]:
+                is_valid, _, validated_data = self.validate_row(row, schema)
+                if is_valid:
+                    sample_data.append(dict(validated_data))
+
+            return len(rows), valid_count, errors, warnings, sample_data
+
+        except Exception as e:
+            return 0, 0, [ImportError(row=0, error=str(e))], [], []
+
+    def _normalize_field_name(self, field_name: str, entity_type: str) -> str:
+        """
+        Normalize field name using field mappings.
+
+        Example: 'cdl_number' -> 'license_number' for drivers
+        """
+        # Strip BOM character if present (common in Excel exports)
+        field_name = field_name.lstrip('\ufeff')
+        field_lower = field_name.lower().strip().replace(" ", "_")
+        mappings = self.FIELD_MAPPINGS.get(entity_type, {})
+        return mappings.get(field_lower, field_lower)
 
     def _parse_date(self, date_str: Optional[str]) -> Optional[date]:
         """Parse date string in various formats."""
@@ -76,62 +283,129 @@ class ImportService:
             except ValueError:
                 continue
 
-        logger.warning(f"Could not parse date: {date_str}")
         return None
 
-    def parse_csv(self, file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
-        """Parse CSV file and return list of row dictionaries."""
+    def _parse_excel(self, file_bytes: bytes, filename: str, entity_type: str = None) -> List[Dict[str, Any]]:
+        """Parse Excel file and return list of row dictionaries with normalized field names."""
         try:
-            # Detect encoding
+            # Load workbook from bytes
+            workbook = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+            sheet = workbook.active
+
+            # Get headers from first row
+            headers = []
+            for cell in sheet[1]:
+                if cell.value:
+                    headers.append(str(cell.value).strip())
+
+            # Parse data rows
+            rows = []
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                cleaned_row = {}
+                for i, value in enumerate(row):
+                    if i >= len(headers):
+                        break
+                    if not headers[i]:
+                        continue
+
+                    # Clean the field name
+                    field_name = headers[i].lower().replace(" ", "_")
+                    # Normalize using field mappings if entity_type provided
+                    if entity_type:
+                        field_name = self._normalize_field_name(field_name, entity_type)
+
+                    # Clean the value - convert to string and strip
+                    if value is not None:
+                        # Handle date/datetime objects
+                        if isinstance(value, (date, datetime)):
+                            cleaned_row[field_name] = value.strftime("%Y-%m-%d")
+                        else:
+                            cleaned_row[field_name] = str(value).strip()
+                    else:
+                        cleaned_row[field_name] = None
+
+                if cleaned_row:  # Only add non-empty rows
+                    rows.append(cleaned_row)
+
+            workbook.close()
+            return rows
+
+        except Exception as e:
+            raise ValueError(f"Failed to parse Excel: {str(e)}")
+
+    def parse_csv(self, file_bytes: bytes, filename: str, entity_type: str = None) -> List[Dict[str, Any]]:
+        """Parse CSV or Excel file and return list of row dictionaries with normalized field names."""
+        # Determine file type from filename
+        filename_lower = filename.lower()
+        if filename_lower.endswith((".xlsx", ".xls")):
+            return self._parse_excel(file_bytes, filename, entity_type)
+
+        # Otherwise parse as CSV
+        try:
+            # Detect encoding - try utf-8-sig first to handle BOM
             try:
-                content = file_bytes.decode("utf-8")
+                content = file_bytes.decode("utf-8-sig")  # Handles BOM automatically
             except UnicodeDecodeError:
-                content = file_bytes.decode("utf-8-sig")  # Try with BOM
-            except UnicodeDecodeError:
-                content = file_bytes.decode("latin-1")  # Fallback
+                try:
+                    content = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = file_bytes.decode("latin-1")  # Fallback
 
             # Parse CSV
             csv_file = io.StringIO(content)
             reader = csv.DictReader(csv_file)
 
-            # Convert to list and strip whitespace from keys and values
+            # Convert to list and normalize field names
             rows = []
             for row in reader:
-                cleaned_row = {
-                    k.strip().lower().replace(" ", "_"): v.strip() if v else None
-                    for k, v in row.items()
-                    if k
-                }
+                cleaned_row = {}
+                for k, v in row.items():
+                    if not k:
+                        continue
+                    # Clean the field name - strip BOM if present
+                    field_name = k.lstrip('\ufeff').strip().lower().replace(" ", "_")
+                    # Normalize using field mappings if entity_type provided
+                    if entity_type:
+                        field_name = self._normalize_field_name(field_name, entity_type)
+                    # Clean the value
+                    cleaned_row[field_name] = v.strip() if v else None
                 rows.append(cleaned_row)
 
             return rows
 
         except Exception as e:
-            logger.error(f"Error parsing CSV {filename}: {str(e)}")
-            raise ValueError(f"Failed to parse CSV: {str(e)}")
+            raise ValueError(f"Failed to parse file: {str(e)}")
 
     def validate_headers(
         self, headers: List[str], entity_type: str
     ) -> ValidationResult:
-        """Validate that required headers are present."""
+        """Validate that required headers are present (after normalization)."""
         required = self.REQUIRED_COLUMNS.get(entity_type, [])
-        headers_lower = [h.lower().replace(" ", "_") for h in headers]
+        # Normalize headers using field mappings
+        headers_normalized = [self._normalize_field_name(h, entity_type) for h in headers]
 
         errors = []
         warnings = []
         suggestions = []
 
         # Check for missing required columns
+        missing_columns = []
         for req_col in required:
-            if req_col not in headers_lower:
-                errors.append(f"Missing required column: '{req_col}'")
+            if req_col not in headers_normalized:
+                missing_columns.append(req_col)
 
                 # Check for similar column names (typos)
-                for header in headers_lower:
+                for header in headers_normalized:
                     if self._is_similar(req_col, header):
                         suggestions.append(
                             f"Did you mean '{req_col}' instead of '{header}'?"
                         )
+
+        if missing_columns:
+            errors.append(
+                f"Missing required columns: {', '.join(missing_columns)}. "
+                f"Found columns: {', '.join(headers_normalized[:10])}{'...' if len(headers_normalized) > 10 else ''}"
+            )
 
         return ValidationResult(
             valid=len(errors) == 0,
@@ -291,7 +565,7 @@ class ImportService:
                 (Driver.email == email)
                 | (Driver.phone == phone)
                 | (
-                    (Driver.license_number == license_number)
+                    (Driver.cdl_number == license_number)  # Use cdl_number field
                     if license_number
                     else False
                 ),
@@ -319,8 +593,8 @@ class ImportService:
     ) -> ImportResult:
         """Import drivers from CSV file."""
         try:
-            # Parse CSV
-            rows = self.parse_csv(file_bytes, filename)
+            # Parse CSV with field name normalization
+            rows = self.parse_csv(file_bytes, filename, entity_type="drivers")
 
             if not rows:
                 return ImportResult(
@@ -420,6 +694,12 @@ class ImportService:
                     if validated_data.zip:
                         driver_metadata["zip"] = validated_data.zip
 
+                    # Store license_state and employment_type in metadata since they're not direct fields
+                    if validated_data.license_state:
+                        driver_metadata["license_state"] = validated_data.license_state
+                    if validated_data.employment_type:
+                        driver_metadata["employment_type"] = validated_data.employment_type
+
                     driver = Driver(
                         id=driver_id,
                         company_id=company_id,
@@ -428,10 +708,8 @@ class ImportService:
                         last_name=validated_data.last_name,
                         email=validated_data.email,
                         phone=validated_data.phone,
-                        license_number=validated_data.license_number,
-                        license_state=validated_data.license_state,
+                        cdl_number=validated_data.license_number,  # Map license_number to cdl_number
                         cdl_expiration=license_expiry,
-                        employment_type=validated_data.employment_type or "FULL_TIME",
                         profile_metadata=driver_metadata if driver_metadata else None,
                     )
 
@@ -440,7 +718,6 @@ class ImportService:
                     successful_ids.append(driver.id)
 
                 except Exception as e:
-                    logger.error(f"Error importing driver row {idx}: {str(e)}")
                     errors.append(ImportError(row=idx, error=str(e)))
 
             # Commit all changes
@@ -457,7 +734,7 @@ class ImportService:
 
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Error importing drivers: {str(e)}")
+            logger.exception("Driver import failed")
             raise
 
     async def import_equipment(
@@ -465,8 +742,8 @@ class ImportService:
     ) -> ImportResult:
         """Import equipment from CSV file."""
         try:
-            # Parse CSV
-            rows = self.parse_csv(file_bytes, filename)
+            # Parse CSV with field name normalization
+            rows = self.parse_csv(file_bytes, filename, entity_type="equipment")
 
             if not rows:
                 return ImportResult(
@@ -548,7 +825,6 @@ class ImportService:
                     successful_ids.append(equipment.id)
 
                 except Exception as e:
-                    logger.error(f"Error importing equipment row {idx}: {str(e)}")
                     errors.append(ImportError(row=idx, error=str(e)))
 
             # Commit all changes
@@ -565,7 +841,7 @@ class ImportService:
 
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Error importing equipment: {str(e)}")
+            logger.exception("Equipment import failed")
             raise
 
     async def import_loads(
@@ -581,8 +857,8 @@ class ImportService:
         - More complex validation
         """
         try:
-            # Parse CSV
-            rows = self.parse_csv(file_bytes, filename)
+            # Parse CSV with field name normalization
+            rows = self.parse_csv(file_bytes, filename, entity_type="loads")
 
             if not rows:
                 return ImportResult(
@@ -670,7 +946,7 @@ class ImportService:
                                     pickup_date, datetime.min.time().replace(hour=hour, minute=minute)
                                 )
                         except (ValueError, AttributeError):
-                            logger.warning(f"Could not parse pickup time: {validated_data.pickup_time}")
+                            pass  # Silently skip invalid time format
                     elif pickup_date:
                         pickup_scheduled_at = datetime.combine(pickup_date, datetime.min.time())
 
@@ -700,7 +976,7 @@ class ImportService:
                                     delivery_date, datetime.min.time().replace(hour=hour, minute=minute)
                                 )
                         except (ValueError, AttributeError):
-                            logger.warning(f"Could not parse delivery time: {validated_data.delivery_time}")
+                            pass  # Silently skip invalid time format
                     elif delivery_date:
                         delivery_scheduled_at = datetime.combine(delivery_date, datetime.min.time())
 
@@ -720,7 +996,6 @@ class ImportService:
                     successful_ids.append(load.id)
 
                 except Exception as e:
-                    logger.error(f"Error importing load row {idx}: {str(e)}")
                     errors.append(ImportError(row=idx, error=str(e)))
 
             # Commit all changes
@@ -737,5 +1012,5 @@ class ImportService:
 
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Error importing loads: {str(e)}")
+            logger.exception("Load import failed")
             raise

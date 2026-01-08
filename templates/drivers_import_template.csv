@@ -1,0 +1,2 @@
+first_name,last_name,email,phone,license_number,license_state,license_expiry,hire_date,employment_type,pay_rate,pay_type,address,city,state,zip
+John,Doe,john.doe@example.com,555-123-4567,D1234567,CA,2025-12-31,2024-01-15,FULL_TIME,0.45,per_mile,123 Main St,Los Angeles,CA,90001

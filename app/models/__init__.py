@@ -9,6 +9,7 @@ from app.models.user_notification import UserNotification  # noqa: F401
 from app.models.load import Load, LoadStop  # noqa: F401
 from app.models.location import Location  # noqa: F401
 from app.models.accounting import Customer, Invoice, LedgerEntry, Settlement  # noqa: F401
+from app.models.factoring import FactoringProvider, FactoringTransaction  # noqa: F401
 from app.models.banking import BankingAccount, BankingCard, BankingCustomer, BankingTransaction  # noqa: F401
 from app.models.collaboration import Channel, Message, Presence  # noqa: F401
 from app.models.document import DocumentProcessingJob  # noqa: F401

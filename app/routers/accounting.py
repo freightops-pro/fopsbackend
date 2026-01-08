@@ -14,6 +14,8 @@ from app.schemas.accounting import (
     CustomersSummaryResponse,
     InvoiceCreate,
     InvoiceResponse,
+    LedgerEntryCreate,
+    LedgerEntryResponse,
     LedgerSummaryResponse,
     SettlementCreate,
     SettlementResponse,
@@ -49,6 +51,18 @@ async def get_ledger_summary(
 ) -> LedgerSummaryResponse:
     ledger_service, _, _, _, _ = services
     return await ledger_service.summary(company_id)
+
+
+@router.post("/ledger", response_model=LedgerEntryResponse, status_code=status.HTTP_201_CREATED)
+async def create_ledger_entry(
+    payload: LedgerEntryCreate,
+    company_id: str = Depends(_company_id),
+    services: tuple[LedgerService, InvoiceService, SettlementService, AccountingReportService, CustomerService] = Depends(_accounting_services),
+) -> LedgerEntryResponse:
+    """Create a manual ledger entry from the accounting module."""
+    ledger_service, _, _, _, _ = services
+    entry = await ledger_service.create_entry(company_id, payload)
+    return LedgerEntryResponse.model_validate(entry)
 
 
 @router.get("/invoices", response_model=List[InvoiceResponse])

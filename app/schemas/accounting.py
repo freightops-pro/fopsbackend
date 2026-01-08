@@ -5,6 +5,20 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class LedgerEntryCreate(BaseModel):
+    """Schema for creating a manual ledger entry from the accounting module."""
+    date: str  # ISO date string
+    transaction_date: Optional[str] = None  # ISO date string
+    description: str
+    account_id: str  # Account name/identifier
+    type: str  # "debit" or "credit"
+    category: str  # "revenue", "expense", "asset", "liability", "equity"
+    amount: float
+    reference: Optional[str] = None
+    debit: Optional[float] = None  # For backwards compatibility
+    credit: Optional[float] = None  # For backwards compatibility
+
+
 class LedgerEntryResponse(BaseModel):
     id: str
     source: str

@@ -23,6 +23,7 @@ from app.routers import (
     drayage,
     drivers,
     equipment,
+    factoring,
     fuel,
     fleet,
     health,
@@ -39,6 +40,7 @@ from app.routers import (
     ports,
     reporting,
     roles,
+    search,
     settlements,
     tenant,
     usage_ledger,
@@ -52,6 +54,7 @@ api_router = APIRouter()
 
 api_router.include_router(health.router, tags=["Health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+api_router.include_router(search.router, prefix="/search", tags=["Search"])
 api_router.include_router(automation.router, prefix="/automation", tags=["Automation"])
 api_router.include_router(company.router, tags=["Companies"])
 api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"])
@@ -65,6 +68,7 @@ api_router.include_router(ai_chat.router, tags=["AI Chat"])
 api_router.include_router(drivers.router, prefix="/drivers", tags=["Drivers"])
 api_router.include_router(fuel.router, prefix="/fuel", tags=["Fuel"])
 api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting"])
+api_router.include_router(factoring.router, tags=["Factoring"])
 api_router.include_router(banking.router, prefix="/banking", tags=["Banking"])
 api_router.include_router(billing.router, tags=["Billing"])
 api_router.include_router(collaboration.router, prefix="/collaboration", tags=["Collaboration"])

@@ -19,6 +19,7 @@ from app.schemas.accounting import (
     InvoiceCreate,
     InvoiceLineItem,
     InvoiceResponse,
+    LedgerEntryCreate,
     LedgerEntryResponse,
     LedgerSummaryResponse,
     SettlementCreate,
@@ -32,6 +33,51 @@ from app.schemas.accounting import (
 class LedgerService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def create_entry(self, company_id: str, payload: LedgerEntryCreate) -> LedgerEntry:
+        """Create a manual ledger entry from the accounting module."""
+        # Map traditional accounting fields to operational ledger structure
+        # Parse the date string to datetime
+        recorded_at = datetime.fromisoformat(payload.transaction_date or payload.date)
+
+        # Map category: revenue/expense stay the same, others map to expense
+        category_mapping = {
+            "revenue": "revenue",
+            "expense": "expense",
+            "asset": "expense",
+            "liability": "expense",
+            "equity": "expense",
+        }
+        mapped_category = category_mapping.get(payload.category, "expense")
+
+        # Store accounting metadata
+        metadata = {
+            "description": payload.description,
+            "account_id": payload.account_id,
+            "account_name": payload.account_id,  # Frontend sends account name as account_id
+            "type": payload.type,  # debit or credit
+            "original_category": payload.category,
+            "reference": payload.reference,
+            "source": "manual_entry",
+        }
+
+        entry = LedgerEntry(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            load_id=None,
+            source="manual",  # Indicate this is a manual accounting entry
+            category=mapped_category,
+            quantity=Decimal("1.0"),  # Default quantity for manual entries
+            unit="transaction",  # Default unit for manual entries
+            amount=Decimal(str(payload.amount)),
+            recorded_at=recorded_at,
+            metadata_json=metadata,
+        )
+
+        self.db.add(entry)
+        await self.db.commit()
+        await self.db.refresh(entry)
+        return entry
 
     async def summary(self, company_id: str) -> LedgerSummaryResponse:
         entries = await self.db.execute(

@@ -1,0 +1,2 @@
+customer_name,pickup_city,pickup_state,pickup_zip,pickup_date,pickup_time,delivery_city,delivery_state,delivery_zip,delivery_date,delivery_time,commodity,weight,base_rate,reference_number,special_instructions
+Acme Logistics,Chicago,IL,60601,2024-03-15,08:00,Los Angeles,CA,90001,2024-03-18,17:00,General Freight,45000,2500.00,REF123,Deliver to dock 5

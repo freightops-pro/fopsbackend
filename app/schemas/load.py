@@ -182,6 +182,13 @@ class LoadResponse(BaseModel):
     expenses: List[LoadExpense] = []
     profit_summary: Optional[LoadProfitSummary] = None
 
+    # Factoring fields
+    factoring_enabled: Optional[str] = None
+    factoring_status: Optional[str] = None
+    factoring_rate_override: Optional[float] = None
+    factored_amount: Optional[float] = None
+    factoring_fee_amount: Optional[float] = None
+
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 

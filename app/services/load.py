@@ -58,7 +58,7 @@ class LoadService:
         await self.db.flush()
         return new_customer, True
 
-    async def list_loads(self, company_id: str) -> List[Load]:
+    async def list_loads(self, company_id: str, status_filter: Optional[str] = None) -> List[Load]:
         # Debug: count total loads in database
         total_count_result = await self.db.execute(select(func.count(Load.id)))
         total_count = total_count_result.scalar() or 0
@@ -72,15 +72,22 @@ class LoadService:
         logger.info(
             f"[LoadService.list_loads] company_id={company_id}, "
             f"total_loads_in_db={total_count}, "
-            f"distinct_company_ids={distinct_companies}"
+            f"distinct_company_ids={distinct_companies}, "
+            f"status_filter={status_filter}"
         )
 
-        result = await self.db.execute(
+        query = (
             select(Load)
             .options(selectinload(Load.stops))
             .where(Load.company_id == company_id)
-            .order_by(Load.created_at.desc())
         )
+
+        if status_filter:
+            query = query.where(Load.status == status_filter)
+
+        query = query.order_by(Load.created_at.desc())
+
+        result = await self.db.execute(query)
         loads = list(result.scalars().all())
         logger.info(f"[LoadService.list_loads] Returning {len(loads)} loads for company {company_id}")
         return loads
@@ -605,9 +612,9 @@ class LoadService:
 
         return load_dict
 
-    async def list_loads_with_expenses(self, company_id: str) -> List[Dict[str, Any]]:
+    async def list_loads_with_expenses(self, company_id: str, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """List all loads with computed expenses and profit summaries."""
-        loads = await self.list_loads(company_id)
+        loads = await self.list_loads(company_id, status_filter=status_filter)
 
         if not loads:
             return []

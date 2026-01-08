@@ -68,10 +68,18 @@ class Load(Base):
     last_known_lng = Column(Float, nullable=True)
     last_location_update = Column(DateTime, nullable=True)
 
+    # Factoring fields
+    factoring_enabled = Column(String, nullable=True)  # True if this load should be factored
+    factoring_status = Column(String, nullable=True)  # PENDING, SENT, ACCEPTED, FUNDED, PAID
+    factoring_rate_override = Column(Float, nullable=True)  # Override provider default rate
+    factored_amount = Column(Numeric(12, 2), nullable=True)  # Net amount after factoring
+    factoring_fee_amount = Column(Numeric(12, 2), nullable=True)  # Fee charged
+
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     stops = relationship("LoadStop", back_populates="load", cascade="all, delete-orphan", order_by="LoadStop.sequence")
+    factoring_transaction = relationship("FactoringTransaction", back_populates="load", uselist=False)
 
 
 class LoadStop(Base):

@@ -46,3 +46,6 @@ class Company(Base):
     # RBAC: Custom roles defined by this tenant
     custom_roles = relationship("Role", back_populates="company", cascade="all, delete-orphan")
 
+    # Factoring
+    factoring_providers = relationship("FactoringProvider", back_populates="company", cascade="all, delete-orphan")
+

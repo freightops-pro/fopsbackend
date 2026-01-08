@@ -1,0 +1,3 @@
+unit_number,equipment_type,status,make,model,year,vin,current_mileage,gps_provider,gps_device_id
+T001,TRUCK,ACTIVE,Freightliner,Cascadia,2022,1FUJGHDV1JLNA1234,50000,SAMSARA,DEV123
+T002,TRAILER,ACTIVE,Great Dane,Dry Van,2021,1GRAA0621MB123456,25000,MOTIVE,DEV456
