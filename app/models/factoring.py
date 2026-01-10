@@ -12,7 +12,7 @@ class FactoringProvider(Base):
     __tablename__ = "factoring_providers"
 
     id = Column(String, primary_key=True, index=True)
-    company_id = Column(String, ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
 
     # Provider details
     provider_name = Column(String, nullable=False)  # e.g., "TBS Factoring", "OTR Capital"
@@ -44,9 +44,9 @@ class FactoringTransaction(Base):
     __tablename__ = "factoring_transactions"
 
     id = Column(String, primary_key=True, index=True)
-    company_id = Column(String, ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
     provider_id = Column(String, ForeignKey("factoring_providers.id"), nullable=False, index=True)
-    load_id = Column(String, ForeignKey("loads.id"), nullable=False, index=True)
+    load_id = Column(String, ForeignKey("freight_load.id"), nullable=False, index=True)
     invoice_id = Column(String, nullable=True)  # Optional link to invoice
 
     # Transaction details
