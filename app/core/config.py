@@ -32,7 +32,7 @@ class Settings(BaseSettings):
             raw = os.environ.get("CORS_ORIGINS") or os.environ.get("BACKEND_CORS_ORIGINS") or ""
 
         if not raw or not raw.strip():
-            return []
+            return ["https://fopsbeta.up.railway.app", "http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173"]
 
         origins = []
         for origin in raw.split(","):
