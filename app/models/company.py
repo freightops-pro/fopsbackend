@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, DateTime, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base
 
@@ -32,8 +33,22 @@ class Company(Base):
     year_founded = Column(String, nullable=True)
     logo_url = Column(String, nullable=True)
 
-    # Language preference for UI and documents (ISO 639-1 codes: en, es, ru, zh, it, etc.)
+    # Language preference for UI and documents (ISO 639-1 codes: en, es, fr, de, pt, ru, zh, ja, ko, ar, hi, it, nl, pl, tr, vi)
     preferred_language = Column(String, nullable=True, default="en")
+
+    # Operating region/country for region-specific requirements
+    operating_region = Column(String, nullable=True, default="usa")
+    regional_data = Column(JSONB, nullable=True, default={})  # Region-specific field data
+
+    # Invoice numbering configuration
+    invoice_number_format = Column(String, nullable=True, default="INV-{YEAR}-{NUMBER:05}")
+    invoice_start_number = Column(Integer, nullable=False, default=1, server_default="1")
+    last_invoice_number = Column(Integer, nullable=False, default=0, server_default="0")
+
+    # Load numbering configuration
+    load_number_format = Column(String, nullable=True, default="LOAD-{YEAR}-{NUMBER:05}")
+    load_start_number = Column(Integer, nullable=False, default=1, server_default="1")
+    last_load_number = Column(Integer, nullable=False, default=0, server_default="0")
 
     createdAt = Column("created_at", DateTime, nullable=False, server_default=func.now())
     updatedAt = Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

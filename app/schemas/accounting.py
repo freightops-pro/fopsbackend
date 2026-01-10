@@ -48,6 +48,7 @@ class InvoiceLineItem(BaseModel):
 
 class InvoiceCreate(BaseModel):
     load_id: Optional[str] = None
+    invoice_number: Optional[str] = None  # Auto-generated if not provided
     invoice_date: date
     line_items: List[InvoiceLineItem] = Field(..., min_length=1)
     tax_rate: float = 0.0

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,6 +63,16 @@ class CompanyProfileResponse(BaseModel):
     logo_url: Optional[str] = None
     preferred_language: Optional[str] = None
 
+    # Regional configuration
+    operating_region: Optional[str] = None
+    regional_data: Optional[Dict[str, Any]] = None
+
+    # Numbering configuration
+    invoice_number_format: Optional[str] = None
+    invoice_start_number: Optional[int] = None
+    load_number_format: Optional[str] = None
+    load_start_number: Optional[int] = None
+
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -97,4 +107,14 @@ class CompanyProfileUpdate(BaseModel):
     year_founded: Optional[str] = None
     logo_url: Optional[str] = None
     preferred_language: Optional[str] = None
+
+    # Regional configuration
+    operating_region: Optional[str] = None
+    regional_data: Optional[Dict[str, Any]] = None
+
+    # Numbering configuration
+    invoice_number_format: Optional[str] = None
+    invoice_start_number: Optional[int] = None
+    load_number_format: Optional[str] = None
+    load_start_number: Optional[int] = None
 

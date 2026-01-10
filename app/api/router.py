@@ -16,6 +16,7 @@ from app.routers import (
     check,
     company,
     collaboration,
+    compliance,
     dashboard,
     dqf,
     documents,
@@ -57,6 +58,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 api_router.include_router(automation.router, prefix="/automation", tags=["Automation"])
 api_router.include_router(company.router, tags=["Companies"])
+api_router.include_router(compliance.router, prefix="/compliance", tags=["Compliance"])
 api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"])
 api_router.include_router(loads.router, prefix="/dispatch/loads", tags=["Dispatch"])  # Mount loads under dispatch
 api_router.include_router(locations.router, prefix="/locations", tags=["Locations"])

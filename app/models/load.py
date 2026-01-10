@@ -10,6 +10,7 @@ class Load(Base):
     id = Column(String, primary_key=True)
     company_id = Column(String, ForeignKey("company.id"), nullable=False, index=True)
 
+    load_number = Column(String, nullable=True, unique=True, index=True)  # Formatted load number (e.g., LOAD-2024-00001)
     customer_name = Column(String, nullable=False)
     load_type = Column(String, nullable=False)
     commodity = Column(String, nullable=False)

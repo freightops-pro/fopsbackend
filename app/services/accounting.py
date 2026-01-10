@@ -9,7 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.accounting import Customer, Invoice, LedgerEntry, Settlement, Vendor
+from app.models.company import Company
 from app.models.load import Load
+from app.services.number_generator import NumberGenerator
 from app.schemas.accounting import (
     CustomerCreate,
     CustomerResponse,
@@ -117,11 +119,24 @@ class InvoiceService:
         tax = subtotal * payload.tax_rate
         total = subtotal + tax
 
+        # Get customer name from load if available (for {CUSTOMER_PREFIX} token)
+        customer_name = None
+        if payload.load_id:
+            load_result = await self.db.execute(
+                select(Load).where(Load.id == payload.load_id)
+            )
+            load = load_result.scalar_one_or_none()
+            if load:
+                customer_name = load.customer_name
+
+        # Generate invoice number if not provided
+        invoice_number = payload.invoice_number if payload.invoice_number else await self._generate_next_invoice_number(company_id, customer_name)
+
         invoice = Invoice(
             id=str(uuid.uuid4()),
             company_id=company_id,
             load_id=payload.load_id,
-            invoice_number=self._build_invoice_number(),
+            invoice_number=invoice_number,
             invoice_date=payload.invoice_date,
             status="draft",
             subtotal=subtotal,
@@ -150,7 +165,56 @@ class InvoiceService:
             subtotal += item.amount
         return subtotal
 
+    async def _generate_next_invoice_number(self, company_id: str, customer_name: Optional[str] = None) -> str:
+        """
+        Generate the next sequential invoice number for the company using custom format.
+
+        Args:
+            company_id: Company ID
+            customer_name: Optional customer name for {CUSTOMER_PREFIX} token
+
+        Returns:
+            Formatted invoice number based on company settings
+        """
+        # Get and lock the company record to prevent race conditions
+        result = await self.db.execute(
+            select(Company)
+            .where(Company.id == company_id)
+            .with_for_update()
+        )
+        company = result.scalar_one_or_none()
+
+        if not company:
+            raise ValueError(f"Company {company_id} not found")
+
+        # Determine the next number based on start number and last number
+        if company.last_invoice_number == 0:
+            # First invoice - use start number
+            next_number = company.invoice_start_number or 1
+        else:
+            # Increment from last number
+            next_number = company.last_invoice_number + 1
+
+        # Update the counter
+        company.last_invoice_number = next_number
+
+        # Get the format template (use default if not set)
+        format_template = company.invoice_number_format or "INV-{YEAR}-{NUMBER:05}"
+
+        # Generate the formatted invoice number
+        invoice_number = NumberGenerator.generate(
+            format_template=format_template,
+            sequence_number=next_number,
+            customer_name=customer_name,
+        )
+
+        # Update the company record (will be committed with the invoice)
+        self.db.add(company)
+
+        return invoice_number
+
     def _build_invoice_number(self) -> str:
+        """Deprecated: Use _generate_next_invoice_number instead."""
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         suffix = uuid.uuid4().hex[:6].upper()
         return f"INV-{timestamp}-{suffix}"

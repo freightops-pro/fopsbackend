@@ -258,6 +258,13 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning(f"WebSocket handlers registration warning: {e}")
 
+    try:
+        from app.services.compliance.loader import load_compliance_engines
+        load_compliance_engines()
+        logger.info("Compliance engines loaded")
+    except Exception as e:
+        logger.warning(f"Compliance engines loading warning: {e}")
+
     async def run_automation_background():
         for _ in range(60):
             if db_initialized:

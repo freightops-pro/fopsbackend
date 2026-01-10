@@ -12,10 +12,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models.load import Load, LoadStop
 from app.models.load_accessorial import LoadAccessorial
+from app.models.company import Company
 from app.models.accounting import Customer
 from app.models.fuel import FuelTransaction
 from app.schemas.load import LoadCreate, LoadResponse, LoadExpense, LoadProfitSummary
 from app.services.event_dispatcher import emit_event, EventType
+from app.services.number_generator import NumberGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,54 @@ class LoadService:
         self.db.add(new_customer)
         await self.db.flush()
         return new_customer, True
+
+    async def _generate_next_load_number(self, company_id: str, customer_name: Optional[str] = None) -> str:
+        """
+        Generate the next sequential load number for the company using custom format.
+
+        Args:
+            company_id: Company ID
+            customer_name: Optional customer name for {CUSTOMER_PREFIX} token
+
+        Returns:
+            Formatted load number based on company settings
+        """
+        # Get and lock the company record to prevent race conditions
+        result = await self.db.execute(
+            select(Company)
+            .where(Company.id == company_id)
+            .with_for_update()
+        )
+        company = result.scalar_one_or_none()
+
+        if not company:
+            raise ValueError(f"Company {company_id} not found")
+
+        # Determine the next number based on start number and last number
+        if company.last_load_number == 0:
+            # First load - use start number
+            next_number = company.load_start_number or 1
+        else:
+            # Increment from last number
+            next_number = company.last_load_number + 1
+
+        # Update the counter
+        company.last_load_number = next_number
+
+        # Get the format template (use default if not set)
+        format_template = company.load_number_format or "LOAD-{YEAR}-{NUMBER:05}"
+
+        # Generate the formatted load number
+        load_number = NumberGenerator.generate(
+            format_template=format_template,
+            sequence_number=next_number,
+            customer_name=customer_name,
+        )
+
+        # Update the company record (will be committed with the load)
+        self.db.add(company)
+
+        return load_number
 
     async def list_loads(self, company_id: str, status_filter: Optional[str] = None) -> List[Load]:
         # Debug: count total loads in database
@@ -166,9 +216,13 @@ class LoadService:
                 if was_created:
                     new_customer_name = customer.name
 
+        # Generate load number
+        load_number = await self._generate_next_load_number(company_id, payload.customer_name)
+
         load = Load(
             id=str(uuid.uuid4()),
             company_id=company_id,
+            load_number=load_number,
             customer_name=payload.customer_name,
             load_type=payload.load_type,
             commodity=payload.commodity,
