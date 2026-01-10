@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.load import Load, LoadStop
+from app.models.load_accessorial import LoadAccessorial
 from app.models.accounting import Customer
 from app.models.fuel import FuelTransaction
 from app.schemas.load import LoadCreate, LoadResponse, LoadExpense, LoadProfitSummary
@@ -78,7 +79,7 @@ class LoadService:
 
         query = (
             select(Load)
-            .options(selectinload(Load.stops))
+            .options(selectinload(Load.stops), selectinload(Load.accessorials))
             .where(Load.company_id == company_id)
         )
 
@@ -133,7 +134,9 @@ class LoadService:
 
     async def get_load(self, company_id: str, load_id: str) -> Load:
         result = await self.db.execute(
-            select(Load).where(Load.company_id == company_id, Load.id == load_id)
+            select(Load)
+            .options(selectinload(Load.stops), selectinload(Load.accessorials))
+            .where(Load.company_id == company_id, Load.id == load_id)
         )
         load = result.scalar_one_or_none()
         if not load:
@@ -194,8 +197,6 @@ class LoadService:
             metadata_payload["customer_profile"] = payload.customer_profile.model_dump(exclude_none=True)
         if payload.billing_details:
             metadata_payload["billing_details"] = payload.billing_details.model_dump(exclude_none=True)
-        if payload.accessorials:
-            metadata_payload["accessorials"] = [item.model_dump(exclude_none=True) for item in payload.accessorials]
 
         if metadata_payload:
             load.metadata_json = metadata_payload
@@ -203,6 +204,7 @@ class LoadService:
         self.db.add(load)
         await self.db.flush()
 
+        # Create load stops
         for index, stop_payload in enumerate(payload.stops):
             stop = LoadStop(
                 id=str(uuid.uuid4()),
@@ -222,6 +224,19 @@ class LoadService:
                 dwell_minutes_estimate=stop_payload.dwell_minutes_estimate,
             )
             self.db.add(stop)
+
+        # Create accessorial charges
+        if payload.accessorials:
+            for accessorial in payload.accessorials:
+                acc_charge = LoadAccessorial(
+                    id=str(uuid.uuid4()),
+                    load_id=load.id,
+                    charge_type=accessorial.type,
+                    description=accessorial.description or accessorial.type,
+                    amount=Decimal(str(accessorial.amount)),
+                    quantity=Decimal("1.0"),
+                )
+                self.db.add(acc_charge)
 
         await self.db.commit()
         await self.db.refresh(load)

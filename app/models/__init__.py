@@ -7,6 +7,7 @@ from app.models.fuel import FuelTransaction, JurisdictionRollup  # noqa: F401
 from app.models.notification import NotificationLog  # noqa: F401
 from app.models.user_notification import UserNotification  # noqa: F401
 from app.models.load import Load, LoadStop  # noqa: F401
+from app.models.load_accessorial import LoadAccessorial  # noqa: F401
 from app.models.location import Location  # noqa: F401
 from app.models.accounting import Customer, Invoice, LedgerEntry, Settlement  # noqa: F401
 from app.models.factoring import FactoringProvider, FactoringTransaction  # noqa: F401

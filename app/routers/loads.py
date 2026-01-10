@@ -635,7 +635,7 @@ async def record_load_departure(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.put("/{load_id}/status")
+@router.put("/{load_id}/status", response_model=LoadResponse)
 async def update_load_status(
     load_id: str,
     request: LoadStatusUpdateRequest,
@@ -682,12 +682,9 @@ async def update_load_status(
 
         # TODO: Broadcast update via WebSocket when WebSocketManager is implemented
 
-        return {
-            "message": "Load status updated successfully",
-            "load_id": load_id,
-            "old_status": old_status,
-            "new_status": request.status,
-        }
+        # Return the updated load using load service to get all relationships
+        updated_load = await load_service.get_load(company_id, load_id)
+        return LoadResponse.model_validate(updated_load)
 
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

@@ -32,6 +32,9 @@ class Company(Base):
     year_founded = Column(String, nullable=True)
     logo_url = Column(String, nullable=True)
 
+    # Language preference for UI and documents (ISO 639-1 codes: en, es, ru, zh, it, etc.)
+    preferred_language = Column(String, nullable=True, default="en")
+
     createdAt = Column("created_at", DateTime, nullable=False, server_default=func.now())
     updatedAt = Column("updated_at", DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 

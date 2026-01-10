@@ -61,6 +61,7 @@ class CompanyProfileResponse(BaseModel):
     website: Optional[str] = None
     year_founded: Optional[str] = None
     logo_url: Optional[str] = None
+    preferred_language: Optional[str] = None
 
     is_active: bool
     created_at: datetime
@@ -95,4 +96,5 @@ class CompanyProfileUpdate(BaseModel):
     website: Optional[str] = None
     year_founded: Optional[str] = None
     logo_url: Optional[str] = None
+    preferred_language: Optional[str] = None
 

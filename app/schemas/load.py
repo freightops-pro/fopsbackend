@@ -110,6 +110,18 @@ class LoadStopResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AccessorialChargeResponse(BaseModel):
+    """Accessorial charge stored with a load."""
+    id: str
+    charge_type: str
+    description: str
+    amount: float
+    quantity: Optional[float] = 1.0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class LoadExpense(BaseModel):
     """Expense item matched to a load (fuel, detention, accessorial, etc.)."""
     id: str
@@ -177,6 +189,9 @@ class LoadResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     stops: List[LoadStopResponse]
+
+    # Accessorial charges (detention, lumper, layover, etc.)
+    accessorials: List[AccessorialChargeResponse] = []
 
     # Expense tracking (populated from fuel transactions and other sources)
     expenses: List[LoadExpense] = []

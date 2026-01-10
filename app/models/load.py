@@ -80,6 +80,7 @@ class Load(Base):
 
     stops = relationship("LoadStop", back_populates="load", cascade="all, delete-orphan", order_by="LoadStop.sequence")
     factoring_transaction = relationship("FactoringTransaction", back_populates="load", uselist=False)
+    accessorials = relationship("LoadAccessorial", back_populates="load", cascade="all, delete-orphan")
 
 
 class LoadStop(Base):
