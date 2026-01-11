@@ -484,24 +484,46 @@ manage pickup/delivery workflows, and handle check calls autonomously."""
             # Convert document to base64 image
             image_base64, raw_text = await self._prepare_document_for_vision(file_bytes, filename)
 
-            if not image_base64:
-                return {
-                    "success": False,
-                    "error": "Could not convert document to image for vision processing"
-                }
-
             # Build OCR prompt
             ocr_prompt = self._build_rate_confirmation_prompt()
 
-            # Call Llama 4 Scout Vision via Groq
-            response_text, metadata = await llm_router.generate(
-                agent_role="annie",
-                prompt=ocr_prompt,
-                system_prompt="You are Annie, an expert freight document analyzer. Extract structured data from rate confirmations with high accuracy.",
-                image_data=image_base64,
-                temperature=0.3,  # Low temp for accuracy
-                max_tokens=2000
-            )
+            # Determine if we can use vision or need text-only fallback
+            if image_base64:
+                # VISION MODE: Use Llama 4 Scout Vision with image
+                response_text, metadata = await llm_router.generate(
+                    agent_role="annie",
+                    prompt=ocr_prompt,
+                    system_prompt="You are Annie, an expert freight document analyzer. Extract structured data from rate confirmations with high accuracy.",
+                    image_data=image_base64,
+                    temperature=0.3,  # Low temp for accuracy
+                    max_tokens=2000
+                )
+            elif raw_text:
+                # TEXT-ONLY FALLBACK: Use extracted text when vision conversion fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Vision conversion failed for {filename}, falling back to text-only processing")
+
+                text_prompt = f"""{ocr_prompt}
+
+DOCUMENT TEXT:
+{raw_text}
+
+Extract the above information and return as JSON."""
+
+                response_text, metadata = await llm_router.generate(
+                    agent_role="annie",
+                    prompt=text_prompt,
+                    system_prompt="You are Annie, an expert freight document analyzer. Extract structured data from rate confirmations with high accuracy.",
+                    temperature=0.3,
+                    max_tokens=2000
+                )
+            else:
+                # Neither vision nor text extraction worked
+                return {
+                    "success": False,
+                    "error": "Could not process document: neither image conversion nor text extraction succeeded"
+                }
 
             # Parse JSON response
             parsed_data, confidence = self._parse_ocr_response(response_text)
@@ -567,6 +589,12 @@ manage pickup/delivery workflows, and handle check calls autonomously."""
                     return f"data:image/png;base64,{image_base64}", raw_text
             except Exception as e:
                 # PDF to image conversion failed, fall back to text-only
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"PDF to image conversion failed for {filename}: {str(e)}. "
+                    f"Will use text-only fallback if text extraction succeeded."
+                )
                 # If we have text, we can still process without image
                 if raw_text and not raw_text.startswith("PDF"):
                     return None, raw_text
