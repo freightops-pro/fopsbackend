@@ -129,11 +129,24 @@ async def read_current_user(current_user=Depends(deps.get_current_user)) -> User
 
 @router.get("/session", response_model=AuthSessionResponse)
 async def read_session(
+    request: Request,
     current_user=Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> AuthSessionResponse:
+    """
+    Get current session with user and company info.
+    Returns the access token from the Authorization header so frontend can persist it.
+    """
     service = AuthService(db)
-    return await service.build_session(current_user)
+
+    # Extract token from Authorization header to include in response
+    # This ensures the frontend can persist the token after page reload
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+    return await service.build_session(current_user, token=token)
 
 
 @router.post("/change-password", status_code=status.HTTP_200_OK)

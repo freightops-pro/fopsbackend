@@ -48,11 +48,11 @@ class LLMRouter:
             try:
                 from groq import AsyncGroq
                 self.groq = AsyncGroq(api_key=self.groq_api_key)
-                print(f"[LLM Router] Groq initialized (key: {self.groq_api_key[:10]}...)")
+                print(f"[LLM Router] ✓ Groq initialized successfully (key: {self.groq_api_key[:10]}...)")
             except ImportError:
-                print("[LLM Router] Warning: groq package not installed. Install with: pip install groq")
+                print("[LLM Router] ✗ groq package not installed. Install with: pip install groq")
         else:
-            print("[LLM Router] Warning: GROQ_API_KEY not set")
+            print("[LLM Router] ✗ GROQ_API_KEY environment variable not set")
 
         # Provider 3: Google Gemini (fallback)
         self.google_api_key = os.getenv("GOOGLE_AI_API_KEY")
@@ -62,11 +62,11 @@ class LLMRouter:
                 import google.generativeai as genai
                 genai.configure(api_key=self.google_api_key)
                 self.gemini = genai
-                print(f"[LLM Router] Gemini initialized (key: {self.google_api_key[:10]}...)")
+                print(f"[LLM Router] ✓ Gemini initialized successfully (key: {self.google_api_key[:10]}...)")
             except ImportError:
-                print("[LLM Router] Warning: google-generativeai not installed. Install with: pip install google-generativeai")
+                print("[LLM Router] ✗ google-generativeai package not installed. Install with: pip install google-generativeai")
         else:
-            print("[LLM Router] Warning: GOOGLE_AI_API_KEY not set")
+            print("[LLM Router] ✗ GOOGLE_AI_API_KEY environment variable not set")
 
         # Provider 4: AWS Bedrock (enterprise fallback)
         self.aws_region = os.getenv("AWS_REGION", "us-east-1")
@@ -298,7 +298,15 @@ class LLMRouter:
                 print(f"[LLM Router] Bedrock failed: {e}")
                 raise Exception("All LLM providers failed")
 
-        raise Exception("No LLM providers configured. Set GROQ_API_KEY, GOOGLE_AI_API_KEY, or AWS credentials.")
+        error_msg = (
+            "No LLM providers configured. Please set at least one of the following environment variables:\n"
+            "  - GROQ_API_KEY (recommended, free tier available)\n"
+            "  - GOOGLE_AI_API_KEY (fallback option)\n"
+            "  - AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)\n\n"
+            "Check your .env file and restart the backend server to load the variables."
+        )
+        print(f"[LLM Router] ERROR: {error_msg}")
+        raise Exception(error_msg)
 
     async def _generate_groq(
         self,
