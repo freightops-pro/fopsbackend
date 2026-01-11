@@ -97,6 +97,7 @@ class AuthService:
             event_type="account.created",
             action=f"User registered: {user.email}",
             user_id=user.id,
+            user_email=user.email,
             company_id=company.id,
         )
 
@@ -128,6 +129,7 @@ class AuthService:
                 event_type="auth.login_failure",
                 action=f"Login attempt on locked account: {email_lower}",
                 user_id=user.id if user else None,
+                user_email=email_lower,
                 status="blocked",
                 extra_data={"reason": "account_locked", "remaining_minutes": remaining},
             )
@@ -146,6 +148,7 @@ class AuthService:
                         event_type="account.locked",
                         action=f"Account locked after {MAX_FAILED_ATTEMPTS} failed attempts",
                         user_id=user.id,
+                        user_email=user.email,
                         company_id=user.company_id,
                     )
 
@@ -155,6 +158,7 @@ class AuthService:
                 event_type="auth.login_failure",
                 action=f"Failed login attempt: {email_lower}",
                 user_id=user.id if user else None,
+                user_email=email_lower,
                 status="failure",
                 extra_data={"ip_address": ip_address},
             )
@@ -165,6 +169,7 @@ class AuthService:
                 event_type="auth.login_failure",
                 action=f"Login attempt on disabled account: {email_lower}",
                 user_id=user.id,
+                user_email=user.email,
                 status="blocked",
             )
             raise ValueError("User disabled")
@@ -190,6 +195,7 @@ class AuthService:
             event_type="auth.login_success",
             action=f"Successful login: {email_lower}",
             user_id=user.id,
+            user_email=user.email,
             company_id=user.company_id,
             extra_data={"ip_address": ip_address, "remember_me": remember_me},
         )
@@ -269,6 +275,7 @@ class AuthService:
             event_type="auth.email_verified",
             action=f"Email verified: {user.email}",
             user_id=user.id,
+            user_email=user.email,
             company_id=user.company_id,
         )
 
@@ -287,6 +294,7 @@ class AuthService:
             event_type="auth.email_verification_sent",
             action=f"Verification email resent: {user.email}",
             user_id=user.id,
+            user_email=user.email,
             company_id=user.company_id,
         )
 
@@ -300,6 +308,7 @@ class AuthService:
                 event_type="auth.password_change",
                 action=f"Failed password change attempt: {user.email}",
                 user_id=user.id,
+                user_email=user.email,
                 company_id=user.company_id,
                 status="failure",
             )
@@ -318,6 +327,7 @@ class AuthService:
             event_type="auth.password_change",
             action=f"Password changed: {user.email}",
             user_id=user.id,
+            user_email=user.email,
             company_id=user.company_id,
         )
 
@@ -341,6 +351,7 @@ class AuthService:
             event_type="auth.password_reset",
             action=f"Password reset requested: {user.email}",
             user_id=user.id,
+            user_email=user.email,
             company_id=user.company_id,
         )
 
@@ -389,6 +400,7 @@ class AuthService:
         event_type: str,
         action: str,
         user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
         company_id: Optional[str] = None,
         status: str = "success",
         extra_data: Optional[dict] = None,
@@ -399,6 +411,7 @@ class AuthService:
             event_type=event_type,
             action=action,
             user_id=user_id,
+            user_email=user_email,
             company_id=company_id,
             status=status,
             extra_data=extra_data,
