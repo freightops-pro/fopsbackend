@@ -22,103 +22,142 @@ from app.background.hq_sync_jobs import sync_fmcsa_leads
 logger = logging.getLogger(__name__)
 
 
-async def check_presence_idle_users() -> None:
+def check_presence_idle_users() -> None:
     """Check for idle users and auto-set them to away/offline.
 
     Runs every minute to detect:
     - 5 min idle -> away (if not manually set)
     - 30 min idle -> offline
+
+    NOTE: This is a sync wrapper that runs the async implementation.
     """
-    from sqlalchemy import select, distinct
-    from app.models.collaboration import Presence
-    from app.services.presence import PresenceService
-    from app.websocket.hub import channel_hub
+    import asyncio
 
-    async with AsyncSessionFactory() as session:
-        try:
-            # Get all distinct channel_ids with active presence records
-            result = await session.execute(
-                select(distinct(Presence.channel_id)).where(
-                    Presence.status.in_(["online", "away"])
-                )
-            )
-            channel_ids = [row[0] for row in result.fetchall()]
+    async def _check_presence_idle_users_async():
+        from sqlalchemy import select, distinct
+        from app.models.collaboration import Presence
+        from app.services.presence import PresenceService
+        from app.websocket.hub import channel_hub
 
-            if not channel_ids:
-                return
-
-            presence_service = PresenceService(session)
-
-            for channel_id in channel_ids:
-                try:
-                    changed = await presence_service.check_idle_users(channel_id)
-                    if changed:
-                        # Broadcast presence update to channel
-                        await channel_hub.broadcast(
-                            channel_id,
-                            {
-                                "type": "presence",
-                                "data": [
-                                    state.model_dump()
-                                    for state in await presence_service.current_presence(channel_id)
-                                ],
-                            },
-                        )
-                        logger.debug(
-                            "presence_idle_update",
-                            extra={"channel_id": channel_id, "updated_users": len(changed)},
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "presence_idle_check_failed",
-                        extra={"channel_id": channel_id, "error": str(exc)},
+        async with AsyncSessionFactory() as session:
+            try:
+                # Get all distinct channel_ids with active presence records
+                result = await session.execute(
+                    select(distinct(Presence.channel_id)).where(
+                        Presence.status.in_(["online", "away"])
                     )
-        except Exception as exc:
-            logger.exception("presence_idle_job_failed", extra={"error": str(exc)})
+                )
+                channel_ids = [row[0] for row in result.fetchall()]
+
+                if not channel_ids:
+                    return
+
+                presence_service = PresenceService(session)
+
+                for channel_id in channel_ids:
+                    try:
+                        changed = await presence_service.check_idle_users(channel_id)
+                        if changed:
+                            # Broadcast presence update to channel
+                            await channel_hub.broadcast(
+                                channel_id,
+                                {
+                                    "type": "presence",
+                                    "data": [
+                                        state.model_dump()
+                                        for state in await presence_service.current_presence(channel_id)
+                                    ],
+                                },
+                            )
+                            logger.debug(
+                                "presence_idle_update",
+                                extra={"channel_id": channel_id, "updated_users": len(changed)},
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "presence_idle_check_failed",
+                            extra={"channel_id": channel_id, "error": str(exc)},
+                        )
+            except Exception as exc:
+                logger.exception("presence_idle_job_failed", extra={"error": str(exc)})
+
+    # Run the async function in the event loop
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.ensure_future(_check_presence_idle_users_async())
+    except RuntimeError:
+        # No event loop running, create one
+        asyncio.run(_check_presence_idle_users_async())
 
 
-async def check_hq_presence_idle() -> None:
+def check_hq_presence_idle() -> None:
     """Check for idle HQ employees and auto-set them to away/offline.
 
     Runs every minute to detect:
     - 5 min idle -> away (if not manually set)
     - 30 min idle -> offline
+
+    NOTE: This is a sync wrapper that runs the async implementation.
     """
-    from app.services.hq_presence import HQPresenceService
+    import asyncio
 
-    async with AsyncSessionFactory() as session:
-        try:
-            presence_service = HQPresenceService(session)
-            changed = await presence_service.check_idle_employees()
+    async def _check_hq_presence_idle_async():
+        from app.services.hq_presence import HQPresenceService
 
-            if changed:
-                logger.debug(
-                    "hq_presence_idle_update",
-                    extra={"updated_employees": len(changed)},
-                )
-        except Exception as exc:
-            logger.exception("hq_presence_idle_job_failed", extra={"error": str(exc)})
+        async with AsyncSessionFactory() as session:
+            try:
+                presence_service = HQPresenceService(session)
+                changed = await presence_service.check_idle_employees()
+
+                if changed:
+                    logger.debug(
+                        "hq_presence_idle_update",
+                        extra={"updated_employees": len(changed)},
+                    )
+            except Exception as exc:
+                logger.exception("hq_presence_idle_job_failed", extra={"error": str(exc)})
+
+    # Run the async function in the event loop
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.ensure_future(_check_hq_presence_idle_async())
+    except RuntimeError:
+        # No event loop running, create one
+        asyncio.run(_check_hq_presence_idle_async())
 
 
-async def cleanup_orphaned_presence() -> None:
+def cleanup_orphaned_presence() -> None:
     """Clean up orphaned presence records for deleted users/channels.
 
     Runs daily to remove stale presence data.
+
+    NOTE: This is a sync wrapper that runs the async implementation.
     """
-    from app.services.presence import PresenceService
+    import asyncio
 
-    async with AsyncSessionFactory() as session:
-        try:
-            presence_service = PresenceService(session)
-            removed_count = await presence_service.cleanup_orphaned_records()
+    async def _cleanup_orphaned_presence_async():
+        from app.services.presence import PresenceService
 
-            if removed_count > 0:
-                logger.info(
-                    "presence_cleanup_complete",
-                    extra={"removed_count": removed_count},
-                )
-        except Exception as exc:
-            logger.exception("presence_cleanup_failed", extra={"error": str(exc)})
+        async with AsyncSessionFactory() as session:
+            try:
+                presence_service = PresenceService(session)
+                removed_count = await presence_service.cleanup_orphaned_records()
+
+                if removed_count > 0:
+                    logger.info(
+                        "presence_cleanup_complete",
+                        extra={"removed_count": removed_count},
+                    )
+            except Exception as exc:
+                logger.exception("presence_cleanup_failed", extra={"error": str(exc)})
+
+    # Run the async function in the event loop
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.ensure_future(_cleanup_orphaned_presence_async())
+    except RuntimeError:
+        # No event loop running, create one
+        asyncio.run(_cleanup_orphaned_presence_async())
 
 
 settings = get_settings()
