@@ -100,6 +100,27 @@ async def check_hq_presence_idle() -> None:
             logger.exception("hq_presence_idle_job_failed", extra={"error": str(exc)})
 
 
+async def cleanup_orphaned_presence() -> None:
+    """Clean up orphaned presence records for deleted users/channels.
+
+    Runs daily to remove stale presence data.
+    """
+    from app.services.presence import PresenceService
+
+    async with AsyncSessionFactory() as session:
+        try:
+            presence_service = PresenceService(session)
+            removed_count = await presence_service.cleanup_orphaned_records()
+
+            if removed_count > 0:
+                logger.info(
+                    "presence_cleanup_complete",
+                    extra={"removed_count": removed_count},
+                )
+        except Exception as exc:
+            logger.exception("presence_cleanup_failed", extra={"error": str(exc)})
+
+
 settings = get_settings()
 
 automation_scheduler = AsyncIOScheduler()
@@ -364,6 +385,8 @@ def start_scheduler() -> None:
     # Presence auto-away jobs - run every minute to check for idle users
     automation_scheduler.add_job(check_presence_idle_users, "interval", minutes=1, id="check_presence_idle_users", replace_existing=True, max_instances=1, coalesce=True)
     automation_scheduler.add_job(check_hq_presence_idle, "interval", minutes=1, id="check_hq_presence_idle", replace_existing=True, max_instances=1, coalesce=True)
+    # Presence cleanup - run daily at 3 AM to remove orphaned records
+    automation_scheduler.add_job(cleanup_orphaned_presence, "cron", hour=3, minute=0, id="cleanup_orphaned_presence", replace_existing=True, max_instances=1, coalesce=True)
 
     automation_scheduler.start()
     logger.info("Scheduler started", extra={"interval_minutes": settings.automation_interval_minutes})

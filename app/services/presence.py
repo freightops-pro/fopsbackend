@@ -174,6 +174,9 @@ class PresenceService:
         Returns list of users whose status changed.
         Called by scheduler job.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         now = datetime.utcnow()
         away_threshold = now - timedelta(minutes=AUTO_AWAY_MINUTES)
         offline_threshold = now - timedelta(minutes=AUTO_OFFLINE_MINUTES)
@@ -192,31 +195,133 @@ class PresenceService:
 
         changed: List[PresenceState] = []
         for record in records:
-            if not record.last_activity_at:
+            try:
+                if not record.last_activity_at:
+                    continue
+
+                new_status = None
+                if record.last_activity_at < offline_threshold:
+                    new_status = "offline"
+                elif record.last_activity_at < away_threshold and record.status == "online":
+                    new_status = "away"
+
+                if new_status and new_status != record.status:
+                    record.status = new_status
+
+                    # Safely get user name - handle case where user may be deleted
+                    try:
+                        user_name = await self._get_user_name(record.user_id)
+                    except Exception as exc:
+                        logger.warning(
+                            f"Failed to get user name for presence check: user_id={record.user_id}",
+                            extra={"error": str(exc), "user_id": record.user_id, "channel_id": channel_id}
+                        )
+                        user_name = None
+
+                    changed.append(PresenceState(
+                        user_id=record.user_id,
+                        user_name=user_name,
+                        status=record.status,
+                        away_message=record.away_message,
+                        last_seen_at=record.last_seen_at,
+                        last_activity_at=record.last_activity_at,
+                    ))
+            except Exception as exc:
+                # Log but don't fail entire check due to one bad record
+                logger.warning(
+                    f"Failed to process presence record during idle check: {exc}",
+                    extra={"error": str(exc), "presence_id": record.id, "channel_id": channel_id}
+                )
                 continue
 
-            new_status = None
-            if record.last_activity_at < offline_threshold:
-                new_status = "offline"
-            elif record.last_activity_at < away_threshold and record.status == "online":
-                new_status = "away"
-
-            if new_status and new_status != record.status:
-                record.status = new_status
-                user_name = await self._get_user_name(record.user_id)
-                changed.append(PresenceState(
-                    user_id=record.user_id,
-                    user_name=user_name,
-                    status=record.status,
-                    away_message=record.away_message,
-                    last_seen_at=record.last_seen_at,
-                    last_activity_at=record.last_activity_at,
-                ))
-
         if changed:
-            await self.db.commit()
+            try:
+                await self.db.commit()
+            except Exception as exc:
+                logger.error(
+                    f"Failed to commit presence changes: {exc}",
+                    extra={"error": str(exc), "channel_id": channel_id, "changed_count": len(changed)}
+                )
+                await self.db.rollback()
+                raise
 
         return changed
+
+    async def cleanup_orphaned_records(self) -> int:
+        """Remove presence records for deleted users or channels.
+
+        Returns count of records removed.
+        Called periodically by scheduler to prevent stale data.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Find presence records where the user no longer exists
+        from app.models.user import User
+        from app.models.collaboration import Channel
+
+        orphaned_count = 0
+
+        # Clean up records for deleted users
+        try:
+            user_cleanup = await self.db.execute(
+                select(Presence).where(
+                    ~Presence.user_id.in_(
+                        select(User.id)
+                    )
+                )
+            )
+            orphaned_users = user_cleanup.scalars().all()
+
+            for record in orphaned_users:
+                await self.db.delete(record)
+                orphaned_count += 1
+
+            if orphaned_users:
+                logger.info(
+                    f"Cleaned up {len(orphaned_users)} presence records for deleted users",
+                    extra={"orphaned_user_count": len(orphaned_users)}
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to cleanup orphaned user presence records: {exc}")
+
+        # Clean up records for deleted channels
+        try:
+            channel_cleanup = await self.db.execute(
+                select(Presence).where(
+                    ~Presence.channel_id.in_(
+                        select(Channel.id)
+                    )
+                )
+            )
+            orphaned_channels = channel_cleanup.scalars().all()
+
+            for record in orphaned_channels:
+                await self.db.delete(record)
+                orphaned_count += 1
+
+            if orphaned_channels:
+                logger.info(
+                    f"Cleaned up {len(orphaned_channels)} presence records for deleted channels",
+                    extra={"orphaned_channel_count": len(orphaned_channels)}
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to cleanup orphaned channel presence records: {exc}")
+
+        # Commit if we made changes
+        if orphaned_count > 0:
+            try:
+                await self.db.commit()
+                logger.info(
+                    f"Presence cleanup complete: removed {orphaned_count} orphaned records",
+                    extra={"total_removed": orphaned_count}
+                )
+            except Exception as exc:
+                logger.error(f"Failed to commit presence cleanup: {exc}")
+                await self.db.rollback()
+                raise
+
+        return orphaned_count
 
     async def current_presence(self, channel_id: str) -> List[PresenceState]:
         """Get current presence for all users in a channel."""
