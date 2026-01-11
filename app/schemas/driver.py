@@ -110,9 +110,11 @@ class DriverComplianceProfileResponse(BaseModel):
     middle_initial: Optional[str] = None
     email: Optional[str] = None
     phone_number: Optional[str] = None
+    phone: Optional[str] = None  # Alias for phone_number
     status: str = "ACTIVE"
     home_address: Optional[str] = None
     license_number: Optional[str] = None
+    cdl_number: Optional[str] = None  # Alias for license_number
     license_state: Optional[str] = None
     license_class: Optional[str] = None
     license_expiration: Optional[date] = None
@@ -120,6 +122,12 @@ class DriverComplianceProfileResponse(BaseModel):
     endorsements: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
+
+    # Performance metrics
+    total_completed_loads: Optional[float] = None
+    average_rating: Optional[float] = None
+    compliance_score: Optional[float] = None
+
     compliance: Optional[DriverComplianceSummaryResponse] = None
     incidents: List[DriverIncidentResponse] = Field(default_factory=list)
     training: List[DriverTrainingResponse] = Field(default_factory=list)

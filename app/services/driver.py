@@ -337,9 +337,11 @@ class DriverService:
             middle_initial=metadata.get("middle_initial"),
             email=driver.email,
             phone_number=driver.phone,
+            phone=driver.phone,  # Also populate phone alias
             status=metadata.get("status", "ACTIVE"),
             home_address=metadata.get("home_address"),
             license_number=driver.cdl_number,
+            cdl_number=driver.cdl_number,  # Also populate cdl_number alias
             license_state=metadata.get("license_state"),
             license_class=metadata.get("license_class"),
             license_expiration=metadata.get("license_expiration")
@@ -349,6 +351,10 @@ class DriverService:
             endorsements=metadata.get("endorsements"),
             created_at=driver.created_at,
             updated_at=driver.updated_at,
+            # Performance metrics
+            total_completed_loads=driver.total_completed_loads,
+            average_rating=driver.average_rating,
+            compliance_score=driver.compliance_score,
             compliance=self._build_compliance_summary(driver, metadata),
             incidents=[DriverIncidentResponse.model_validate(incident) for incident in driver.incidents],
             training=[DriverTrainingResponse.model_validate(record) for record in driver.training_records],
