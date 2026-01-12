@@ -90,6 +90,7 @@ from app.schemas.hq import (
     HQDealFMCSAImportRequest,
     HQDealActivityCreate,
     HQDealActivityResponse,
+    HQDealWinRequest,
     # Subscription schemas
     HQSubscriptionCreate,
     HQSubscriptionUpdate,
@@ -6065,6 +6066,29 @@ async def delete_deal(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
     return {"status": "deleted"}
+
+
+@router.post("/deals/{deal_id}/win", response_model=dict)
+async def win_deal(
+    deal_id: str,
+    data: HQDealWinRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Win a deal and create a subscription."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deal = await deal_service.win_deal(
+        deal_id=deal_id,
+        billing_interval=data.billing_interval,
+        monthly_rate=data.monthly_rate,
+        setup_fee=data.setup_fee,
+        created_by_id=current_employee.id,
+    )
+    if not deal:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+    return deal
 
 
 @router.post("/deals/import", response_model=HQDealImportResponse)

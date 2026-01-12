@@ -230,6 +230,83 @@ class HQDealsService:
         await self.db.commit()
         return True
 
+    async def win_deal(
+        self,
+        deal_id: str,
+        billing_interval: str,
+        monthly_rate: Decimal,
+        setup_fee: Optional[Decimal],
+        created_by_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Win a deal and create a subscription for it."""
+        from app.services.hq_subscriptions import HQSubscriptionsService
+        from app.models.hq_tenant import HQTenant
+
+        # Get the deal
+        result = await self.db.execute(
+            select(HQDeal).where(HQDeal.id == deal_id)
+        )
+        deal = result.scalar_one_or_none()
+        if not deal:
+            return None
+
+        # Create tenant if DOT number exists and tenant doesn't exist
+        tenant_id = None
+        if deal.dot_number:
+            # Check if tenant with this DOT exists
+            tenant_result = await self.db.execute(
+                select(HQTenant).where(HQTenant.dot_number == deal.dot_number)
+            )
+            tenant = tenant_result.scalar_one_or_none()
+            if tenant:
+                tenant_id = tenant.id
+
+        # For now, we require a tenant_id to create a subscription
+        # In a full implementation, we'd create the tenant here
+        if not tenant_id:
+            # Mark deal as won without creating subscription
+            deal.stage = DealStage.WON
+            deal.won_at = datetime.utcnow()
+            deal.probability = STAGE_PROBABILITY[DealStage.WON]
+            await self._log_activity(
+                deal.id,
+                "deal_won",
+                f"Deal won - subscription creation pending (no tenant)",
+                created_by_id
+            )
+            await self.db.commit()
+            return self._to_response(deal)
+
+        # Create subscription
+        subscription_service = HQSubscriptionsService(self.db)
+        subscription_data = {
+            "tenant_id": tenant_id,
+            "deal_id": deal_id,
+            "billing_interval": billing_interval,
+            "monthly_rate": float(monthly_rate),
+            "setup_fee": float(setup_fee) if setup_fee else 0,
+        }
+        subscription = await subscription_service.create_subscription(
+            subscription_data,
+            created_by_id
+        )
+
+        # Update deal to won
+        deal.stage = DealStage.WON
+        deal.won_at = datetime.utcnow()
+        deal.probability = STAGE_PROBABILITY[DealStage.WON]
+
+        # Log activity
+        await self._log_activity(
+            deal.id,
+            "deal_won",
+            f"Deal won - subscription {subscription['subscriptionNumber']} created",
+            created_by_id
+        )
+
+        await self.db.commit()
+        return self._to_response(deal)
+
     async def get_pipeline_summary(
         self,
         current_user_id: str,

@@ -2356,6 +2356,15 @@ class HQDealActivityResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class HQDealWinRequest(BaseModel):
+    """Request to win a deal and create a subscription."""
+    billing_interval: Literal["monthly", "annual"] = Field(alias="billingInterval")
+    monthly_rate: Decimal = Field(alias="monthlyRate", gt=0)
+    setup_fee: Optional[Decimal] = Field(None, alias="setupFee", ge=0)
+
+    model_config = {"populate_by_name": True}
+
+
 # ============================================================================
 # Subscription Schemas
 # ============================================================================
