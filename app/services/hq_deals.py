@@ -373,6 +373,17 @@ class HQDealsService:
         # Active carriers only
         where_conditions.append("status_code = 'A'")
 
+        # Filter for actual motor carriers (not shippers or registrants)
+        # entity_type field: C = Carrier, S = Shipper, B = Both, R = Registrant
+        where_conditions.append("entity_type IN ('C', 'B')")
+
+        # Filter for authorized for-hire carriers (not private/exempt)
+        # carrier_operation: A = Authorized For Hire, B = Exempt For Hire, C = Private Property
+        where_conditions.append("carrier_operation = 'A'")
+
+        # Ensure they have actual power units (trucks)
+        where_conditions.append("power_units > 0")
+
         # Authority age filter
         if authority_days:
             from datetime import timedelta
