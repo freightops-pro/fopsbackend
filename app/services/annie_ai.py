@@ -610,40 +610,102 @@ Extract the above information and return as JSON."""
 
     def _build_rate_confirmation_prompt(self) -> str:
         """Build the OCR prompt for rate confirmation extraction."""
-        return """Analyze this freight rate confirmation document and extract the following fields into JSON format.
+        return """Analyze this freight rate confirmation document and extract ALL visible information into JSON format.
 
-IMPORTANT: Return ONLY valid JSON, no markdown code blocks or additional text.
+CRITICAL: Return ONLY valid JSON - no markdown code blocks, no additional text before or after.
 
 {
-  "customer_name": "Company name of the customer/shipper",
+  "customer_name": "Bill To company name",
+  "shipper": {
+    "business_name": "Shipper/Pickup company name",
+    "address": "Full street address",
+    "city": "City",
+    "state": "2-letter state code",
+    "postal_code": "ZIP code",
+    "contact_name": "Contact person name",
+    "contact_phone": "Phone number"
+  },
+  "receiver": {
+    "business_name": "Consignee/Delivery company name",
+    "address": "Full street address",
+    "city": "City",
+    "state": "2-letter state code",
+    "postal_code": "ZIP code",
+    "contact_name": "Contact person name",
+    "contact_phone": "Phone number"
+  },
   "base_rate": 1234.56,
-  "commodity": "Description of freight/commodity",
-  "equipment_type": "dry_van | reefer | flatbed | step_deck | container",
+  "accessorials": [
+    {"type": "fuel_surcharge", "amount": 123.45, "description": "Fuel Surcharge"},
+    {"type": "detention", "amount": 50.00, "description": "Detention Fee"}
+  ],
+  "commodity": "Description of freight",
   "weight": 12345,
-  "reference_number": "Load or reference number",
-  "pickup_location": {
-    "full_address": "Complete pickup address",
-    "city": "City",
-    "state": "State (2-letter)",
-    "postal_code": "ZIP"
-  },
-  "delivery_location": {
-    "full_address": "Complete delivery address",
-    "city": "City",
-    "state": "State (2-letter)",
-    "postal_code": "ZIP"
-  },
+  "equipment_type": "dry_van | reefer | flatbed | step_deck | container | intermodal",
+  "container_number": "ABCD1234567",
+  "seal_number": "Seal number",
+  "trailer_number": "Trailer number if not container",
+  "reference_number": "Load #, PO #, or Ref #",
   "pickup_date": "YYYY-MM-DD",
+  "pickup_time_start": "HH:MM",
+  "pickup_time_end": "HH:MM",
   "delivery_date": "YYYY-MM-DD",
-  "special_instructions": "Any notes",
-  "container_number": "Container number if applicable"
+  "delivery_time_start": "HH:MM",
+  "delivery_time_end": "HH:MM",
+  "special_instructions": "Any special notes, requirements, or instructions"
 }
 
-Rules:
-- Use null for fields not found
-- Extract main line haul rate (exclude fuel/accessorials)
-- For commodity, default to "General Freight" if not specified
-- Convert dates to YYYY-MM-DD format"""
+EXTRACTION RULES:
+
+1. RATE INFORMATION (CRITICAL):
+   - base_rate: Main line haul rate ONLY (exclude fuel/accessorials)
+   - Look for: "Rate", "Line Haul", "Base Rate", "Amount", "Freight Charge"
+   - Extract number only: "$1,234.56" → 1234.56
+   - accessorials: Array of separate charges (fuel surcharge, detention, layover, etc.)
+   - For each accessorial, extract type, amount, and description
+
+2. PARTIES:
+   - customer_name: "Bill To" company (who pays the invoice)
+   - shipper: Pickup location details (origin)
+   - receiver: Delivery location details (destination, consignee)
+   - Extract full address, city, state, ZIP for both
+   - Extract contact names and phone numbers if visible
+
+3. EQUIPMENT & CARGO:
+   - container_number: CRITICAL - format is typically 4 letters + 7 digits (ABCD1234567)
+     Look for: "Container #", "CNTR", "Container Number", "CONT #"
+   - seal_number: Seal number on container/trailer
+   - trailer_number: If using trailer instead of container
+   - weight: Cargo weight in pounds (extract number only)
+   - commodity: What's being shipped
+
+4. EQUIPMENT TYPE:
+   - Determine from context: "dry_van", "reefer", "flatbed", "step_deck", "container", "intermodal"
+   - Look for keywords like "53' Dry Van", "Reefer", "Container", "Flatbed", etc.
+
+5. SCHEDULE:
+   - Extract pickup and delivery dates in YYYY-MM-DD format
+   - Extract appointment time windows if specified (HH:MM format, 24-hour)
+   - Look for: "Pickup Date", "Ship Date", "Delivery Date", "Del Date"
+   - Look for: "Appointment Time", "Window", "Between", "From X to Y"
+
+6. REFERENCE NUMBERS:
+   - Look for: "Load #", "Ref #", "PO #", "Order #", "Shipment #"
+   - Use the most prominent reference number
+
+7. SPECIAL INSTRUCTIONS:
+   - Combine all notes, special requirements, handling instructions
+   - Include temperature requirements, delivery instructions, etc.
+
+IMPORTANT TIPS:
+- Scan the ENTIRE document - information may be in headers, footers, or margins
+- Container numbers are CRITICAL - look carefully in all corners and margins
+- If multiple rates appear, use the line haul rate (not total with accessorials)
+- Use null for any field not found
+- For dates without year, use current year
+- If commodity not specified, use "General Freight"
+
+RETURN ONLY THE JSON - NO OTHER TEXT."""
 
     def _parse_ocr_response(self, response_text: str) -> Tuple[Dict, Dict]:
         """Parse the JSON response from vision OCR."""
@@ -677,17 +739,91 @@ Rules:
 
     def _transform_to_frontend_format(self, parsed_data: Dict) -> Dict:
         """Transform OCR data to match frontend expected format."""
+        # Get shipper (pickup) details
+        shipper = parsed_data.get("shipper", {}) or {}
+        # Also check old format for backwards compatibility
         pickup = parsed_data.get("pickup_location", {}) or {}
+
+        # Get receiver (delivery) details
+        receiver = parsed_data.get("receiver", {}) or {}
+        # Also check old format for backwards compatibility
         delivery = parsed_data.get("delivery_location", {}) or {}
 
+        # Build full addresses
+        shipper_address = shipper.get("address") or pickup.get("full_address") or \
+            f"{shipper.get('city', '') or pickup.get('city', '')}, {shipper.get('state', '') or pickup.get('state', '')}".strip(", ")
+
+        receiver_address = receiver.get("address") or delivery.get("full_address") or \
+            f"{receiver.get('city', '') or delivery.get('city', '')}, {receiver.get('state', '') or delivery.get('state', '')}".strip(", ")
+
+        # Map equipment type to load type format
+        equipment_type = parsed_data.get("equipment_type", "")
+        load_type_map = {
+            "dry_van": "Dry Van",
+            "reefer": "Reefer",
+            "flatbed": "Flatbed",
+            "step_deck": "Step Deck",
+            "container": "Container",
+            "intermodal": "Intermodal",
+            "bulk": "Bulk",
+            "ltl": "LTL"
+        }
+        load_type = load_type_map.get(equipment_type.lower(), equipment_type.title() if equipment_type else None)
+
         return {
+            # Customer (Bill To)
             "customerName": parsed_data.get("customer_name"),
+
+            # Shipper (Pickup)
+            "shipper": {
+                "businessName": shipper.get("business_name"),
+                "address": shipper_address,
+                "city": shipper.get("city") or pickup.get("city"),
+                "state": shipper.get("state") or pickup.get("state"),
+                "postalCode": shipper.get("postal_code") or pickup.get("postal_code"),
+                "contactName": shipper.get("contact_name"),
+                "contactPhone": shipper.get("contact_phone")
+            },
+
+            # Receiver (Delivery/Consignee)
+            "receiver": {
+                "businessName": receiver.get("business_name"),
+                "address": receiver_address,
+                "city": receiver.get("city") or delivery.get("city"),
+                "state": receiver.get("state") or delivery.get("state"),
+                "postalCode": receiver.get("postal_code") or delivery.get("postal_code"),
+                "contactName": receiver.get("contact_name"),
+                "contactPhone": receiver.get("contact_phone")
+            },
+
+            # Rates & Charges
             "rate": parsed_data.get("base_rate"),
+            "accessorials": parsed_data.get("accessorials", []),
+
+            # Cargo
             "commodity": parsed_data.get("commodity"),
-            "pickupLocation": pickup.get("full_address") or f"{pickup.get('city', '')}, {pickup.get('state', '')}".strip(", "),
-            "deliveryLocation": delivery.get("full_address") or f"{delivery.get('city', '')}, {delivery.get('state', '')}".strip(", "),
-            "referenceNumber": parsed_data.get("reference_number"),
-            "pickupDate": parsed_data.get("pickup_date"),
             "weight": parsed_data.get("weight"),
+
+            # Equipment
+            "loadType": load_type,
+            "containerNumber": parsed_data.get("container_number"),
+            "sealNumber": parsed_data.get("seal_number"),
+            "trailerNumber": parsed_data.get("trailer_number"),
+
+            # References
+            "referenceNumber": parsed_data.get("reference_number"),
+
+            # Schedule
+            "pickupDate": parsed_data.get("pickup_date"),
+            "pickupTimeStart": parsed_data.get("pickup_time_start"),
+            "pickupTimeEnd": parsed_data.get("pickup_time_end"),
+            "deliveryDate": parsed_data.get("delivery_date"),
+            "deliveryTimeStart": parsed_data.get("delivery_time_start"),
+            "deliveryTimeEnd": parsed_data.get("delivery_time_end"),
+
+            # Notes
+            "specialInstructions": parsed_data.get("special_instructions"),
+
+            # Metadata
             "processedAt": datetime.utcnow().isoformat()
         }
