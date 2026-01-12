@@ -81,12 +81,14 @@ def check_presence_idle_users() -> None:
             except Exception as exc:
                 logger.exception("presence_idle_job_failed", extra={"error": str(exc)})
 
-    # Run the async function in the event loop
+    # Run the async function properly in scheduler context
+    # APScheduler with AsyncIOScheduler handles async jobs natively
     try:
         loop = asyncio.get_running_loop()
-        asyncio.ensure_future(_check_presence_idle_users_async())
+        # Create task in existing loop and await it
+        loop.create_task(_check_presence_idle_users_async())
     except RuntimeError:
-        # No event loop running, create one
+        # Fallback: no event loop running (shouldn't happen with AsyncIOScheduler)
         asyncio.run(_check_presence_idle_users_async())
 
 
@@ -117,12 +119,14 @@ def check_hq_presence_idle() -> None:
             except Exception as exc:
                 logger.exception("hq_presence_idle_job_failed", extra={"error": str(exc)})
 
-    # Run the async function in the event loop
+    # Run the async function properly in scheduler context
+    # APScheduler with AsyncIOScheduler handles async jobs natively
     try:
         loop = asyncio.get_running_loop()
-        asyncio.ensure_future(_check_hq_presence_idle_async())
+        # Create task in existing loop and await it
+        loop.create_task(_check_hq_presence_idle_async())
     except RuntimeError:
-        # No event loop running, create one
+        # Fallback: no event loop running (shouldn't happen with AsyncIOScheduler)
         asyncio.run(_check_hq_presence_idle_async())
 
 
@@ -151,12 +155,14 @@ def cleanup_orphaned_presence() -> None:
             except Exception as exc:
                 logger.exception("presence_cleanup_failed", extra={"error": str(exc)})
 
-    # Run the async function in the event loop
+    # Run the async function properly in scheduler context
+    # APScheduler with AsyncIOScheduler handles async jobs natively
     try:
         loop = asyncio.get_running_loop()
-        asyncio.ensure_future(_cleanup_orphaned_presence_async())
+        # Create task in existing loop and await it
+        loop.create_task(_cleanup_orphaned_presence_async())
     except RuntimeError:
-        # No event loop running, create one
+        # Fallback: no event loop running (shouldn't happen with AsyncIOScheduler)
         asyncio.run(_cleanup_orphaned_presence_async())
 
 

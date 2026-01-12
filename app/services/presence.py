@@ -193,7 +193,8 @@ class PresenceService:
         )
         records = result.scalars().all()
 
-        changed: List[PresenceState] = []
+        # Collect records that need updating (capture all attributes before any await)
+        to_update: List[tuple] = []
         for record in records:
             try:
                 if not record.last_activity_at:
@@ -206,31 +207,51 @@ class PresenceService:
                     new_status = "away"
 
                 if new_status and new_status != record.status:
-                    record.status = new_status
-
-                    # Safely get user name - handle case where user may be deleted
-                    try:
-                        user_name = await self._get_user_name(record.user_id)
-                    except Exception as exc:
-                        logger.warning(
-                            f"Failed to get user name for presence check: user_id={record.user_id}",
-                            extra={"error": str(exc), "user_id": record.user_id, "channel_id": channel_id}
-                        )
-                        user_name = None
-
-                    changed.append(PresenceState(
-                        user_id=record.user_id,
-                        user_name=user_name,
-                        status=record.status,
-                        away_message=record.away_message,
-                        last_seen_at=record.last_seen_at,
-                        last_activity_at=record.last_activity_at,
+                    # Capture all attributes NOW before any async operations
+                    to_update.append((
+                        record,
+                        new_status,
+                        record.user_id,
+                        record.away_message,
+                        record.last_activity_at,
+                        record.last_seen_at,
                     ))
             except Exception as exc:
                 # Log but don't fail entire check due to one bad record
                 logger.warning(
                     f"Failed to process presence record during idle check: {exc}",
-                    extra={"error": str(exc), "presence_id": record.id, "channel_id": channel_id}
+                    extra={"error": str(exc), "presence_id": getattr(record, 'id', None), "channel_id": channel_id}
+                )
+                continue
+
+        # Now process updates with async calls
+        changed: List[PresenceState] = []
+        for record, new_status, user_id, away_message, last_activity_at, last_seen_at in to_update:
+            try:
+                record.status = new_status
+
+                # Safely get user name - handle case where user may be deleted
+                try:
+                    user_name = await self._get_user_name(user_id)
+                except Exception as exc:
+                    logger.warning(
+                        f"Failed to get user name for presence check: user_id={user_id}",
+                        extra={"error": str(exc), "user_id": user_id, "channel_id": channel_id}
+                    )
+                    user_name = None
+
+                changed.append(PresenceState(
+                    user_id=user_id,
+                    user_name=user_name,
+                    status=new_status,
+                    away_message=away_message,
+                    last_seen_at=last_seen_at,
+                    last_activity_at=last_activity_at,
+                ))
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to update presence state: {exc}",
+                    extra={"error": str(exc), "user_id": user_id, "channel_id": channel_id}
                 )
                 continue
 
