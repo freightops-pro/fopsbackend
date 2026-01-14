@@ -30,6 +30,14 @@ class DealSource(str, enum.Enum):
     OTHER = "other"
 
 
+class EnrichmentStatus(str, enum.Enum):
+    """Master Spec: Enrichment workflow status."""
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 class HQDeal(Base):
     """Unified deal entity for the sales pipeline.
 
@@ -100,11 +108,36 @@ class HQDeal(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
+    # Master Spec Module 1: Lead Engine - PQL Scoring
+    pql_score = Column(Numeric(3, 2), nullable=True, comment="Master Spec: Product Qualified Lead score (0.00-1.00)")
+    pql_scored_at = Column(DateTime, nullable=True, comment="Master Spec: When PQL scoring was last calculated")
+    pql_factors = Column(Text, nullable=True, comment="Master Spec: JSON explaining PQL score factors")
+
+    # Master Spec Module 1: Lead Enrichment
+    enrichment_status = Column(
+        Enum(EnrichmentStatus, values_callable=lambda enum_class: [e.value for e in enum_class]),
+        nullable=True,
+        default=EnrichmentStatus.PENDING,
+        comment="Master Spec: Enrichment workflow status"
+    )
+    enrichment_attempted_at = Column(DateTime, nullable=True, comment="Master Spec: When enrichment was last attempted")
+    enrichment_completed_at = Column(DateTime, nullable=True, comment="Master Spec: When enrichment successfully completed")
+
+    # Master Spec Module 1: Lead Locking (30-day claim)
+    claimed_by_id = Column(String, ForeignKey("hq_employee.id"), nullable=True, comment="Master Spec: Agent who claimed this lead")
+    claimed_at = Column(DateTime, nullable=True, comment="Master Spec: When lead was claimed (30-day exclusivity)")
+
+    # Master Spec Module 1: Time-to-Contact Metrics
+    time_to_first_contact_hours = Column(Numeric(10, 2), nullable=True, comment="Master Spec: Hours from creation to first contact")
+
     # Relationships
     assigned_sales_rep = relationship("HQEmployee", foreign_keys=[assigned_sales_rep_id])
     created_by = relationship("HQEmployee", foreign_keys=[created_by_id])
     subscription = relationship("HQSubscription", back_populates="deal", uselist=False)
     activities = relationship("HQDealActivity", back_populates="deal", cascade="all, delete-orphan")
+
+    # Master Spec: New relationships
+    claimed_by = relationship("HQEmployee", foreign_keys=[claimed_by_id])
 
 
 class HQDealActivity(Base):

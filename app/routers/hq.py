@@ -20,9 +20,18 @@ from app.schemas.hq import (
     HQEmployeeCreate,
     HQEmployeeUpdate,
     HQEmployeeResponse,
+    HQReferralCodeRequest,
+    HQReferralCodeResponse,
+    HQReferralStatsResponse,
+    HQCommissionRatesUpdate,
+    HQCommissionRatesResponse,
     HQTenantCreate,
     HQTenantUpdate,
     HQTenantResponse,
+    HQTenantMRRResponse,
+    HQTenantBatchMRRResponse,
+    HQTenantFintechMetricsUpdate,
+    HQTenantFintechMetricsResponse,
     HQContractCreate,
     HQContractUpdate,
     HQContractResponse,
@@ -91,6 +100,11 @@ from app.schemas.hq import (
     HQDealActivityCreate,
     HQDealActivityResponse,
     HQDealWinRequest,
+    HQDealClaimResponse,
+    HQDealReleaseRequest,
+    HQDealReleaseResponse,
+    HQDealPQLScoreResponse,
+    HQDealBatchScoreResponse,
     # Subscription schemas
     HQSubscriptionCreate,
     HQSubscriptionUpdate,
@@ -98,6 +112,16 @@ from app.schemas.hq import (
     HQSubscriptionFromDeal,
     HQMRRSummary,
     HQRateChangeResponse,
+    # AI Monitoring schemas
+    HQAIUsageLogCreate,
+    HQAIUsageLogResponse,
+    HQAIUsageStatsResponse,
+    HQAIAnomalyAlertResponse,
+    HQResolveAnomalyRequest,
+    # Impersonation schemas
+    HQStartImpersonationRequest,
+    HQImpersonationSessionResponse,
+    HQImpersonationLogResponse,
 )
 from app.services.hq import (
     HQAuthService,
@@ -481,6 +505,74 @@ async def delete_employee(
         await service.delete_employee(employee_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+# Master Spec Module 4: Referral Code Endpoints
+@router.post("/employees/{employee_id}/generate-referral-code", response_model=HQReferralCodeResponse)
+async def generate_employee_referral_code_endpoint(
+    employee_id: str,
+    data: HQReferralCodeRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a unique referral code for a sales agent or affiliate.
+
+    Master Spec Module 4: Referral codes track tenant sign-ups and enable commission calculations.
+    """
+    service = HQEmployeeService(db)
+    try:
+        result = await service.generate_referral_code(
+            employee_id=employee_id,
+            custom_code=data.custom_code
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/employees/{employee_id}/referral-stats", response_model=HQReferralStatsResponse)
+async def get_employee_referral_stats_endpoint(
+    employee_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get referral statistics for a sales agent or affiliate.
+
+    Master Spec Module 4: Shows lifetime referrals, commission earned, and pending payouts.
+    """
+    service = HQEmployeeService(db)
+    try:
+        result = await service.get_referral_stats(employee_id=employee_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.patch("/employees/{employee_id}/commission-rates", response_model=HQCommissionRatesResponse)
+async def update_employee_commission_rates_endpoint(
+    employee_id: str,
+    data: HQCommissionRatesUpdate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update commission rates for a sales agent or affiliate.
+
+    Master Spec Module 4: Commission rates are percentages (0.1000 = 10%).
+    """
+    service = HQEmployeeService(db)
+    try:
+        result = await service.update_commission_rates(
+            employee_id=employee_id,
+            mrr_rate=data.mrr_rate,
+            setup_rate=data.setup_rate,
+            fintech_rate=data.fintech_rate
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 # ============================================================================
@@ -932,6 +1024,58 @@ async def deactivate_tenant(
     await db.commit()
     await db.refresh(company)
     return _build_tenant_response_from_company(company)
+
+
+# Master Spec Module 2: MRR Calculation Endpoints
+@router.post("/tenants/{tenant_id}/calculate-mrr", response_model=HQTenantMRRResponse)
+async def calculate_tenant_mrr_endpoint(
+    tenant_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Calculate MRR for a specific tenant."""
+    tenant_service = HQTenantService(db)
+    try:
+        result = await tenant_service.calculate_mrr(tenant_id=tenant_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/tenants/calculate-all-mrr", response_model=HQTenantBatchMRRResponse)
+async def calculate_all_tenant_mrr_endpoint(
+    limit: int = 100,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch calculate MRR for all active tenants (requires admin permission)."""
+    tenant_service = HQTenantService(db)
+    result = await tenant_service.calculate_all_tenant_mrr(limit=limit)
+    return result
+
+
+@router.patch("/tenants/{tenant_id}/fintech-metrics", response_model=HQTenantFintechMetricsResponse)
+async def update_tenant_fintech_metrics_endpoint(
+    tenant_id: str,
+    data: HQTenantFintechMetricsUpdate,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update fintech metrics for a tenant.
+
+    Master Spec Module 3: Called by webhook handlers when Synctera/CheckHQ report updates.
+    """
+    tenant_service = HQTenantService(db)
+    try:
+        result = await tenant_service.update_fintech_metrics(
+            tenant_id=tenant_id,
+            deposits_mtd=data.deposits_mtd,
+            active_employees=data.active_employees
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.get("/tenants/{tenant_id}/payments")
@@ -5436,6 +5580,331 @@ async def reject_ai_action(
     )
 
 
+# ============================================================================
+# AI Monitoring Endpoints (Master Spec Module 5)
+# ============================================================================
+
+
+@router.get("/ai-usage/stats", response_model=HQAIUsageStatsResponse)
+async def get_ai_usage_stats(
+    tenant_id: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+):
+    """
+    Get AI usage statistics.
+
+    Query params:
+    - tenant_id: Filter by tenant (optional, admins only)
+    - start_date: Filter logs after this date
+    - end_date: Filter logs before this date
+    """
+    from app.services import hq_ai_monitoring
+
+    # Non-admin users can only see overall stats
+    if not current_employee.is_superuser and tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superusers can view tenant-specific statistics",
+        )
+
+    stats = await hq_ai_monitoring.get_usage_stats(
+        db=db,
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    return stats
+
+
+@router.get("/ai-usage/logs", response_model=List[HQAIUsageLogResponse])
+async def get_ai_usage_logs(
+    tenant_id: Optional[str] = Query(None),
+    operation: Optional[str] = Query(None),
+    model: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+):
+    """
+    Get AI usage logs with filters.
+
+    Query params:
+    - tenant_id: Filter by tenant (optional, admins only)
+    - operation: Filter by operation type
+    - model: Filter by AI model
+    - start_date: Filter logs after this date
+    - end_date: Filter logs before this date
+    - limit: Max results (default 100, max 500)
+    - offset: Pagination offset
+    """
+    from app.services import hq_ai_monitoring
+
+    # Non-admin users can only see overall logs
+    if not current_employee.is_superuser and tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superusers can view tenant-specific logs",
+        )
+
+    logs = await hq_ai_monitoring.get_usage_logs(
+        db=db,
+        tenant_id=tenant_id,
+        operation=operation,
+        model=model,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+
+    return logs
+
+
+@router.post("/ai-usage/log", response_model=HQAIUsageLogResponse)
+async def create_ai_usage_log(
+    log_data: HQAIUsageLogCreate,
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+):
+    """
+    Create an AI usage log entry.
+
+    This endpoint should be called by backend services after AI API calls.
+    """
+    from app.services import hq_ai_monitoring
+
+    log = await hq_ai_monitoring.log_ai_usage(
+        db=db,
+        tenant_id=log_data.tenant_id,
+        operation=log_data.operation,
+        model=log_data.model,
+        prompt_tokens=log_data.prompt_tokens,
+        completion_tokens=log_data.completion_tokens,
+        total_cost=log_data.total_cost,
+        latency_ms=log_data.latency_ms,
+        user_id=log_data.user_id,
+        metadata=log_data.metadata,
+    )
+
+    return log
+
+
+@router.get("/ai-anomalies", response_model=List[HQAIAnomalyAlertResponse])
+async def get_ai_anomalies(
+    tenant_id: Optional[str] = Query(None),
+    anomaly_type: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    resolved: Optional[bool] = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+):
+    """
+    Get AI anomaly alerts with filters.
+
+    Query params:
+    - tenant_id: Filter by tenant (optional, admins only)
+    - anomaly_type: Filter by anomaly type (high_cost, high_latency, unusual_spike)
+    - severity: Filter by severity level (low, medium, high, critical)
+    - resolved: Filter by resolution status
+    - limit: Max results (default 50, max 200)
+    - offset: Pagination offset
+    """
+    from app.services import hq_ai_monitoring
+    from app.models.hq_ai_anomaly_alert import AnomalyType, AlertSeverity
+
+    # Non-admin users can only see overall anomalies
+    if not current_employee.is_superuser and tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superusers can view tenant-specific anomalies",
+        )
+
+    # Convert string filters to enums
+    at = AnomalyType(anomaly_type) if anomaly_type else None
+    sev = AlertSeverity(severity) if severity else None
+
+    anomalies = await hq_ai_monitoring.get_anomalies(
+        db=db,
+        tenant_id=tenant_id,
+        anomaly_type=at,
+        severity=sev,
+        resolved=resolved,
+        limit=limit,
+        offset=offset,
+    )
+
+    return anomalies
+
+
+@router.post("/ai-anomalies/{anomaly_id}/resolve", response_model=HQAIAnomalyAlertResponse)
+async def resolve_ai_anomaly(
+    anomaly_id: str,
+    request: HQResolveAnomalyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+):
+    """
+    Mark an anomaly alert as resolved.
+
+    Args:
+        anomaly_id: ID of the anomaly to resolve
+        request: Resolution details
+    """
+    from app.services import hq_ai_monitoring
+
+    try:
+        anomaly = await hq_ai_monitoring.resolve_anomaly(
+            db=db,
+            anomaly_id=anomaly_id,
+            resolved_by=current_employee.id,
+            resolution_notes=request.resolution_notes,
+        )
+        return anomaly
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ============================================================================
+# Impersonation Endpoints (Master Spec Module 2)
+# ============================================================================
+
+
+@router.post("/impersonation/start", response_model=HQImpersonationSessionResponse)
+async def start_tenant_impersonation(
+    request: HQStartImpersonationRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+):
+    """
+    Start an impersonation session for a tenant.
+
+    This creates a temporary session token that can be used to access
+    the tenant's account for support purposes.
+
+    Args:
+        request: Impersonation request details
+        http_request: HTTP request for IP/user agent
+        current_employee: Authenticated HQ employee
+    """
+    from app.services import hq_impersonation
+
+    # Get client IP and user agent
+    ip_address = http_request.client.host if http_request.client else None
+    user_agent = http_request.headers.get("user-agent")
+
+    session = await hq_impersonation.start_impersonation(
+        db=db,
+        admin_id=current_employee.id,
+        tenant_id=request.tenant_id,
+        reason=request.reason,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        duration_hours=request.duration_hours,
+    )
+
+    return session
+
+
+@router.post("/impersonation/end/{session_token}", response_model=HQImpersonationSessionResponse)
+async def end_tenant_impersonation(
+    session_token: str,
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+):
+    """
+    End an impersonation session.
+
+    Args:
+        session_token: Session token to end
+    """
+    from app.services import hq_impersonation
+
+    session = await hq_impersonation.end_impersonation(
+        db=db,
+        session_token=session_token,
+    )
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or already ended",
+        )
+
+    return session
+
+
+@router.get("/impersonation/active", response_model=List[HQImpersonationSessionResponse])
+async def get_active_impersonation_sessions(
+    admin_id: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+):
+    """
+    Get active impersonation sessions.
+
+    Query params:
+    - admin_id: Filter by admin employee ID
+    - tenant_id: Filter by tenant ID
+    """
+    from app.services import hq_impersonation
+
+    sessions = await hq_impersonation.get_active_sessions(
+        db=db,
+        admin_id=admin_id,
+        tenant_id=tenant_id,
+    )
+
+    return sessions
+
+
+@router.get("/impersonation/logs", response_model=List[HQImpersonationLogResponse])
+async def get_impersonation_logs(
+    admin_id: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+):
+    """
+    Get impersonation logs with filters.
+
+    Query params:
+    - admin_id: Filter by admin employee ID
+    - tenant_id: Filter by tenant ID
+    - start_date: Filter logs after this date
+    - end_date: Filter logs before this date
+    - limit: Max results (default 100, max 500)
+    - offset: Pagination offset
+    """
+    from app.services import hq_impersonation
+
+    logs = await hq_impersonation.get_impersonation_logs(
+        db=db,
+        admin_id=admin_id,
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+
+    return logs
+
+
 async def _execute_approved_action(action, edits: Optional[str], db: AsyncSession):
     """Execute an approved AI action based on its type."""
     from app.models.hq_ai_queue import AIActionType, HQAIAction
@@ -6089,6 +6558,108 @@ async def win_deal(
     if not deal:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
     return deal
+
+
+# Master Spec Module 1: Lead Claiming Endpoints
+@router.post("/deals/{deal_id}/claim", response_model=HQDealClaimResponse)
+async def claim_deal_endpoint(
+    deal_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Claim a lead for exclusive 30-day access.
+
+    Master Spec: Prevents lead poaching by giving agents exclusive access to
+    leads they claim for 30 days.
+    """
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    try:
+        result = await deal_service.claim_deal(
+            deal_id=deal_id,
+            agent_id=current_employee.id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/deals/{deal_id}/release", response_model=HQDealReleaseResponse)
+async def release_deal_claim_endpoint(
+    deal_id: str,
+    data: HQDealReleaseRequest,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Release a claimed lead back to the pool.
+
+    If force=true and user has admin permissions, can release any claim.
+    """
+    from app.services.hq_deals import HQDealsService
+    from app.models.hq_employee import has_hq_permission, HQPermission
+
+    # Check if admin is forcing a release
+    is_admin = has_hq_permission(current_employee.role, HQPermission.MANAGE_TENANTS)
+    force = data.force and is_admin
+
+    deal_service = HQDealsService(db)
+    try:
+        result = await deal_service.release_deal_claim(
+            deal_id=deal_id,
+            agent_id=current_employee.id,
+            force=force
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/deals/claimed/me", response_model=list[dict])
+async def get_my_claimed_deals(
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all deals claimed by the current user."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    deals = await deal_service.get_claimed_deals(agent_id=current_employee.id)
+    return deals
+
+
+# Master Spec Module 1: PQL Scoring Endpoints
+@router.post("/deals/{deal_id}/score", response_model=HQDealPQLScoreResponse)
+async def calculate_pql_score_endpoint(
+    deal_id: str,
+    current_employee: HQEmployee = Depends(require_hq_permission("view_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Calculate Product Qualified Lead score for a deal."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    try:
+        result = await deal_service.calculate_pql_score(deal_id=deal_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/deals/score-all", response_model=HQDealBatchScoreResponse)
+async def batch_score_deals_endpoint(
+    limit: int = 100,
+    current_employee: HQEmployee = Depends(require_hq_permission("manage_tenants")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch score all unscored deals (requires admin permission)."""
+    from app.services.hq_deals import HQDealsService
+
+    deal_service = HQDealsService(db)
+    result = await deal_service.score_all_unscored_deals(limit=limit)
+    return result
 
 
 @router.post("/deals/import", response_model=HQDealImportResponse)

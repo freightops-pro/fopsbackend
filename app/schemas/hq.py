@@ -106,6 +106,55 @@ class HQEmployeeResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+# Master Spec Module 4: Referral Code & Commission Schemas
+class HQReferralCodeRequest(BaseModel):
+    """Request to generate a referral code."""
+    custom_code: Optional[str] = Field(None, alias="customCode", serialization_alias="customCode")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQReferralCodeResponse(BaseModel):
+    """Response after generating referral code."""
+    success: bool
+    employee_id: str = Field(alias="employeeId", serialization_alias="employeeId")
+    referral_code: str = Field(alias="referralCode", serialization_alias="referralCode")
+    generated_at: str = Field(alias="generatedAt", serialization_alias="generatedAt")
+    referral_url: str = Field(alias="referralUrl", serialization_alias="referralUrl")
+    message: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQReferralStatsResponse(BaseModel):
+    """Response with referral statistics."""
+    success: bool
+    employee_id: str = Field(alias="employeeId", serialization_alias="employeeId")
+    referral_code: str = Field(alias="referralCode", serialization_alias="referralCode")
+    stats: dict
+
+    model_config = {"populate_by_name": True}
+
+
+class HQCommissionRatesUpdate(BaseModel):
+    """Request to update commission rates."""
+    mrr_rate: Optional[Decimal] = Field(None, alias="mrrRate", serialization_alias="mrrRate")
+    setup_rate: Optional[Decimal] = Field(None, alias="setupRate", serialization_alias="setupRate")
+    fintech_rate: Optional[Decimal] = Field(None, alias="fintechRate", serialization_alias="fintechRate")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQCommissionRatesResponse(BaseModel):
+    """Response after updating commission rates."""
+    success: bool
+    employee_id: str = Field(alias="employeeId", serialization_alias="employeeId")
+    updated_fields: list[str] = Field(alias="updatedFields", serialization_alias="updatedFields")
+    commission_rates: dict = Field(alias="commissionRates", serialization_alias="commissionRates")
+
+    model_config = {"populate_by_name": True}
+
+
 # ============================================================================
 # Tenant Schemas
 # ============================================================================
@@ -250,6 +299,66 @@ class HQTenantDetailResponse(HQTenantResponse):
     cost_breakdown: TenantCostBreakdown = Field(default_factory=TenantCostBreakdown, alias="costBreakdown", serialization_alias="costBreakdown")
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+# Master Spec Module 2: MRR Calculation Schemas
+class HQTenantMRRBreakdown(BaseModel):
+    """Breakdown of MRR components."""
+    subscription_mrr: Decimal = Field(alias="subscriptionMrr", serialization_alias="subscriptionMrr")
+    fintech_mrr: Decimal = Field(alias="fintechMrr", serialization_alias="fintechMrr")
+    addon_mrr: Decimal = Field(alias="addonMrr", serialization_alias="addonMrr")
+    total_mrr: Decimal = Field(alias="totalMrr", serialization_alias="totalMrr")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantFinancialMetrics(BaseModel):
+    """Financial metrics for a tenant."""
+    acv: Decimal
+    ltv_estimate: Decimal = Field(alias="ltvEstimate", serialization_alias="ltvEstimate")
+    active_employees: int = Field(alias="activeEmployees", serialization_alias="activeEmployees")
+    deposits_mtd: Decimal = Field(alias="depositsMtd", serialization_alias="depositsMtd")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantMRRResponse(BaseModel):
+    """Response after calculating MRR."""
+    success: bool
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    mrr: HQTenantMRRBreakdown
+    metrics: HQTenantFinancialMetrics
+    calculated_at: str = Field(alias="calculatedAt", serialization_alias="calculatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantBatchMRRResponse(BaseModel):
+    """Response after batch calculating MRR."""
+    success: bool
+    total_calculated: int = Field(alias="totalCalculated", serialization_alias="totalCalculated")
+    total_platform_mrr: Decimal = Field(alias="totalPlatformMrr", serialization_alias="totalPlatformMrr")
+    errors: list[dict]
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantFintechMetricsUpdate(BaseModel):
+    """Request to update fintech metrics."""
+    deposits_mtd: Optional[Decimal] = Field(None, alias="depositsMtd", serialization_alias="depositsMtd")
+    active_employees: Optional[int] = Field(None, alias="activeEmployees", serialization_alias="activeEmployees")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQTenantFintechMetricsResponse(BaseModel):
+    """Response after updating fintech metrics."""
+    success: bool
+    tenant_id: str = Field(alias="tenantId", serialization_alias="tenantId")
+    updated_fields: list[str] = Field(alias="updatedFields", serialization_alias="updatedFields")
+    new_mrr: Decimal = Field(alias="newMrr", serialization_alias="newMrr")
+
+    model_config = {"populate_by_name": True}
 
 
 # ============================================================================
@@ -2365,6 +2474,59 @@ class HQDealWinRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# Master Spec Module 1: Lead Claiming Schemas
+class HQDealClaimResponse(BaseModel):
+    """Response after claiming a lead."""
+    success: bool
+    deal_id: str = Field(alias="dealId", serialization_alias="dealId")
+    claimed_by: str = Field(alias="claimedBy", serialization_alias="claimedBy")
+    claimed_at: str = Field(alias="claimedAt", serialization_alias="claimedAt")
+    expires_at: str = Field(alias="expiresAt", serialization_alias="expiresAt")
+    days_remaining: int = Field(alias="daysRemaining", serialization_alias="daysRemaining")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealReleaseRequest(BaseModel):
+    """Request to release a claimed lead."""
+    force: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealReleaseResponse(BaseModel):
+    """Response after releasing a claimed lead."""
+    success: bool
+    deal_id: str = Field(alias="dealId", serialization_alias="dealId")
+    previous_owner: Optional[str] = Field(None, alias="previousOwner", serialization_alias="previousOwner")
+    released_by: str = Field(alias="releasedBy", serialization_alias="releasedBy")
+    forced: bool
+
+    model_config = {"populate_by_name": True}
+
+
+# Master Spec Module 1: PQL Scoring Schemas
+class HQDealPQLScoreResponse(BaseModel):
+    """Response after calculating PQL score for a deal."""
+    success: bool
+    deal_id: str = Field(alias="dealId", serialization_alias="dealId")
+    pql_score: float = Field(alias="pqlScore", serialization_alias="pqlScore")
+    tier: str
+    factors: dict
+    scored_at: str = Field(alias="scoredAt", serialization_alias="scoredAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQDealBatchScoreResponse(BaseModel):
+    """Response after batch scoring deals."""
+    success: bool
+    total_scored: int = Field(alias="totalScored", serialization_alias="totalScored")
+    errors: list[dict]
+
+    model_config = {"populate_by_name": True}
+
+
 # ============================================================================
 # Subscription Schemas
 # ============================================================================
@@ -2582,3 +2744,127 @@ class HQContractorSettlementPayment(BaseModel):
     notes: Optional[str] = None
 
     model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# AI Monitoring Schemas (Master Spec Module 5)
+# ============================================================================
+
+
+class HQAIUsageLogCreate(BaseModel):
+    """Schema for creating an AI usage log entry."""
+
+    tenant_id: str = Field(..., alias="tenantId")
+    user_id: Optional[str] = Field(None, alias="userId")
+    operation: str
+    model: str
+    prompt_tokens: int = Field(..., alias="promptTokens")
+    completion_tokens: int = Field(..., alias="completionTokens")
+    total_cost: float = Field(..., alias="totalCost")
+    latency_ms: int = Field(..., alias="latencyMs")
+    metadata: Optional[dict] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class HQAIUsageLogResponse(BaseModel):
+    """Schema for AI usage log response."""
+
+    id: str
+    tenant_id: str = Field(..., alias="tenantId")
+    user_id: Optional[str] = Field(None, alias="userId")
+    operation: str
+    model: str
+    prompt_tokens: int = Field(..., alias="promptTokens")
+    completion_tokens: int = Field(..., alias="completionTokens")
+    total_tokens: int = Field(..., alias="totalTokens")
+    total_cost: float = Field(..., alias="totalCost")
+    latency_ms: int = Field(..., alias="latencyMs")
+    metadata: Optional[dict] = None
+    created_at: datetime = Field(..., alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQAIUsageStatsResponse(BaseModel):
+    """Schema for AI usage statistics response."""
+
+    total_requests: int = Field(..., alias="totalRequests")
+    total_tokens: int = Field(..., alias="totalTokens")
+    total_cost: float = Field(..., alias="totalCost")
+    avg_latency_ms: float = Field(..., alias="avgLatencyMs")
+    by_operation: dict = Field(..., alias="byOperation")
+    by_model: dict = Field(..., alias="byModel")
+
+    model_config = {"populate_by_name": True}
+
+
+class HQAIAnomalyAlertResponse(BaseModel):
+    """Schema for AI anomaly alert response."""
+
+    id: str
+    tenant_id: str = Field(..., alias="tenantId")
+    anomaly_type: str = Field(..., alias="anomalyType")
+    severity: str
+    message: str
+    metadata: Optional[dict] = None
+    is_resolved: bool = Field(..., alias="isResolved")
+    resolved_at: Optional[datetime] = Field(None, alias="resolvedAt")
+    resolved_by: Optional[str] = Field(None, alias="resolvedBy")
+    created_at: datetime = Field(..., alias="createdAt")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQResolveAnomalyRequest(BaseModel):
+    """Schema for resolving an anomaly alert."""
+
+    resolution_notes: Optional[str] = Field(None, alias="resolutionNotes")
+
+    model_config = {"populate_by_name": True}
+
+
+# ============================================================================
+# Impersonation Schemas (Master Spec Module 2)
+# ============================================================================
+
+
+class HQStartImpersonationRequest(BaseModel):
+    """Schema for starting an impersonation session."""
+
+    tenant_id: str = Field(..., alias="tenantId")
+    reason: str
+    duration_hours: int = Field(1, alias="durationHours", ge=1, le=8)
+
+    model_config = {"populate_by_name": True}
+
+
+class HQImpersonationSessionResponse(BaseModel):
+    """Schema for impersonation session response."""
+
+    id: str
+    admin_id: str = Field(..., alias="adminId")
+    tenant_id: str = Field(..., alias="tenantId")
+    session_token: str = Field(..., alias="sessionToken")
+    expires_at: datetime = Field(..., alias="expiresAt")
+    started_at: datetime = Field(..., alias="startedAt")
+    ended_at: Optional[datetime] = Field(None, alias="endedAt")
+    reason: Optional[str] = None
+    ip_address: Optional[str] = Field(None, alias="ipAddress")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class HQImpersonationLogResponse(BaseModel):
+    """Schema for impersonation log response."""
+
+    id: str
+    admin_id: str = Field(..., alias="adminId")
+    tenant_id: str = Field(..., alias="tenantId")
+    started_at: datetime = Field(..., alias="startedAt")
+    ended_at: Optional[datetime] = Field(None, alias="endedAt")
+    expires_at: datetime = Field(..., alias="expiresAt")
+    reason: Optional[str] = None
+    ip_address: Optional[str] = Field(None, alias="ipAddress")
+
+    model_config = {"from_attributes": True, "populate_by_name": True}

@@ -461,12 +461,32 @@ class HQDealsService:
             )
             sales_reps = result.scalars().all()
 
-        # Check for existing deals by company name
+        # Master Spec: Enhanced de-duplication by DOT number and company name
+        # Check both existing deals AND existing tenants to prevent duplicates
         existing_names = set()
-        result = await self.db.execute(select(HQDeal.company_name))
-        for row in result.scalars().all():
-            if row:
-                existing_names.add(row.lower().strip())
+        existing_dots = set()
+
+        # Check existing deals
+        result = await self.db.execute(
+            select(HQDeal.company_name, HQDeal.dot_number)
+        )
+        for name, dot in result.all():
+            if name:
+                existing_names.add(name.lower().strip())
+            if dot:
+                existing_dots.add(dot.strip())
+
+        # Check existing tenants (already customers)
+        from app.models import HQTenant, Company
+        result = await self.db.execute(
+            select(Company.name, Company.dot_number)
+            .join(HQTenant, Company.id == HQTenant.company_id)
+        )
+        for name, dot in result.all():
+            if name:
+                existing_names.add(name.lower().strip())
+            if dot:
+                existing_dots.add(dot.strip())
 
         created_deals = []
         errors = []
@@ -485,7 +505,19 @@ class HQDealsService:
                 if not company_name:
                     continue
 
+                # Master Spec: Check for duplicates by company name
                 if company_name.lower().strip() in existing_names:
+                    continue
+
+                # Master Spec: Check for duplicates by DOT number (more reliable than name)
+                dot_number = get_field("dot_number", "usdot_number")
+                if dot_number and dot_number.strip() in existing_dots:
+                    # Skip this carrier - they already exist as a deal or tenant
+                    errors.append({
+                        "company": company_name,
+                        "dot": dot_number,
+                        "reason": "Duplicate DOT number - already exists in system"
+                    })
                     continue
 
                 # Determine assigned sales rep
@@ -523,7 +555,7 @@ class HQDealsService:
                 ]
                 address = ", ".join(p for p in address_parts if p)
 
-                dot_number = get_field("dot_number") or ""
+                # Already extracted dot_number earlier for de-duplication check
                 telephone = get_field("phone")
                 email = get_field("email_address")
                 phy_state = get_field("phy_state") or ""
@@ -929,4 +961,380 @@ Notes: {deal.notes or 'None'}"""
             "createdById": deal.created_by_id,
             "createdAt": deal.created_at.isoformat() if deal.created_at else None,
             "updatedAt": deal.updated_at.isoformat() if deal.updated_at else None,
+        }
+
+    # ========================================================================
+    # Master Spec: Lead Claiming & Locking (30-day exclusivity)
+    # ========================================================================
+
+    async def claim_deal(self, deal_id: str, agent_id: str) -> dict:
+        """
+        Claim a lead for exclusive access (30-day lock).
+
+        Master Spec Module 1: Prevents lead poaching by giving agents exclusive
+        access to leads they claim for 30 days.
+        """
+        from datetime import timedelta
+
+        # Get the deal
+        result = await self.db.execute(
+            select(HQDeal).where(HQDeal.id == deal_id)
+        )
+        deal = result.scalar_one_or_none()
+        if not deal:
+            raise ValueError(f"Deal {deal_id} not found")
+
+        # Check if already claimed by someone else
+        if deal.claimed_by_id and deal.claimed_by_id != agent_id:
+            # Check if claim has expired
+            if deal.claimed_at:
+                claim_expiry = deal.claimed_at + timedelta(days=30)
+                if datetime.utcnow() < claim_expiry:
+                    # Still claimed by someone else
+                    time_remaining = claim_expiry - datetime.utcnow()
+                    days_remaining = time_remaining.days
+                    raise ValueError(
+                        f"Deal is already claimed by another agent. "
+                        f"Claim expires in {days_remaining} days."
+                    )
+
+        # Claim the deal
+        deal.claimed_by_id = agent_id
+        deal.claimed_at = datetime.utcnow()
+
+        # Create activity
+        activity = HQDealActivity(
+            id=str(uuid.uuid4()),
+            deal_id=deal_id,
+            activity_type="lead_claimed",
+            description=f"Lead claimed for 30-day exclusive access",
+            created_by_id=agent_id,
+        )
+        self.db.add(activity)
+
+        await self.db.commit()
+        await self.db.refresh(deal)
+
+        claim_expiry = deal.claimed_at + timedelta(days=30)
+
+        return {
+            "success": True,
+            "dealId": deal_id,
+            "claimedBy": agent_id,
+            "claimedAt": deal.claimed_at.isoformat(),
+            "expiresAt": claim_expiry.isoformat(),
+            "daysRemaining": 30
+        }
+
+    async def release_deal_claim(self, deal_id: str, agent_id: str, force: bool = False) -> dict:
+        """
+        Release a claimed lead back to the pool.
+
+        Args:
+            deal_id: ID of the deal to release
+            agent_id: ID of the agent releasing the claim
+            force: If True, allows admin to force-release any claim
+        """
+        result = await self.db.execute(
+            select(HQDeal).where(HQDeal.id == deal_id)
+        )
+        deal = result.scalar_one_or_none()
+        if not deal:
+            raise ValueError(f"Deal {deal_id} not found")
+
+        # Check permissions
+        if not deal.claimed_by_id:
+            raise ValueError("Deal is not claimed")
+
+        if deal.claimed_by_id != agent_id and not force:
+            raise ValueError("You can only release deals you have claimed")
+
+        # Release the claim
+        previous_owner = deal.claimed_by_id
+        deal.claimed_by_id = None
+        deal.claimed_at = None
+
+        # Create activity
+        activity = HQDealActivity(
+            id=str(uuid.uuid4()),
+            deal_id=deal_id,
+            activity_type="lead_released",
+            description=f"Lead claim released {'(forced by admin)' if force else '(voluntary)'}",
+            created_by_id=agent_id,
+        )
+        self.db.add(activity)
+
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "dealId": deal_id,
+            "previousOwner": previous_owner,
+            "releasedBy": agent_id,
+            "forced": force
+        }
+
+    async def get_claimed_deals(self, agent_id: str) -> List[dict]:
+        """Get all deals claimed by a specific agent."""
+        result = await self.db.execute(
+            select(HQDeal)
+            .where(HQDeal.claimed_by_id == agent_id)
+            .where(HQDeal.stage.not_in([DealStage.WON, DealStage.LOST]))
+            .order_by(HQDeal.claimed_at.desc())
+        )
+        deals = result.scalars().all()
+
+        from datetime import timedelta
+        return [{
+            "id": deal.id,
+            "dealNumber": deal.deal_number,
+            "companyName": deal.company_name,
+            "claimedAt": deal.claimed_at.isoformat() if deal.claimed_at else None,
+            "expiresAt": (deal.claimed_at + timedelta(days=30)).isoformat() if deal.claimed_at else None,
+            "daysRemaining": (30 - (datetime.utcnow() - deal.claimed_at).days) if deal.claimed_at else 0,
+            "stage": deal.stage.value,
+            "estimatedMrr": float(deal.estimated_mrr) if deal.estimated_mrr else None,
+        } for deal in deals]
+
+    # ========================================================================
+    # Master Spec: PQL (Product Qualified Lead) Scoring Algorithm
+    # ========================================================================
+
+    async def calculate_pql_score(self, deal_id: str) -> dict:
+        """
+        Calculate Product Qualified Lead score (0.00-1.00).
+
+        Master Spec Module 1: PQL scoring helps prioritize leads based on:
+        - Fleet size (40% weight) - Most important factor
+        - Carrier operation type (20% weight)
+        - Contact information completeness (20% weight)
+        - Geographic location (10% weight)
+        - Data quality (10% weight)
+        """
+        from app.models.hq_deal import EnrichmentStatus
+
+        result = await self.db.execute(
+            select(HQDeal).where(HQDeal.id == deal_id)
+        )
+        deal = result.scalar_one_or_none()
+        if not deal:
+            raise ValueError(f"Deal {deal_id} not found")
+
+        # Initialize score and factors
+        total_score = Decimal("0.0")
+        factors = {}
+
+        # 1. Fleet Size Score (40% weight)
+        fleet_size_score = Decimal("0.0")
+        if deal.estimated_trucks:
+            try:
+                # Parse truck count (handles "15", "10-25", etc.)
+                truck_str = str(deal.estimated_trucks).strip()
+                if "-" in truck_str:
+                    # Range like "10-25" - take midpoint
+                    parts = truck_str.split("-")
+                    trucks = (int(parts[0]) + int(parts[1])) / 2
+                else:
+                    trucks = int(truck_str)
+
+                # Score based on fleet size
+                if trucks >= 100:
+                    fleet_size_score = Decimal("1.0")
+                elif trucks >= 50:
+                    fleet_size_score = Decimal("0.85")
+                elif trucks >= 20:
+                    fleet_size_score = Decimal("0.70")
+                elif trucks >= 10:
+                    fleet_size_score = Decimal("0.55")
+                elif trucks >= 5:
+                    fleet_size_score = Decimal("0.40")
+                else:
+                    fleet_size_score = Decimal("0.25")
+
+                factors["fleet_size"] = {
+                    "trucks": trucks,
+                    "score": float(fleet_size_score),
+                    "weight": 0.40
+                }
+            except (ValueError, IndexError):
+                factors["fleet_size"] = {"trucks": 0, "score": 0.0, "weight": 0.40}
+        else:
+            factors["fleet_size"] = {"trucks": 0, "score": 0.0, "weight": 0.40}
+
+        total_score += fleet_size_score * Decimal("0.40")
+
+        # 2. Carrier Type Score (20% weight)
+        carrier_type_score = Decimal("0.0")
+        if deal.carrier_type:
+            carrier_type_lower = deal.carrier_type.lower()
+            # Authorized for-hire carriers are ideal customers
+            if "authorized" in carrier_type_lower or carrier_type_lower == "a":
+                carrier_type_score = Decimal("1.0")
+            # Exempt for-hire are good prospects
+            elif "exempt" in carrier_type_lower or carrier_type_lower == "b":
+                carrier_type_score = Decimal("0.70")
+            # Private carriers are lower priority
+            elif "private" in carrier_type_lower or carrier_type_lower == "c":
+                carrier_type_score = Decimal("0.50")
+            else:
+                carrier_type_score = Decimal("0.30")
+
+            factors["carrier_type"] = {
+                "type": deal.carrier_type,
+                "score": float(carrier_type_score),
+                "weight": 0.20
+            }
+        else:
+            factors["carrier_type"] = {"type": None, "score": 0.0, "weight": 0.20}
+
+        total_score += carrier_type_score * Decimal("0.20")
+
+        # 3. Contact Information Completeness (20% weight)
+        contact_score = Decimal("0.0")
+        contact_completeness = 0
+        contact_total = 4
+
+        if deal.contact_name:
+            contact_completeness += 1
+        if deal.contact_email:
+            contact_completeness += 1
+        if deal.contact_phone:
+            contact_completeness += 1
+        if deal.contact_title:
+            contact_completeness += 1
+
+        contact_score = Decimal(str(contact_completeness / contact_total))
+        factors["contact_info"] = {
+            "completeness": f"{contact_completeness}/{contact_total}",
+            "score": float(contact_score),
+            "weight": 0.20
+        }
+
+        total_score += contact_score * Decimal("0.20")
+
+        # 4. Geographic Location (10% weight)
+        # Prioritize states with high freight volume
+        geo_score = Decimal("0.0")
+        high_volume_states = ["TX", "CA", "FL", "IL", "GA", "OH", "PA", "NC"]
+        medium_volume_states = ["TN", "AZ", "IN", "MI", "VA", "NJ", "WA", "MO"]
+
+        if deal.state:
+            state_upper = deal.state.upper()
+            if state_upper in high_volume_states:
+                geo_score = Decimal("1.0")
+            elif state_upper in medium_volume_states:
+                geo_score = Decimal("0.70")
+            else:
+                geo_score = Decimal("0.40")
+
+            factors["geography"] = {
+                "state": deal.state,
+                "score": float(geo_score),
+                "weight": 0.10
+            }
+        else:
+            factors["geography"] = {"state": None, "score": 0.0, "weight": 0.10}
+
+        total_score += geo_score * Decimal("0.10")
+
+        # 5. Data Quality (10% weight)
+        data_quality_score = Decimal("0.0")
+        quality_points = 0
+        quality_total = 5
+
+        # Has DOT number
+        if deal.dot_number:
+            quality_points += 1
+
+        # Has MC number
+        if deal.mc_number:
+            quality_points += 1
+
+        # Source is not "other"
+        if deal.source and deal.source != DealSource.OTHER:
+            quality_points += 1
+
+        # Has been enriched
+        if deal.enrichment_status == EnrichmentStatus.COMPLETED:
+            quality_points += 1
+
+        # Has notes
+        if deal.notes:
+            quality_points += 1
+
+        data_quality_score = Decimal(str(quality_points / quality_total))
+        factors["data_quality"] = {
+            "quality_points": f"{quality_points}/{quality_total}",
+            "score": float(data_quality_score),
+            "weight": 0.10
+        }
+
+        total_score += data_quality_score * Decimal("0.10")
+
+        # Round to 2 decimal places
+        final_score = round(total_score, 2)
+
+        # Determine tier
+        tier = self._get_pql_tier(final_score)
+
+        # Update deal
+        deal.pql_score = final_score
+        deal.pql_scored_at = datetime.utcnow()
+        deal.pql_factors = json.dumps(factors)
+
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "dealId": deal_id,
+            "pqlScore": float(final_score),
+            "tier": tier,
+            "factors": factors,
+            "scoredAt": deal.pql_scored_at.isoformat()
+        }
+
+    def _get_pql_tier(self, score: Decimal) -> str:
+        """Classify PQL score into tier."""
+        if score >= Decimal("0.75"):
+            return "Hot Lead"
+        elif score >= Decimal("0.50"):
+            return "Warm Lead"
+        elif score >= Decimal("0.30"):
+            return "Cold Lead"
+        else:
+            return "Low Priority"
+
+    async def score_all_unscored_deals(self, limit: int = 100) -> dict:
+        """
+        Batch score all deals that haven't been scored yet.
+
+        Master Spec Module 1: Run this periodically to score new leads.
+        """
+        # Get unscored deals
+        result = await self.db.execute(
+            select(HQDeal)
+            .where(HQDeal.pql_score == None)
+            .where(HQDeal.stage.in_([DealStage.LEAD, DealStage.CONTACTED, DealStage.QUALIFIED]))
+            .limit(limit)
+        )
+        deals = result.scalars().all()
+
+        scored_count = 0
+        errors = []
+
+        for deal in deals:
+            try:
+                await self.calculate_pql_score(deal.id)
+                scored_count += 1
+            except Exception as e:
+                errors.append({
+                    "dealId": deal.id,
+                    "companyName": deal.company_name,
+                    "error": str(e)
+                })
+
+        return {
+            "success": True,
+            "totalScored": scored_count,
+            "errors": errors
         }

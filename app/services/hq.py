@@ -196,6 +196,203 @@ class HQEmployeeService:
         await self.db.delete(employee)
         await self.db.commit()
 
+    # ========================================================================
+    # Master Spec Module 4: Affiliate & Sales - Referral Code Generation
+    # ========================================================================
+
+    async def generate_referral_code(self, employee_id: str, custom_code: Optional[str] = None) -> dict:
+        """
+        Generate a unique referral code for a sales agent or affiliate.
+
+        Master Spec Module 4: Referral codes enable tracking of:
+        - Which agent/affiliate referred a tenant
+        - Commission calculations for successful conversions
+        - Performance metrics per agent
+        """
+        import random
+        import string
+
+        employee = await self.db.get(HQEmployee, employee_id)
+        if not employee:
+            raise ValueError(f"Employee {employee_id} not found")
+
+        # Check if already has a referral code
+        if employee.referral_code:
+            return {
+                "success": False,
+                "message": "Employee already has a referral code",
+                "referralCode": employee.referral_code,
+                "generatedAt": employee.referral_code_generated_at.isoformat() if employee.referral_code_generated_at else None
+            }
+
+        # Generate referral code
+        if custom_code:
+            # Validate custom code format (alphanumeric, 6-12 chars, uppercase)
+            if not custom_code.isalnum():
+                raise ValueError("Custom code must be alphanumeric")
+            if len(custom_code) < 6 or len(custom_code) > 12:
+                raise ValueError("Custom code must be 6-12 characters")
+
+            referral_code = custom_code.upper()
+
+            # Check if custom code already exists
+            result = await self.db.execute(
+                select(HQEmployee).where(HQEmployee.referral_code == referral_code)
+            )
+            if result.scalar_one_or_none():
+                raise ValueError(f"Referral code {referral_code} already in use")
+        else:
+            # Auto-generate: FirstLast + 4 random chars
+            # Example: JOHNSMITH1A2B
+            first_clean = ''.join(c for c in employee.first_name.upper() if c.isalnum())[:6]
+            last_clean = ''.join(c for c in employee.last_name.upper() if c.isalnum())[:6]
+
+            # Try to generate unique code (max 10 attempts)
+            for attempt in range(10):
+                random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+                referral_code = f"{first_clean}{last_clean}{random_suffix}"[:12]
+
+                # Check uniqueness
+                result = await self.db.execute(
+                    select(HQEmployee).where(HQEmployee.referral_code == referral_code)
+                )
+                if not result.scalar_one_or_none():
+                    break
+            else:
+                raise ValueError("Failed to generate unique referral code after 10 attempts")
+
+        # Save referral code
+        employee.referral_code = referral_code
+        employee.referral_code_generated_at = datetime.utcnow()
+
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "employeeId": employee_id,
+            "referralCode": referral_code,
+            "generatedAt": employee.referral_code_generated_at.isoformat(),
+            "referralUrl": f"https://app.freightops.io/signup?ref={referral_code}"
+        }
+
+    async def get_referral_stats(self, employee_id: str) -> dict:
+        """
+        Get referral statistics for a sales agent or affiliate.
+
+        Master Spec Module 4: Shows performance metrics including:
+        - Total referrals (lifetime_referrals)
+        - Total commission earned (lifetime_commission_earned)
+        - Active tenants from referrals
+        - Pending commission payouts
+        """
+        from app.models.hq_tenant import HQTenant
+        from app.models.hq_commission import HQCommissionPayout
+        from decimal import Decimal
+
+        employee = await self.db.get(HQEmployee, employee_id)
+        if not employee:
+            raise ValueError(f"Employee {employee_id} not found")
+
+        if not employee.referral_code:
+            raise ValueError("Employee does not have a referral code")
+
+        # Get active tenants referred by this agent
+        result = await self.db.execute(
+            select(HQTenant)
+            .where(HQTenant.referred_by_agent_id == employee_id)
+            .where(HQTenant.status.in_(["ACTIVE", "TRIAL"]))
+        )
+        active_tenants = result.scalars().all()
+
+        # Calculate total MRR from referred tenants
+        total_referred_mrr = sum(
+            tenant.mrr_amount or Decimal("0.00")
+            for tenant in active_tenants
+        )
+
+        # Get pending commission payouts
+        result = await self.db.execute(
+            select(HQCommissionPayout)
+            .where(HQCommissionPayout.agent_id == employee_id)
+            .where(HQCommissionPayout.status == "PENDING")
+        )
+        pending_payouts = result.scalars().all()
+
+        pending_commission = sum(
+            payout.commission_amount or Decimal("0.00")
+            for payout in pending_payouts
+        )
+
+        return {
+            "success": True,
+            "employeeId": employee_id,
+            "referralCode": employee.referral_code,
+            "stats": {
+                "lifetimeReferrals": employee.lifetime_referrals or 0,
+                "lifetimeCommissionEarned": float(employee.lifetime_commission_earned or Decimal("0.00")),
+                "activeReferredTenants": len(active_tenants),
+                "totalReferredMrr": float(total_referred_mrr),
+                "pendingCommission": float(pending_commission),
+                "commissionRates": {
+                    "mrr": float(employee.commission_rate_mrr or Decimal("0.00")),
+                    "setup": float(employee.commission_rate_setup or Decimal("0.00")),
+                    "fintech": float(employee.commission_rate_fintech or Decimal("0.00"))
+                }
+            }
+        }
+
+    async def update_commission_rates(
+        self,
+        employee_id: str,
+        mrr_rate: Optional[Decimal] = None,
+        setup_rate: Optional[Decimal] = None,
+        fintech_rate: Optional[Decimal] = None
+    ) -> dict:
+        """
+        Update commission rates for a sales agent or affiliate.
+
+        Master Spec Module 4: Commission rates are percentages (e.g., 0.1000 = 10%)
+        - mrr_rate: Commission on monthly recurring revenue
+        - setup_rate: Commission on setup fees
+        - fintech_rate: Commission on fintech revenue (banking/payroll)
+        """
+        employee = await self.db.get(HQEmployee, employee_id)
+        if not employee:
+            raise ValueError(f"Employee {employee_id} not found")
+
+        updated_fields = []
+
+        if mrr_rate is not None:
+            if mrr_rate < Decimal("0.0") or mrr_rate > Decimal("1.0"):
+                raise ValueError("MRR rate must be between 0.0 and 1.0 (0% to 100%)")
+            employee.commission_rate_mrr = mrr_rate
+            updated_fields.append("commission_rate_mrr")
+
+        if setup_rate is not None:
+            if setup_rate < Decimal("0.0") or setup_rate > Decimal("1.0"):
+                raise ValueError("Setup rate must be between 0.0 and 1.0 (0% to 100%)")
+            employee.commission_rate_setup = setup_rate
+            updated_fields.append("commission_rate_setup")
+
+        if fintech_rate is not None:
+            if fintech_rate < Decimal("0.0") or fintech_rate > Decimal("1.0"):
+                raise ValueError("Fintech rate must be between 0.0 and 1.0 (0% to 100%)")
+            employee.commission_rate_fintech = fintech_rate
+            updated_fields.append("commission_rate_fintech")
+
+        await self.db.commit()
+
+        return {
+            "success": True,
+            "employeeId": employee_id,
+            "updatedFields": updated_fields,
+            "commissionRates": {
+                "mrr": float(employee.commission_rate_mrr or Decimal("0.00")),
+                "setup": float(employee.commission_rate_setup or Decimal("0.00")),
+                "fintech": float(employee.commission_rate_fintech or Decimal("0.00"))
+            }
+        }
+
 
 class HQTenantService:
     """Service for managing tenants."""
@@ -342,6 +539,171 @@ class HQTenantService:
         await self.db.commit()
         await self.db.refresh(tenant)
         return tenant
+
+    # ========================================================================
+    # Master Spec Module 2: MRR Calculation & Financial Metrics
+    # ========================================================================
+
+    async def calculate_mrr(self, tenant_id: str) -> dict:
+        """
+        Calculate Monthly Recurring Revenue for a tenant.
+
+        Master Spec Module 2: MRR calculation includes:
+        - Base subscription MRR from HQSubscription
+        - Fintech revenue estimate (banking + payroll)
+        - Add-on services revenue
+        - Usage-based revenue (if applicable)
+        """
+        from app.models.hq_subscription import HQSubscription
+        from decimal import Decimal
+
+        # Get tenant
+        tenant = await self.db.get(HQTenant, tenant_id)
+        if not tenant:
+            raise ValueError(f"Tenant {tenant_id} not found")
+
+        # Initialize MRR components
+        subscription_mrr = Decimal("0.00")
+        fintech_mrr = Decimal("0.00")
+        addon_mrr = Decimal("0.00")
+        total_mrr = Decimal("0.00")
+
+        # 1. Base Subscription MRR
+        result = await self.db.execute(
+            select(HQSubscription)
+            .where(HQSubscription.tenant_id == tenant_id)
+            .where(HQSubscription.status.in_(["active", "trialing"]))
+        )
+        subscription = result.scalar_one_or_none()
+
+        if subscription:
+            # Use monthly_rate from subscription
+            subscription_mrr = subscription.monthly_rate or Decimal("0.00")
+
+        # 2. Fintech Revenue Estimate
+        # Banking: Estimate based on deposit volume * take rate
+        if tenant.banking_status == "ACCOUNT_OPENED" and tenant.total_deposits_mtd:
+            # Example: 0.25% take rate on deposits
+            banking_take_rate = tenant.fintech_take_rate or Decimal("0.0025")
+            fintech_mrr += (tenant.total_deposits_mtd * banking_take_rate)
+
+        # Payroll: Estimate based on active employees
+        if tenant.payroll_status == "ACTIVE" and tenant.active_employees_paid:
+            # Example: $5 per employee per month
+            payroll_per_employee = Decimal("5.00")
+            fintech_mrr += (Decimal(str(tenant.active_employees_paid)) * payroll_per_employee)
+
+        # 3. Total MRR
+        total_mrr = subscription_mrr + fintech_mrr + addon_mrr
+
+        # 4. Update tenant MRR field
+        tenant.mrr_amount = total_mrr
+        await self.db.commit()
+
+        # 5. Calculate additional metrics
+        # Annual Contract Value (ACV)
+        acv = total_mrr * Decimal("12")
+
+        # Lifetime Value (simple estimate: MRR * expected lifetime months)
+        expected_lifetime_months = Decimal("36")  # 3 years average
+        ltv_estimate = total_mrr * expected_lifetime_months
+
+        return {
+            "success": True,
+            "tenantId": tenant_id,
+            "mrr": {
+                "subscriptionMrr": float(subscription_mrr),
+                "fintechMrr": float(fintech_mrr),
+                "addonMrr": float(addon_mrr),
+                "totalMrr": float(total_mrr)
+            },
+            "metrics": {
+                "acv": float(acv),
+                "ltvEstimate": float(ltv_estimate),
+                "activeEmployees": int(tenant.active_employees_paid) if tenant.active_employees_paid else 0,
+                "depositsMtd": float(tenant.total_deposits_mtd) if tenant.total_deposits_mtd else 0.0
+            },
+            "calculatedAt": datetime.utcnow().isoformat()
+        }
+
+    async def calculate_all_tenant_mrr(self, limit: int = 100) -> dict:
+        """
+        Batch calculate MRR for all active tenants.
+
+        Master Spec Module 2: Run this periodically (e.g., nightly) to update
+        all tenant MRR values for reporting and churn prediction.
+        """
+        from app.models.hq_tenant import TenantStatus
+
+        # Get active tenants
+        result = await self.db.execute(
+            select(HQTenant)
+            .where(HQTenant.status.in_([TenantStatus.ACTIVE, TenantStatus.TRIAL]))
+            .limit(limit)
+        )
+        tenants = result.scalars().all()
+
+        calculated_count = 0
+        errors = []
+        total_platform_mrr = Decimal("0.00")
+
+        for tenant in tenants:
+            try:
+                result = await self.calculate_mrr(tenant.id)
+                calculated_count += 1
+                total_platform_mrr += Decimal(str(result["mrr"]["totalMrr"]))
+            except Exception as e:
+                errors.append({
+                    "tenantId": tenant.id,
+                    "companyName": tenant.company.name if tenant.company else "Unknown",
+                    "error": str(e)
+                })
+
+        return {
+            "success": True,
+            "totalCalculated": calculated_count,
+            "totalPlatformMrr": float(total_platform_mrr),
+            "errors": errors
+        }
+
+    async def update_fintech_metrics(
+        self,
+        tenant_id: str,
+        deposits_mtd: Optional[Decimal] = None,
+        active_employees: Optional[int] = None
+    ) -> dict:
+        """
+        Update fintech metrics for MRR calculation.
+
+        Master Spec Module 3: This endpoint is called by webhook handlers when:
+        - Synctera reports new deposits (banking)
+        - CheckHQ reports active payroll employees
+        """
+        tenant = await self.db.get(HQTenant, tenant_id)
+        if not tenant:
+            raise ValueError(f"Tenant {tenant_id} not found")
+
+        updated_fields = []
+
+        if deposits_mtd is not None:
+            tenant.total_deposits_mtd = deposits_mtd
+            updated_fields.append("total_deposits_mtd")
+
+        if active_employees is not None:
+            tenant.active_employees_paid = Decimal(str(active_employees))
+            updated_fields.append("active_employees_paid")
+
+        await self.db.commit()
+
+        # Recalculate MRR with new data
+        mrr_result = await self.calculate_mrr(tenant_id)
+
+        return {
+            "success": True,
+            "tenantId": tenant_id,
+            "updatedFields": updated_fields,
+            "newMrr": mrr_result["mrr"]["totalMrr"]
+        }
 
 
 class HQContractService:

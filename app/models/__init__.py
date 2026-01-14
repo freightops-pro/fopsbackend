@@ -48,7 +48,7 @@ from app.models.worker import (  # noqa: F401
 
 # HQ Models
 from app.models.hq_employee import HQEmployee, HQRole  # noqa: F401
-from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier  # noqa: F401
+from app.models.hq_tenant import HQTenant, TenantStatus, SubscriptionTier, SubscriptionStatus, BankingStatus, PayrollStatus  # noqa: F401
 from app.models.hq_contract import HQContract, ContractStatus, ContractType  # noqa: F401
 from app.models.hq_quote import HQQuote, QuoteStatus  # noqa: F401
 from app.models.hq_credit import HQCredit, CreditType, CreditStatus  # noqa: F401
@@ -64,8 +64,14 @@ from app.models.hq_sales_rep_commission import HQSalesRepCommission, CommissionT
 from app.models.hq_commission_record import HQCommissionRecord, CommissionRecordStatus  # noqa: F401
 from app.models.hq_commission_payment import HQCommissionPayment, CommissionPaymentStatus  # noqa: F401
 from app.models.hq_contractor_settlement import HQContractorSettlement, SettlementStatus  # noqa: F401
-from app.models.hq_deal import HQDeal, HQDealActivity, DealStage, DealSource  # noqa: F401
+from app.models.hq_deal import HQDeal, HQDealActivity, DealStage, DealSource, EnrichmentStatus  # noqa: F401
 from app.models.hq_subscription import HQSubscription, HQSubscriptionRateChange, HQSubscriptionStatus, HQBillingInterval  # noqa: F401
+
+# Master Spec: New HQ Models
+from app.models.hq_commission import HQCommissionPayout, PayoutStatus as CommissionPayoutStatus, CommissionType  # noqa: F401
+from app.models.hq_ai_usage import HQAIUsageLog, HQAIAnomalyAlert, AIProvider, AnomalyType, AnomalySeverity  # noqa: F401
+from app.models.hq_webhook import HQWebhookLog, WebhookProvider, WebhookStatus  # noqa: F401
+from app.models.hq_impersonation import HQImpersonationLog  # noqa: F401
 
 # Billing Models
 from app.models.billing import Subscription, SubscriptionAddOn, PaymentMethod, StripeInvoice, StripeWebhookEvent  # noqa: F401

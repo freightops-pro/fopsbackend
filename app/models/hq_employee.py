@@ -1,6 +1,6 @@
 """HQ Employee model for SaaS admin users."""
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, Numeric, String, func
 import enum
 from typing import Set
 
@@ -135,3 +135,16 @@ class HQEmployee(Base):
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Master Spec Module 4: Affiliate & Sales - Referral Codes
+    referral_code = Column(String, nullable=True, unique=True, comment="Master Spec: Unique referral code for this agent")
+    referral_code_generated_at = Column(DateTime, nullable=True, comment="Master Spec: When referral code was generated")
+
+    # Master Spec Module 4: Commission Rates
+    commission_rate_mrr = Column(Numeric(5, 4), nullable=True, comment="Master Spec: Commission % on MRR (e.g., 0.1000 = 10%)")
+    commission_rate_setup = Column(Numeric(5, 4), nullable=True, comment="Master Spec: Commission % on setup fees")
+    commission_rate_fintech = Column(Numeric(5, 4), nullable=True, comment="Master Spec: Commission % on fintech revenue")
+
+    # Master Spec Module 4: Performance Metrics
+    lifetime_referrals = Column(Integer, nullable=True, default=0, comment="Master Spec: Total tenants referred by this agent")
+    lifetime_commission_earned = Column(Numeric(12, 2), nullable=True, default=0, comment="Master Spec: Total commissions earned")
