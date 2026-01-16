@@ -105,6 +105,12 @@ from app.models.hq_ai_queue import (  # noqa: F401
     AIActionType, AIActionRisk, AIActionStatus,
 )
 
+# HQ AI Task Manager Models
+from app.models.hq_ai_task import (  # noqa: F401
+    HQAITask, HQAITaskEvent,
+    HQAIAgentType, HQAITaskStatus, HQAITaskPriority, HQAITaskEventType,
+)
+
 # HQ Chat Models
 from app.models.hq_chat import HQChatChannel, HQChatMessage, HQChatParticipant  # noqa: F401
 

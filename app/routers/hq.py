@@ -8054,3 +8054,227 @@ async def list_background_jobs(
 ):
     """List background jobs from the scheduler."""
     return HQBackgroundJobService.get_jobs()
+
+
+# ============================================================================
+# AI Task Manager Endpoints
+# ============================================================================
+
+from app.models.hq_ai_task import HQAITask, HQAITaskEvent, HQAITaskStatus, HQAIAgentType, HQAITaskEventType, HQAITaskPriority
+
+
+class AITaskCreate(BaseModel):
+    """Create a new AI task."""
+    agent_type: str
+    task_description: str
+    priority: str = "normal"
+    context_data: Optional[dict] = None
+
+
+class AITaskResponse(BaseModel):
+    """AI task response."""
+    id: str
+    agentType: str
+    description: str
+    status: str
+    priority: str
+    progressPercent: int
+    result: Optional[str] = None
+    error: Optional[str] = None
+    createdAt: datetime
+    startedAt: Optional[datetime] = None
+    completedAt: Optional[datetime] = None
+
+    @classmethod
+    def from_model(cls, task: HQAITask) -> "AITaskResponse":
+        return cls(
+            id=task.id,
+            agentType=task.agent_type.value if task.agent_type else "oracle",
+            description=task.description,
+            status=task.status.value if task.status else "queued",
+            priority=task.priority.value if task.priority else "normal",
+            progressPercent=task.progress_percent or 0,
+            result=task.result,
+            error=task.error,
+            createdAt=task.created_at,
+            startedAt=task.started_at,
+            completedAt=task.completed_at,
+        )
+
+
+class AITaskEventResponse(BaseModel):
+    """Task event response."""
+    id: str
+    taskId: str
+    eventType: str
+    content: str
+    timestamp: datetime
+
+    @classmethod
+    def from_model(cls, event: HQAITaskEvent) -> "AITaskEventResponse":
+        return cls(
+            id=event.id,
+            taskId=event.task_id,
+            eventType=event.event_type.value if event.event_type else "thinking",
+            content=event.content,
+            timestamp=event.timestamp,
+        )
+
+
+@router.get("/ai/tasks", response_model=List[AITaskResponse])
+async def list_ai_tasks(
+    status: Optional[str] = Query(None, description="Comma-separated list of statuses"),
+    agent_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[AITaskResponse]:
+    """List AI tasks with optional filtering."""
+    from sqlalchemy import select
+
+    query = select(HQAITask)
+
+    # Filter by status
+    if status:
+        statuses = [s.strip() for s in status.split(",")]
+        valid_statuses = []
+        for s in statuses:
+            try:
+                valid_statuses.append(HQAITaskStatus(s))
+            except ValueError:
+                pass
+        if valid_statuses:
+            query = query.where(HQAITask.status.in_(valid_statuses))
+
+    # Filter by agent type
+    if agent_type:
+        try:
+            agent = HQAIAgentType(agent_type)
+            query = query.where(HQAITask.agent_type == agent)
+        except ValueError:
+            pass
+
+    # Order by created_at desc
+    query = query.order_by(HQAITask.created_at.desc()).limit(limit)
+
+    result = await db.execute(query)
+    tasks = result.scalars().all()
+
+    return [AITaskResponse.from_model(t) for t in tasks]
+
+
+@router.post("/ai/tasks", response_model=AITaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_ai_task(
+    task_data: AITaskCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> AITaskResponse:
+    """Create a new AI task."""
+    import uuid
+
+    try:
+        agent_type = HQAIAgentType(task_data.agent_type)
+    except ValueError:
+        agent_type = HQAIAgentType.ORACLE
+
+    try:
+        priority = HQAITaskPriority(task_data.priority)
+    except ValueError:
+        priority = HQAITaskPriority.NORMAL
+
+    task = HQAITask(
+        id=str(uuid.uuid4()),
+        agent_type=agent_type,
+        description=task_data.task_description,
+        priority=priority,
+        context_data=task_data.context_data,
+        created_by_id=current_employee.id,
+        status=HQAITaskStatus.QUEUED,
+        progress_percent=0,
+        created_at=datetime.utcnow(),
+    )
+
+    db.add(task)
+
+    # Add initial event
+    event = HQAITaskEvent(
+        id=str(uuid.uuid4()),
+        task_id=task.id,
+        event_type=HQAITaskEventType.THINKING,
+        content=f"Task queued for {agent_type.value.title()} agent. Analyzing request...",
+        timestamp=datetime.utcnow(),
+    )
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(task)
+
+    return AITaskResponse.from_model(task)
+
+
+@router.get("/ai/tasks/{task_id}", response_model=AITaskResponse)
+async def get_ai_task(
+    task_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> AITaskResponse:
+    """Get a specific AI task."""
+    from sqlalchemy import select
+
+    result = await db.execute(select(HQAITask).where(HQAITask.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    return AITaskResponse.from_model(task)
+
+
+@router.get("/ai/tasks/{task_id}/events", response_model=List[AITaskEventResponse])
+async def list_task_events(
+    task_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[AITaskEventResponse]:
+    """Get events for a specific task."""
+    from sqlalchemy import select
+
+    # Verify task exists
+    result = await db.execute(select(HQAITask).where(HQAITask.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    result = await db.execute(
+        select(HQAITaskEvent)
+        .where(HQAITaskEvent.task_id == task_id)
+        .order_by(HQAITaskEvent.timestamp.asc())
+        .limit(limit)
+    )
+    events = result.scalars().all()
+
+    return [AITaskEventResponse.from_model(e) for e in events]
+
+
+@router.delete("/ai/tasks/{task_id}")
+async def delete_ai_task(
+    task_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an AI task."""
+    from sqlalchemy import select, delete
+
+    result = await db.execute(select(HQAITask).where(HQAITask.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Delete events first
+    await db.execute(delete(HQAITaskEvent).where(HQAITaskEvent.task_id == task_id))
+    await db.delete(task)
+    await db.commit()
+
+    return {"message": "Task deleted"}
