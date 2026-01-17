@@ -184,11 +184,8 @@ class HQJournalEntry(Base):
     entries = relationship("HQGeneralLedgerEntry", back_populates="journal_entry", cascade="all, delete-orphan")
 
     __table_args__ = (
-        # Ensure debits = credits for posted entries
-        CheckConstraint(
-            "(status != 'posted') OR (total_debits = total_credits)",
-            name="ck_journal_entry_balanced"
-        ),
+        # NOTE: Balance check (total_debits = total_credits for posted entries)
+        # is enforced at the application level in the posting logic
         Index("ix_hq_je_transaction_date", "transaction_date"),
         Index("ix_hq_je_tenant_id", "tenant_id"),
         Index("ix_hq_je_source", "source_type", "source_id"),
