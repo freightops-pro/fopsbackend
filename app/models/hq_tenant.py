@@ -140,6 +140,15 @@ class HQTenant(Base):
     # Master Spec: New relationships
     paused_by = relationship("HQEmployee", foreign_keys=[paused_by_id])
     referred_by_agent = relationship("HQEmployee", foreign_keys=[referred_by_agent_id])
-    parent_tenant = relationship("HQTenant", remote_side=[id], foreign_keys=[parent_tenant_id])
-    child_tenants = relationship("HQTenant", remote_side=[parent_tenant_id])
+    parent_tenant = relationship(
+        "HQTenant",
+        remote_side=[id],
+        foreign_keys=[parent_tenant_id],
+        back_populates="child_tenants"
+    )
+    child_tenants = relationship(
+        "HQTenant",
+        foreign_keys="HQTenant.parent_tenant_id",
+        back_populates="parent_tenant"
+    )
     last_impersonated_by = relationship("HQEmployee", foreign_keys=[last_impersonated_by_id])
