@@ -102,7 +102,7 @@ async def get_current_user_websocket(websocket: WebSocket, db: AsyncSession) -> 
 
     payload = decode_access_token(token)
     if not payload:
-        logger.warning(f"[WebSocket Auth] Token decode failed for token: {token[:50]}...")
+        logger.warning("[WebSocket Auth] Token decode failed")
         return None
 
     user_id = payload.get("sub")

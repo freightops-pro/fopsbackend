@@ -27,6 +27,7 @@ from app.schemas.integration import (
     SamsaraConnectionTest,
     SamsaraCredentials,
 )
+from app.core.oauth_encryption import encrypt_oauth_token, decrypt_oauth_token
 from app.services.motive.motive_service import MotiveService
 from app.services.quickbooks.quickbooks_service import QuickBooksService
 from app.services.haulpay.haulpay_service import HaulPayService
@@ -2107,10 +2108,11 @@ async def quickbooks_oauth_callback(
         auth_client.get_bearer_token(code, realm_id=realmId)
 
         # Store tokens and realm_id (tenant-specific data)
+        # Encrypt tokens as required by Intuit security requirements
         if not integration.credentials:
             integration.credentials = {}
-        integration.credentials["access_token"] = auth_client.access_token
-        integration.credentials["refresh_token"] = auth_client.refresh_token
+        integration.credentials["access_token"] = encrypt_oauth_token(auth_client.access_token)
+        integration.credentials["refresh_token"] = encrypt_oauth_token(auth_client.refresh_token)
 
         if not integration.config:
             integration.config = {}
@@ -2220,10 +2222,11 @@ async def quickbooks_oauth_complete_manual(
         auth_client.get_bearer_token(authorization_code, realm_id=realm_id)
 
         # Store tokens and realm_id from SDK
+        # Encrypt tokens as required by Intuit security requirements
         if not integration.credentials:
             integration.credentials = {}
-        integration.credentials["access_token"] = auth_client.access_token
-        integration.credentials["refresh_token"] = auth_client.refresh_token
+        integration.credentials["access_token"] = encrypt_oauth_token(auth_client.access_token)
+        integration.credentials["refresh_token"] = encrypt_oauth_token(auth_client.refresh_token)
 
         if not integration.config:
             integration.config = {}

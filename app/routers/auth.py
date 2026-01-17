@@ -123,13 +123,21 @@ async def login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def read_current_user(current_user=Depends(deps.get_current_user)) -> UserResponse:
+async def read_current_user(
+    response: Response,
+    current_user=Depends(deps.get_current_user)
+) -> UserResponse:
+    # Set Cache-Control headers for sensitive user data
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return deps.build_user_response(current_user)
 
 
 @router.get("/session", response_model=AuthSessionResponse)
 async def read_session(
     request: Request,
+    response: Response,
     current_user=Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> AuthSessionResponse:
@@ -137,6 +145,11 @@ async def read_session(
     Get current session with user and company info.
     Returns the access token from the Authorization header so frontend can persist it.
     """
+    # Set Cache-Control headers as required by Intuit security requirements
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     service = AuthService(db)
 
     # Extract token from Authorization header to include in response

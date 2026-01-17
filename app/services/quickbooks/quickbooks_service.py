@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.oauth_encryption import decrypt_oauth_token
 from app.models.integration import CompanyIntegration
 from app.services.quickbooks.quickbooks_client import QuickBooksAPIClient
 
@@ -44,12 +45,13 @@ class QuickBooksService:
         if not client_id or not client_secret:
             raise ValueError("QuickBooks app credentials not configured in environment")
 
-        # Get tenant-specific tokens from integration
+        # Get tenant-specific tokens from integration (decrypt if encrypted)
         if not integration.credentials:
             raise ValueError("Integration credentials not found")
 
-        access_token = integration.credentials.get("access_token")
-        refresh_token = integration.credentials.get("refresh_token")
+        # Decrypt tokens (handles both encrypted and unencrypted for backwards compatibility)
+        access_token = decrypt_oauth_token(integration.credentials.get("access_token", ""))
+        refresh_token = decrypt_oauth_token(integration.credentials.get("refresh_token", ""))
 
         # Check both credentials and config for realm_id
         realm_id = integration.credentials.get("realm_id")
