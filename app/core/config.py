@@ -74,6 +74,16 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
 
+    # Grok AI Configuration (for HQ AI Task Manager - Oracle/Sentinel/Nexus agents)
+    # Uses OpenAI-compatible API format with Llama 4
+    grok_api_key: Optional[str] = None  # Set GROK_API_KEY in .env
+    xai_api_key: Optional[str] = None  # Alternative: XAI_API_KEY
+    grok_base_url: str = "https://api.x.ai/v1"  # Grok API endpoint
+    grok_model: str = "grok-3"  # Model to use (grok-3, llama-4, etc.)
+
+    # Web Search for AI Agents (Tavily API)
+    tavily_api_key: Optional[str] = None  # Set TAVILY_API_KEY for web search capability
+
     # FMCSA Motor Carrier Census API
     fmcsa_app_token: Optional[str] = None
     fmcsa_secret_token: Optional[str] = None

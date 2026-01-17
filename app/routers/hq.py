@@ -3042,88 +3042,8 @@ async def colab_chat(
 
 
 # ============================================================================
-# HQ AI Tasks Endpoints (Proxy to main AI tasks for HQ portal)
-# ============================================================================
-
-from app.models.ai_task import AITask
-from sqlalchemy import select, or_
-
-
-@router.get("/ai/tasks")
-async def list_hq_ai_tasks(
-    status: Optional[str] = None,
-    agent_type: Optional[str] = None,
-    limit: int = 50,
-    _: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    List AI tasks across all tenants for HQ monitoring.
-
-    Query params:
-    - status: Filter by status (comma-separated for multiple, e.g. 'queued,planning,in_progress')
-    - agent_type: Filter by agent type
-    - limit: Max results (default 50)
-    """
-    query = select(AITask)
-
-    if status:
-        # Support comma-separated status values
-        statuses = [s.strip() for s in status.split(",")]
-        query = query.where(or_(*[AITask.status == s for s in statuses]))
-
-    if agent_type:
-        query = query.where(AITask.agent_type == agent_type)
-
-    query = query.order_by(AITask.created_at.desc()).limit(limit)
-
-    result = await db.execute(query)
-    tasks = result.scalars().all()
-
-    return [
-        {
-            "id": str(task.id),
-            "company_id": str(task.company_id) if task.company_id else None,
-            "agent_type": task.agent_type,
-            "task_description": task.task_description,
-            "status": task.status,
-            "progress_percent": task.progress_percent,
-            "result": task.result,
-            "error_message": task.error_message,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        }
-        for task in tasks
-    ]
-
-
-@router.get("/ai/tasks/{task_id}")
-async def get_hq_ai_task(
-    task_id: str,
-    _: HQEmployee = Depends(get_current_hq_employee),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a specific AI task by ID for HQ monitoring."""
-    result = await db.execute(select(AITask).where(AITask.id == task_id))
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    return {
-        "id": str(task.id),
-        "company_id": str(task.company_id) if task.company_id else None,
-        "agent_type": task.agent_type,
-        "task_description": task.task_description,
-        "status": task.status,
-        "progress_percent": task.progress_percent,
-        "result": task.result,
-        "error_message": task.error_message,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-    }
+# NOTE: HQ AI Tasks Endpoints moved to end of file (lines ~8124+)
+# Using HQAITask model for HQ-specific AI task management with Oracle/Sentinel/Nexus agents
 
 
 # ============================================================================
@@ -8278,3 +8198,289 @@ async def delete_ai_task(
     await db.commit()
 
     return {"message": "Task deleted"}
+
+
+# =============================================================================
+# Knowledge Base Management (RAG)
+# =============================================================================
+
+class KnowledgeDocumentCreate(BaseModel):
+    """Schema for creating a knowledge document."""
+    title: str = Field(..., max_length=500)
+    content: str
+    category: str = Field(..., description="Category: accounting, taxes, hr, payroll, marketing, compliance, operations, general")
+    source: Optional[str] = Field(None, max_length=500)
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    """Schema for knowledge document response."""
+    id: str
+    title: str
+    category: str
+    source: Optional[str]
+    content_preview: str
+    chunk_count: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """Schema for searching knowledge base."""
+    query: str
+    categories: Optional[List[str]] = None
+    limit: int = Field(5, ge=1, le=20)
+    min_similarity: float = Field(0.6, ge=0.0, le=1.0)
+
+
+class KnowledgeSearchResult(BaseModel):
+    """Schema for search result."""
+    chunk_id: str
+    document_id: str
+    content: str
+    category: str
+    similarity: float
+
+
+class KnowledgeStatsResponse(BaseModel):
+    """Schema for knowledge base stats."""
+    total_documents: int
+    documents_by_category: Dict[str, int]
+    total_chunks: int
+    embedded_chunks: int
+
+
+@router.post("/ai/knowledge", response_model=KnowledgeDocumentResponse)
+async def create_knowledge_document(
+    doc_data: KnowledgeDocumentCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """
+    Ingest a new document into the knowledge base.
+
+    The document will be chunked and embedded for semantic search.
+    """
+    from app.services.hq_rag_service import ingest_document
+    from app.models.hq_knowledge_base import KnowledgeCategory
+
+    # Validate category
+    try:
+        category = KnowledgeCategory(doc_data.category)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Must be one of: {[c.value for c in KnowledgeCategory]}"
+        )
+
+    doc = await ingest_document(
+        db=db,
+        title=doc_data.title,
+        content=doc_data.content,
+        category=category,
+        source=doc_data.source,
+    )
+
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to ingest document"
+        )
+
+    # Count chunks
+    from sqlalchemy import select, func
+    from app.models.hq_knowledge_base import HQKnowledgeChunk
+
+    result = await db.execute(
+        select(func.count()).select_from(HQKnowledgeChunk).where(
+            HQKnowledgeChunk.document_id == doc.id
+        )
+    )
+    chunk_count = result.scalar() or 0
+
+    return KnowledgeDocumentResponse(
+        id=doc.id,
+        title=doc.title,
+        category=doc.category.value,
+        source=doc.source,
+        content_preview=doc.content[:200] + "..." if len(doc.content) > 200 else doc.content,
+        chunk_count=chunk_count,
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
+    )
+
+
+@router.get("/ai/knowledge", response_model=List[KnowledgeDocumentResponse])
+async def list_knowledge_documents(
+    category: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[KnowledgeDocumentResponse]:
+    """List knowledge documents with optional category filter."""
+    from sqlalchemy import select, func
+    from app.models.hq_knowledge_base import HQKnowledgeDocument, HQKnowledgeChunk, KnowledgeCategory
+
+    query = select(HQKnowledgeDocument).order_by(HQKnowledgeDocument.created_at.desc())
+
+    if category:
+        try:
+            cat = KnowledgeCategory(category)
+            query = query.where(HQKnowledgeDocument.category == cat)
+        except ValueError:
+            pass
+
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    docs = result.scalars().all()
+
+    responses = []
+    for doc in docs:
+        # Get chunk count
+        chunk_result = await db.execute(
+            select(func.count()).select_from(HQKnowledgeChunk).where(
+                HQKnowledgeChunk.document_id == doc.id
+            )
+        )
+        chunk_count = chunk_result.scalar() or 0
+
+        responses.append(KnowledgeDocumentResponse(
+            id=doc.id,
+            title=doc.title,
+            category=doc.category.value,
+            source=doc.source,
+            content_preview=doc.content[:200] + "..." if len(doc.content) > 200 else doc.content,
+            chunk_count=chunk_count,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at,
+        ))
+
+    return responses
+
+
+@router.get("/ai/knowledge/{document_id}")
+async def get_knowledge_document(
+    document_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific knowledge document with full content."""
+    from sqlalchemy import select, func
+    from app.models.hq_knowledge_base import HQKnowledgeDocument, HQKnowledgeChunk
+
+    result = await db.execute(
+        select(HQKnowledgeDocument).where(HQKnowledgeDocument.id == document_id)
+    )
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Get chunks
+    chunks_result = await db.execute(
+        select(HQKnowledgeChunk)
+        .where(HQKnowledgeChunk.document_id == document_id)
+        .order_by(HQKnowledgeChunk.chunk_index)
+    )
+    chunks = chunks_result.scalars().all()
+
+    return {
+        "id": doc.id,
+        "title": doc.title,
+        "category": doc.category.value,
+        "source": doc.source,
+        "content": doc.content,
+        "created_at": doc.created_at,
+        "updated_at": doc.updated_at,
+        "chunks": [
+            {
+                "id": c.id,
+                "chunk_index": c.chunk_index,
+                "content": c.content,
+                "has_embedding": c.embedding is not None,
+            }
+            for c in chunks
+        ]
+    }
+
+
+@router.delete("/ai/knowledge/{document_id}")
+async def delete_knowledge_document(
+    document_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a knowledge document and all its chunks."""
+    from app.services.hq_rag_service import delete_document
+
+    success = await delete_document(db, document_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or could not be deleted"
+        )
+
+    return {"message": "Document deleted"}
+
+
+@router.post("/ai/knowledge/search", response_model=List[KnowledgeSearchResult])
+async def search_knowledge(
+    search_data: KnowledgeSearchRequest,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[KnowledgeSearchResult]:
+    """
+    Search the knowledge base using semantic similarity.
+
+    Returns the most relevant chunks based on the query.
+    """
+    from app.services.hq_rag_service import search_knowledge as rag_search
+    from app.models.hq_knowledge_base import KnowledgeCategory
+
+    # Convert category strings to enum
+    categories = None
+    if search_data.categories:
+        categories = []
+        for cat_str in search_data.categories:
+            try:
+                categories.append(KnowledgeCategory(cat_str))
+            except ValueError:
+                pass
+
+    results = await rag_search(
+        db=db,
+        query=search_data.query,
+        categories=categories if categories else None,
+        limit=search_data.limit,
+        min_similarity=search_data.min_similarity,
+    )
+
+    return [
+        KnowledgeSearchResult(
+            chunk_id=r["chunk_id"],
+            document_id=r["document_id"],
+            content=r["content"],
+            category=r["category"],
+            similarity=r["similarity"],
+        )
+        for r in results
+    ]
+
+
+@router.get("/ai/knowledge/stats", response_model=KnowledgeStatsResponse)
+async def get_knowledge_stats(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeStatsResponse:
+    """Get statistics about the knowledge base."""
+    from app.services.hq_rag_service import get_knowledge_stats as rag_stats
+
+    stats = await rag_stats(db)
+
+    return KnowledgeStatsResponse(
+        total_documents=stats.get("total_documents", 0),
+        documents_by_category=stats.get("documents_by_category", {}),
+        total_chunks=stats.get("total_chunks", 0),
+        embedded_chunks=stats.get("embedded_chunks", 0),
+    )
