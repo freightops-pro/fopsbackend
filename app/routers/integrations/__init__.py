@@ -1981,7 +1981,6 @@ async def update_motive_inspection_report(
 @router.get("/quickbooks/{integration_id}/oauth/authorize")
 async def quickbooks_oauth_authorize(
     integration_id: str,
-    sandbox: bool = True,
     company_id: str = Depends(_company_id),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -1989,11 +1988,10 @@ async def quickbooks_oauth_authorize(
     Generate QuickBooks OAuth authorization URL using intuit-oauth SDK.
 
     This endpoint returns the URL where users should be redirected to authorize
-    the application with QuickBooks.
+    the application with QuickBooks. Uses FreightOps app credentials from environment.
 
     Args:
         integration_id: CompanyIntegration ID
-        sandbox: Whether to use sandbox environment (default: True for development)
     """
     from intuitlib.client import AuthClient
     from intuitlib.enums import Scopes
@@ -2009,17 +2007,19 @@ async def quickbooks_oauth_authorize(
     if not integration:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
 
-    if not integration.credentials:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client credentials not configured")
-
-    client_id = integration.credentials.get("client_id")
-    client_secret = integration.credentials.get("client_secret")
-    if not client_id or not client_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client credentials not configured")
-
     settings = get_settings()
+
+    # Use FreightOps app credentials from environment (not per-tenant)
+    client_id = settings.quickbooks_client_id
+    client_secret = settings.quickbooks_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="QuickBooks integration not configured. Please contact support."
+        )
+
     redirect_uri = f"{settings.get_api_base_url()}/integrations/quickbooks/{integration_id}/oauth/callback"
-    environment = "sandbox" if sandbox else "production"
+    environment = settings.quickbooks_environment or "sandbox"
 
     # Create AuthClient using the SDK
     auth_client = AuthClient(
@@ -2037,7 +2037,7 @@ async def quickbooks_oauth_authorize(
     if not integration.config:
         integration.config = {}
     integration.config["oauth_state"] = auth_client.state_token
-    integration.config["sandbox"] = sandbox
+    integration.config["environment"] = environment
     await db.commit()
 
     return {
@@ -2060,7 +2060,7 @@ async def quickbooks_oauth_callback(
     Handle QuickBooks OAuth callback and exchange authorization code for tokens.
 
     This endpoint is called by QuickBooks after user authorization.
-    Uses intuit-oauth SDK for secure token exchange.
+    Uses intuit-oauth SDK for secure token exchange with FreightOps app credentials.
     """
     from intuitlib.client import AuthClient
     from intuitlib.exceptions import AuthClientError
@@ -2078,20 +2078,21 @@ async def quickbooks_oauth_callback(
     if not stored_state or stored_state != state:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid state parameter")
 
-    if not integration.credentials:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client credentials not configured")
-
-    client_id = integration.credentials.get("client_id")
-    client_secret = integration.credentials.get("client_secret")
-    if not client_id or not client_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid credentials")
-
     settings = get_settings()
+
+    # Use FreightOps app credentials from environment (not per-tenant)
+    client_id = settings.quickbooks_client_id
+    client_secret = settings.quickbooks_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="QuickBooks integration not configured"
+        )
+
     redirect_uri = f"{settings.get_api_base_url()}/integrations/quickbooks/{integration_id}/oauth/callback"
 
     # Get environment from config (set during authorize)
-    sandbox = integration.config.get("sandbox", True) if integration.config else True
-    environment = "sandbox" if sandbox else "production"
+    environment = integration.config.get("environment", "sandbox") if integration.config else "sandbox"
 
     try:
         # Create AuthClient using the SDK
@@ -2105,7 +2106,7 @@ async def quickbooks_oauth_callback(
         # Exchange authorization code for tokens using SDK
         auth_client.get_bearer_token(code, realm_id=realmId)
 
-        # Store tokens and realm_id from SDK
+        # Store tokens and realm_id (tenant-specific data)
         if not integration.credentials:
             integration.credentials = {}
         integration.credentials["access_token"] = auth_client.access_token

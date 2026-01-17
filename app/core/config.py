@@ -170,6 +170,12 @@ class Settings(BaseSettings):
     gusto_client_id: Optional[str] = None
     gusto_client_secret: Optional[str] = None
 
+    # QuickBooks Online Integration (Accounting)
+    # Get credentials at: https://developer.intuit.com/app/developer/qbo/docs/get-started
+    quickbooks_client_id: Optional[str] = None
+    quickbooks_client_secret: Optional[str] = None
+    quickbooks_environment: str = "sandbox"  # sandbox or production
+
     # Check Payroll Integration
     # Sign up at: https://checkhq.com
     # Docs: https://docs.checkhq.com

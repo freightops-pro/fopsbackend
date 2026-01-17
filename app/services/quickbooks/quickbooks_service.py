@@ -20,33 +20,47 @@ class QuickBooksService:
         self.db = db
 
     async def get_client(
-        self, integration: CompanyIntegration, sandbox: bool = True
+        self, integration: CompanyIntegration
     ) -> QuickBooksAPIClient:
         """
         Get QuickBooks API client for an integration.
 
+        Uses FreightOps app credentials from environment, with tenant-specific
+        access/refresh tokens from the integration.
+
         Args:
             integration: CompanyIntegration instance
-            sandbox: Whether to use sandbox environment
 
         Returns:
             QuickBooksAPIClient instance
         """
+        from app.core.config import get_settings
+
+        settings = get_settings()
+
+        # Use FreightOps app credentials from environment
+        client_id = settings.quickbooks_client_id
+        client_secret = settings.quickbooks_client_secret
+        if not client_id or not client_secret:
+            raise ValueError("QuickBooks app credentials not configured in environment")
+
+        # Get tenant-specific tokens from integration
         if not integration.credentials:
             raise ValueError("Integration credentials not found")
 
-        client_id = integration.credentials.get("client_id")
-        client_secret = integration.credentials.get("client_secret")
         access_token = integration.credentials.get("access_token")
         refresh_token = integration.credentials.get("refresh_token")
+
         # Check both credentials and config for realm_id
         realm_id = integration.credentials.get("realm_id")
         if not realm_id and integration.config:
             realm_id = integration.config.get("realm_id")
-        sandbox = integration.credentials.get("sandbox", True)
 
-        if not client_id or not client_secret:
-            raise ValueError("QuickBooks client credentials not configured")
+        # Get environment from config or settings
+        environment = "sandbox"
+        if integration.config:
+            environment = integration.config.get("environment", settings.quickbooks_environment or "sandbox")
+        sandbox = environment == "sandbox"
 
         return QuickBooksAPIClient(
             client_id=client_id,
@@ -54,7 +68,7 @@ class QuickBooksService:
             access_token=access_token,
             refresh_token=refresh_token,
             realm_id=realm_id,
-            sandbox=sandbox if isinstance(sandbox, bool) else True,
+            sandbox=sandbox,
         )
 
     async def test_connection(self, integration: CompanyIntegration) -> Dict[str, Any]:
