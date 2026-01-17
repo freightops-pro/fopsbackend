@@ -57,7 +57,26 @@ AsyncSessionFactory = async_sessionmaker(
 )
 
 # Synchronous engine for services that need sync operations
-sync_database_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+def get_sync_database_url(url: str) -> str:
+    """Convert database URL to sync-compatible format for psycopg2."""
+    # Handle various URL prefixes that need to be converted to postgresql://
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql+psycopg://", "postgresql://", 1)
+    elif url.startswith("postgres://"):
+        # Railway and Heroku use postgres:// but SQLAlchemy requires postgresql://
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    # Remove channel_binding parameter if present (not supported by all drivers)
+    if "channel_binding=" in url:
+        import re
+        url = re.sub(r'[&?]channel_binding=[^&]*', '', url)
+        url = url.replace('?&', '?').rstrip('?')
+
+    return url
+
+sync_database_url = get_sync_database_url(settings.database_url)
 sync_engine = create_engine(
     sync_database_url,
     echo=False,  # Disable SQL echo to reduce logs
