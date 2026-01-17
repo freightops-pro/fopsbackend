@@ -415,38 +415,89 @@ class AIAgentProcessor:
         Returns:
             The final result string
         """
+        import time
+        start_time = time.time()
+
         system_prompt = self.get_system_prompt(task.agent_type)
+        retrieved_chunks = []  # Track for learning
 
         # RAG: Retrieve relevant knowledge
         try:
-            from app.services.hq_rag_service import get_context_for_agent
+            from app.services.hq_rag_service import search_knowledge, get_context_for_agent
 
             await add_event_callback(
                 db, task.id, HQAITaskEventType.THINKING,
                 "Searching knowledge base for relevant information..."
             )
 
-            rag_context = await get_context_for_agent(
-                db, task.description, task.agent_type.value
+            # Get raw search results for learning tracking
+            from app.models.hq_knowledge_base import KnowledgeCategory
+            agent_categories = {
+                "oracle": [
+                    KnowledgeCategory.ACCOUNTING,
+                    KnowledgeCategory.TAXES,
+                    KnowledgeCategory.MARKETING,
+                    KnowledgeCategory.OPERATIONS,
+                ],
+                "sentinel": [
+                    KnowledgeCategory.COMPLIANCE,
+                    KnowledgeCategory.HR,
+                    KnowledgeCategory.TAXES,
+                ],
+                "nexus": [
+                    KnowledgeCategory.OPERATIONS,
+                    KnowledgeCategory.COMPLIANCE,
+                ],
+            }
+            categories = agent_categories.get(task.agent_type.value)
+
+            retrieved_chunks = await search_knowledge(
+                db, task.description, categories=categories, limit=5, min_similarity=0.6
             )
 
-            if rag_context:
-                # Append RAG context to system prompt
+            if retrieved_chunks:
+                # Format context for prompt
+                context_parts = ["## Relevant Knowledge from Knowledge Base:\n"]
+                for i, result in enumerate(retrieved_chunks, 1):
+                    context_parts.append(f"### Source {i} (similarity: {result['similarity']:.2f})")
+                    context_parts.append(f"Category: {result['category']}")
+                    context_parts.append(f"{result['content']}\n")
+
+                rag_context = "\n".join(context_parts)
                 system_prompt = f"{system_prompt}\n\n{rag_context}"
                 await add_event_callback(
                     db, task.id, HQAITaskEventType.ACTION,
-                    f"Found relevant knowledge from knowledge base"
+                    f"Found {len(retrieved_chunks)} relevant knowledge chunks"
                 )
+
         except Exception as e:
             logger.warning(f"RAG retrieval failed (continuing without context): {e}")
 
         if not self.grok_api_key:
             logger.warning("No Grok API key configured, using mock response")
-            return await self._mock_process(db, task, add_event_callback)
+            result = await self._mock_process(db, task, add_event_callback)
+        else:
+            result = await self._process_with_grok(
+                db, task, system_prompt, add_event_callback
+            )
 
-        return await self._process_with_grok(
-            db, task, system_prompt, add_event_callback
-        )
+        # Record interaction for learning
+        response_time_ms = int((time.time() - start_time) * 1000)
+        try:
+            from app.services.hq_learning_service import record_interaction
+            await record_interaction(
+                db=db,
+                agent_type=task.agent_type.value,
+                user_query=task.description,
+                retrieved_chunks=retrieved_chunks,
+                final_response=result,
+                task_id=task.id,
+                response_time_ms=response_time_ms,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record interaction for learning: {e}")
+
+        return result
 
     async def _mock_process(
         self,

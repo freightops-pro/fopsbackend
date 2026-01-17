@@ -86,24 +86,22 @@ def chunk_text(
 # Embedding Generation
 # =============================================================================
 
-async def generate_embedding_grok(text: str) -> Optional[List[float]]:
-    """Generate embedding using Grok API (OpenAI-compatible format)."""
-    api_key = settings.grok_api_key or settings.xai_api_key
+async def generate_embedding_openai(text: str) -> Optional[List[float]]:
+    """Generate embedding using OpenAI API."""
+    api_key = settings.openai_api_key
     if not api_key:
         return None
-
-    base_url = settings.grok_base_url
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{base_url}/embeddings",
+                "https://api.openai.com/v1/embeddings",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "text-embedding-3-small",  # Grok embedding model
+                    "model": "text-embedding-3-small",
                     "input": text[:8000]  # Limit input size
                 },
                 timeout=30.0
@@ -119,11 +117,91 @@ async def generate_embedding_grok(text: str) -> Optional[List[float]]:
                     embedding = embedding[:1536]
                 return embedding
             else:
-                logger.error(f"Grok embedding error: {response.status_code} - {response.text}")
+                logger.error(f"OpenAI embedding error: {response.status_code} - {response.text}")
                 return None
 
     except Exception as e:
-        logger.error(f"Grok embedding error: {e}")
+        logger.error(f"OpenAI embedding error: {e}")
+        return None
+
+
+async def generate_embedding_cohere(text: str) -> Optional[List[float]]:
+    """Generate embedding using Cohere API (has free trial tier)."""
+    api_key = settings.cohere_api_key
+    if not api_key:
+        return None
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.cohere.ai/v1/embed",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "embed-english-v3.0",
+                    "texts": [text[:8000]],
+                    "input_type": "search_document",
+                    "truncate": "END"
+                },
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                embedding = data["embeddings"][0]
+                # Cohere embed-english-v3.0 returns 1024 dimensions, pad to 1536
+                if len(embedding) < 1536:
+                    embedding.extend([0.0] * (1536 - len(embedding)))
+                elif len(embedding) > 1536:
+                    embedding = embedding[:1536]
+                return embedding
+            else:
+                logger.warning(f"Cohere embedding error: {response.status_code}")
+                return None
+
+    except Exception as e:
+        logger.warning(f"Cohere embedding error: {e}")
+        return None
+
+
+async def generate_embedding_voyage(text: str) -> Optional[List[float]]:
+    """Generate embedding using Voyage AI (has free tier - 50M tokens/month)."""
+    api_key = settings.voyage_api_key
+    if not api_key:
+        return None
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.voyageai.com/v1/embeddings",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "voyage-3-lite",  # Free tier model
+                    "input": [text[:8000]]
+                },
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                embedding = data["data"][0]["embedding"]
+                # voyage-3-lite returns 512 dimensions, pad to 1536
+                if len(embedding) < 1536:
+                    embedding.extend([0.0] * (1536 - len(embedding)))
+                elif len(embedding) > 1536:
+                    embedding = embedding[:1536]
+                return embedding
+            else:
+                logger.warning(f"Voyage embedding error: {response.status_code}")
+                return None
+
+    except Exception as e:
+        logger.warning(f"Voyage embedding error: {e}")
         return None
 
 
@@ -165,12 +243,27 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
     """
     Generate embedding using available provider.
 
-    Tries Grok first (Llama 4), falls back to Gemini.
+    Priority order:
+    1. OpenAI (most reliable, 1536 dimensions native)
+    2. Voyage AI (free tier - 50M tokens/month)
+    3. Cohere (free trial tier)
+    4. Gemini (Google AI)
     """
-    # Try Grok first (uses same API key as chat)
-    grok_key = settings.grok_api_key or settings.xai_api_key
-    if grok_key:
-        embedding = await generate_embedding_grok(text)
+    # Try OpenAI first (best quality, native 1536 dimensions)
+    if settings.openai_api_key:
+        embedding = await generate_embedding_openai(text)
+        if embedding:
+            return embedding
+
+    # Try Voyage AI (has generous free tier)
+    if settings.voyage_api_key:
+        embedding = await generate_embedding_voyage(text)
+        if embedding:
+            return embedding
+
+    # Try Cohere (has free trial)
+    if settings.cohere_api_key:
+        embedding = await generate_embedding_cohere(text)
         if embedding:
             return embedding
 
@@ -180,7 +273,7 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
         if embedding:
             return embedding
 
-    logger.warning("No embedding API available (set GROK_API_KEY or GOOGLE_AI_API_KEY)")
+    logger.warning("No embedding API available. Set one of: OPENAI_API_KEY, VOYAGE_API_KEY, COHERE_API_KEY, or GOOGLE_AI_API_KEY")
     return None
 
 

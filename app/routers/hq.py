@@ -4,8 +4,8 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, Response, UploadFile, status, Query
+from pydantic import BaseModel, Field
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8484,3 +8484,581 @@ async def get_knowledge_stats(
         total_chunks=stats.get("total_chunks", 0),
         embedded_chunks=stats.get("embedded_chunks", 0),
     )
+
+
+# =============================================================================
+# Learning & Feedback Endpoints
+# =============================================================================
+
+class FeedbackCreate(BaseModel):
+    """Schema for submitting feedback."""
+    interaction_id: str
+    feedback_type: str = Field(..., description="helpful, unhelpful, inaccurate, incomplete, outdated")
+    user_rating: Optional[int] = Field(None, ge=1, le=5)
+    user_comment: Optional[str] = None
+    suggested_correction: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    """Schema for feedback response."""
+    id: str
+    interaction_id: str
+    feedback_type: str
+    user_rating: Optional[int]
+    created_at: datetime
+
+
+class GapResponse(BaseModel):
+    """Schema for knowledge gap response."""
+    id: str
+    gap_type: str
+    topic: str
+    detection_method: str
+    confidence_score: float
+    occurrence_count: int
+    priority_score: float
+    status: str
+    detected_at: datetime
+
+
+class GapResolveRequest(BaseModel):
+    """Schema for resolving a gap."""
+    resolution_notes: str
+    resolved_by_document_id: Optional[str] = None
+
+
+class LearningDashboardResponse(BaseModel):
+    """Schema for learning dashboard."""
+    current_metrics: Optional[Dict[str, Any]]
+    metrics_history: List[Dict[str, Any]]
+    trends: Dict[str, float]
+    top_gaps: List[Dict[str, Any]]
+    low_confidence_chunks: List[Dict[str, Any]]
+
+
+@router.post("/ai/feedback", response_model=FeedbackResponse)
+async def submit_feedback(
+    feedback_data: FeedbackCreate,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> FeedbackResponse:
+    """
+    Submit feedback on an AI agent response.
+
+    This feedback is used to improve the knowledge base and agent responses.
+    """
+    from app.services.hq_learning_service import collect_feedback
+    from app.models.hq_knowledge_base import FeedbackType
+
+    # Validate feedback type
+    try:
+        fb_type = FeedbackType(feedback_data.feedback_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid feedback type. Must be one of: {[t.value for t in FeedbackType]}"
+        )
+
+    try:
+        feedback = await collect_feedback(
+            db=db,
+            interaction_id=feedback_data.interaction_id,
+            feedback_type=fb_type,
+            user_rating=feedback_data.user_rating,
+            user_comment=feedback_data.user_comment,
+            suggested_correction=feedback_data.suggested_correction,
+            feedback_source="user",
+        )
+
+        return FeedbackResponse(
+            id=feedback.id,
+            interaction_id=feedback.interaction_id,
+            feedback_type=feedback.feedback_type.value,
+            user_rating=feedback.user_rating,
+            created_at=feedback.created_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get("/ai/gaps", response_model=List[GapResponse])
+async def list_knowledge_gaps(
+    status_filter: Optional[str] = Query(None, description="Filter by status: open, resolved, dismissed"),
+    min_priority: float = Query(0.0, ge=0.0, le=1.0),
+    limit: int = Query(20, ge=1, le=100),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[GapResponse]:
+    """Get knowledge gaps detected by the learning system."""
+    from sqlalchemy import select, and_
+    from app.models.hq_knowledge_base import HQKnowledgeGap
+
+    query = select(HQKnowledgeGap).where(
+        HQKnowledgeGap.priority_score >= min_priority
+    )
+
+    if status_filter:
+        query = query.where(HQKnowledgeGap.status == status_filter)
+
+    query = query.order_by(HQKnowledgeGap.priority_score.desc()).limit(limit)
+
+    result = await db.execute(query)
+    gaps = result.scalars().all()
+
+    return [
+        GapResponse(
+            id=g.id,
+            gap_type=g.gap_type.value,
+            topic=g.topic,
+            detection_method=g.detection_method,
+            confidence_score=g.confidence_score,
+            occurrence_count=g.occurrence_count,
+            priority_score=g.priority_score,
+            status=g.status,
+            detected_at=g.detected_at,
+        )
+        for g in gaps
+    ]
+
+
+@router.post("/ai/gaps/{gap_id}/resolve")
+async def resolve_knowledge_gap(
+    gap_id: str,
+    resolve_data: GapResolveRequest,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a knowledge gap as resolved."""
+    from app.services.hq_learning_service import resolve_gap
+
+    await resolve_gap(
+        db=db,
+        gap_id=gap_id,
+        resolution_notes=resolve_data.resolution_notes,
+        resolved_by_document_id=resolve_data.resolved_by_document_id,
+    )
+
+    return {"message": "Gap resolved", "gap_id": gap_id}
+
+
+@router.post("/ai/gaps/{gap_id}/dismiss")
+async def dismiss_knowledge_gap(
+    gap_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dismiss a knowledge gap (mark as not a real gap)."""
+    from app.models.hq_knowledge_base import HQKnowledgeGap
+
+    gap = await db.get(HQKnowledgeGap, gap_id)
+    if not gap:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gap not found")
+
+    gap.status = "dismissed"
+    await db.commit()
+
+    return {"message": "Gap dismissed", "gap_id": gap_id}
+
+
+@router.get("/ai/learning/dashboard", response_model=LearningDashboardResponse)
+async def get_learning_dashboard(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> LearningDashboardResponse:
+    """Get the learning dashboard with metrics and insights."""
+    from app.services.hq_learning_service import get_learning_dashboard
+
+    dashboard = await get_learning_dashboard(db)
+
+    return LearningDashboardResponse(
+        current_metrics=dashboard.get("current_metrics"),
+        metrics_history=dashboard.get("metrics_history", []),
+        trends=dashboard.get("trends", {}),
+        top_gaps=dashboard.get("top_gaps", []),
+        low_confidence_chunks=dashboard.get("low_confidence_chunks", []),
+    )
+
+
+@router.post("/ai/learning/calculate-metrics")
+async def trigger_metrics_calculation(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger learning metrics calculation for today."""
+    from app.services.hq_learning_service import calculate_daily_metrics
+
+    metrics = await calculate_daily_metrics(db)
+
+    return {
+        "message": "Metrics calculated",
+        "date": metrics.date.isoformat(),
+        "total_interactions": metrics.total_interactions,
+        "knowledge_coverage_pct": metrics.knowledge_coverage_pct,
+    }
+
+
+@router.get("/ai/interactions")
+async def list_agent_interactions(
+    agent_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent agent interactions for analysis."""
+    from sqlalchemy import select
+    from app.models.hq_knowledge_base import HQAgentInteraction
+
+    query = select(HQAgentInteraction).order_by(HQAgentInteraction.created_at.desc())
+
+    if agent_type:
+        query = query.where(HQAgentInteraction.agent_type == agent_type)
+
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    interactions = result.scalars().all()
+
+    return [
+        {
+            "id": i.id,
+            "agent_type": i.agent_type,
+            "task_id": i.task_id,
+            "user_query": i.user_query[:200] + "..." if len(i.user_query) > 200 else i.user_query,
+            "response_length": i.response_length,
+            "retrieval_quality_score": i.retrieval_quality_score,
+            "response_time_ms": i.response_time_ms,
+            "created_at": i.created_at,
+        }
+        for i in interactions
+    ]
+
+
+@router.get("/ai/interactions/{interaction_id}")
+async def get_interaction_details(
+    interaction_id: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get detailed information about a specific interaction."""
+    import json
+    from sqlalchemy import select
+    from app.models.hq_knowledge_base import HQAgentInteraction, HQKnowledgeFeedback
+
+    interaction = await db.get(HQAgentInteraction, interaction_id)
+    if not interaction:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interaction not found")
+
+    # Get feedback for this interaction
+    feedback_result = await db.execute(
+        select(HQKnowledgeFeedback).where(
+            HQKnowledgeFeedback.interaction_id == interaction_id
+        )
+    )
+    feedbacks = feedback_result.scalars().all()
+
+    return {
+        "id": interaction.id,
+        "agent_type": interaction.agent_type,
+        "task_id": interaction.task_id,
+        "user_query": interaction.user_query,
+        "final_response": interaction.final_response,
+        "retrieved_chunk_ids": json.loads(interaction.retrieved_chunk_ids or "[]"),
+        "retrieval_scores": json.loads(interaction.retrieval_scores or "[]"),
+        "retrieval_quality_score": interaction.retrieval_quality_score,
+        "response_time_ms": interaction.response_time_ms,
+        "created_at": interaction.created_at,
+        "feedback": [
+            {
+                "id": f.id,
+                "feedback_type": f.feedback_type.value,
+                "user_rating": f.user_rating,
+                "user_comment": f.user_comment,
+                "created_at": f.created_at,
+            }
+            for f in feedbacks
+        ],
+    }
+
+
+# =============================================================================
+# Web Learning Endpoints
+# =============================================================================
+
+class WebLearningTopicRequest(BaseModel):
+    """Schema for learning a specific topic from the web."""
+    topic: str = Field(..., description="Topic to learn about")
+    category: str = Field(..., description="Knowledge category")
+    custom_queries: Optional[List[str]] = Field(None, description="Custom search queries")
+
+
+class WebLearningResponse(BaseModel):
+    """Schema for web learning response."""
+    status: str
+    topic: str
+    document_id: Optional[str] = None
+    sources_count: int = 0
+
+
+class WebLearningBatchResponse(BaseModel):
+    """Schema for batch web learning response."""
+    completed_at: str
+    total_topics: int
+    documents_created: int
+    documents_updated: int
+    failed: int
+    results_by_category: Dict[str, Any]
+
+
+@router.post("/ai/learning/web", response_model=WebLearningBatchResponse)
+async def trigger_web_learning(
+    background_tasks: BackgroundTasks,
+    run_async: bool = Query(True, description="Run in background (recommended for full learning)"),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> WebLearningBatchResponse:
+    """
+    Trigger comprehensive web learning for all HQ topics.
+
+    This searches the web for knowledge about:
+    - HR (hiring, employment law, benefits, performance management)
+    - Marketing (SaaS marketing, customer success, growth, sales)
+    - Business Operations (SaaS platform, integrations, management)
+    - Compliance (BSA/AML, data privacy, SOC 2)
+    - Taxes (payroll taxes, business taxes, SaaS sales tax)
+    - Accounting (SaaS accounting, financial reporting)
+    - Payroll (payroll processing, compensation strategy)
+
+    Note: This is for HQ internal knowledge. Tenant-specific topics
+    (dispatching, fleet management, IFTA, DOT) are handled separately.
+    """
+    from app.services.hq_web_learning_service import learn_all_topics
+
+    if run_async:
+        # Run in background for large learning tasks
+        # Note: For production, this should use a proper task queue
+        result = await learn_all_topics(db)
+        return WebLearningBatchResponse(
+            completed_at=result["completed_at"],
+            total_topics=result["total_topics"],
+            documents_created=result["documents_created"],
+            documents_updated=result["documents_updated"],
+            failed=result["failed"],
+            results_by_category=result["results_by_category"],
+        )
+    else:
+        result = await learn_all_topics(db)
+        return WebLearningBatchResponse(
+            completed_at=result["completed_at"],
+            total_topics=result["total_topics"],
+            documents_created=result["documents_created"],
+            documents_updated=result["documents_updated"],
+            failed=result["failed"],
+            results_by_category=result["results_by_category"],
+        )
+
+
+@router.post("/ai/learning/web/{category}", response_model=List[WebLearningResponse])
+async def learn_category_from_web(
+    category: str,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> List[WebLearningResponse]:
+    """
+    Learn all topics for a specific category from the web.
+
+    Valid categories:
+    - accounting
+    - taxes
+    - hr
+    - payroll
+    - marketing
+    - compliance
+    - operations
+    - general
+    """
+    from app.services.hq_web_learning_service import learn_category
+    from app.models.hq_knowledge_base import KnowledgeCategory
+
+    try:
+        cat_enum = KnowledgeCategory(category)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Must be one of: {[c.value for c in KnowledgeCategory]}"
+        )
+
+    results = await learn_category(db, cat_enum)
+
+    return [
+        WebLearningResponse(
+            status=r["status"],
+            topic=r["topic"],
+            document_id=r.get("document_id"),
+            sources_count=r.get("sources_count", 0),
+        )
+        for r in results
+    ]
+
+
+@router.post("/ai/learning/web/topic", response_model=WebLearningResponse)
+async def learn_topic_from_web(
+    topic_data: WebLearningTopicRequest,
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+    db: AsyncSession = Depends(get_db),
+) -> WebLearningResponse:
+    """
+    Learn about a specific topic from the web.
+
+    Provide a topic name and optionally custom search queries.
+    If no queries are provided, default queries will be generated.
+    """
+    from app.services.hq_web_learning_service import learn_specific_topic
+    from app.models.hq_knowledge_base import KnowledgeCategory
+
+    try:
+        cat_enum = KnowledgeCategory(topic_data.category)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Must be one of: {[c.value for c in KnowledgeCategory]}"
+        )
+
+    result = await learn_specific_topic(
+        db=db,
+        topic=topic_data.topic,
+        category=cat_enum,
+        custom_queries=topic_data.custom_queries,
+    )
+
+    return WebLearningResponse(
+        status=result["status"],
+        topic=result["topic"],
+        document_id=result.get("document_id"),
+        sources_count=result.get("sources_count", 0),
+    )
+
+
+@router.post("/ai/learning/web/research")
+async def research_topic_online(
+    query: str = Query(..., description="Search query for web research"),
+    num_results: int = Query(5, ge=1, le=10, description="Number of results to return"),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+):
+    """
+    Research a topic online without ingesting into knowledge base.
+
+    Use this for one-off research queries that don't need to be stored.
+    """
+    from app.services.hq_web_learning_service import research_topic
+
+    result = await research_topic(query, num_results=num_results)
+
+    return {
+        "query": query,
+        "result": result,
+    }
+
+
+@router.get("/ai/learning/web/topics")
+async def get_learning_topics(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+):
+    """
+    Get all configured learning topics for HQ.
+
+    Returns the topics organized by category that will be learned
+    when triggering comprehensive web learning.
+    """
+    from app.services.hq_web_learning_service import HQ_LEARNING_TOPICS
+
+    return {
+        category.value: [
+            {
+                "topic": t["topic"],
+                "query_count": len(t["queries"]),
+            }
+            for t in topics
+        ]
+        for category, topics in HQ_LEARNING_TOPICS.items()
+    }
+
+
+# =============================================================================
+# Learning Worker Control Endpoints
+# =============================================================================
+
+@router.post("/ai/learning/worker/start")
+async def start_learning_worker_endpoint(
+    learning_interval_hours: int = Query(24, ge=1, le=168, description="Hours between full learning runs"),
+    gap_check_interval_hours: int = Query(6, ge=1, le=24, description="Hours between gap checks"),
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+):
+    """
+    Start the background knowledge learning worker.
+
+    The worker will:
+    - Run full web learning at the specified interval
+    - Check for and fill knowledge gaps more frequently
+    - Refresh stale content (older than 30 days)
+    """
+    from app.workers.knowledge_learning_worker import start_learning_worker, get_learning_worker
+
+    if get_learning_worker() is not None:
+        return {"status": "already_running", "message": "Learning worker is already running"}
+
+    await start_learning_worker(
+        learning_interval_hours=learning_interval_hours,
+        gap_check_interval_hours=gap_check_interval_hours,
+    )
+
+    return {
+        "status": "started",
+        "message": "Learning worker started",
+        "config": {
+            "learning_interval_hours": learning_interval_hours,
+            "gap_check_interval_hours": gap_check_interval_hours,
+        },
+    }
+
+
+@router.post("/ai/learning/worker/stop")
+async def stop_learning_worker_endpoint(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+):
+    """Stop the background knowledge learning worker."""
+    from app.workers.knowledge_learning_worker import stop_learning_worker, get_learning_worker
+
+    if get_learning_worker() is None:
+        return {"status": "not_running", "message": "Learning worker is not running"}
+
+    await stop_learning_worker()
+
+    return {"status": "stopped", "message": "Learning worker stopped"}
+
+
+@router.get("/ai/learning/worker/status")
+async def get_learning_worker_status(
+    current_employee: HQEmployee = Depends(get_current_hq_employee),
+):
+    """Get the status of the knowledge learning worker."""
+    from app.workers.knowledge_learning_worker import get_learning_worker
+
+    worker = get_learning_worker()
+
+    if worker is None:
+        return {
+            "status": "not_running",
+            "running": False,
+        }
+
+    return {
+        "status": "running",
+        "running": worker.running,
+        "last_full_learning": worker.last_full_learning.isoformat() if worker.last_full_learning else None,
+        "last_gap_check": worker.last_gap_check.isoformat() if worker.last_gap_check else None,
+        "config": {
+            "learning_interval_hours": worker.learning_interval / 3600,
+            "gap_check_interval_hours": worker.gap_check_interval / 3600,
+            "staleness_days": worker.staleness_days,
+        },
+    }

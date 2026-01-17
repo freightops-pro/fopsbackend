@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     # Web Search for AI Agents (Tavily API)
     tavily_api_key: Optional[str] = None  # Set TAVILY_API_KEY for web search capability
 
+    # Embedding API Keys (for RAG/Knowledge Base)
+    # Voyage AI - Free tier: 50M tokens/month - https://dash.voyageai.com/
+    voyage_api_key: Optional[str] = None  # Set VOYAGE_API_KEY for embeddings
+    # Cohere - Free trial tier - https://dashboard.cohere.com/
+    cohere_api_key: Optional[str] = None  # Set COHERE_API_KEY for embeddings
+
     # FMCSA Motor Carrier Census API
     fmcsa_app_token: Optional[str] = None
     fmcsa_secret_token: Optional[str] = None

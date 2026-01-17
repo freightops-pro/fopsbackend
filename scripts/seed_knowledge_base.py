@@ -13,23 +13,69 @@ for the HQ AI agents (Oracle, Sentinel, Nexus) in areas of:
 
 Usage:
     python scripts/seed_knowledge_base.py
+    python scripts/seed_knowledge_base.py --dry-run
+    python scripts/seed_knowledge_base.py --categories accounting taxes
+    python scripts/seed_knowledge_base.py --force
 """
 
+import argparse
 import asyncio
+import logging
 import sys
 import os
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
-from app.services.hq_rag_service import ingest_document
-from app.models.hq_knowledge_base import KnowledgeCategory
+from app.services.hq_rag_service import ingest_document, delete_document
+from app.models.hq_knowledge_base import KnowledgeCategory, HQKnowledgeDocument
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description='Seed HQ Knowledge Base')
+    parser.add_argument(
+        '--dry-run', action='store_true',
+        help='Print what would be seeded without committing'
+    )
+    parser.add_argument(
+        '--categories', nargs='+',
+        choices=[cat.value for cat in KnowledgeCategory],
+        help='Only seed specific categories'
+    )
+    parser.add_argument(
+        '--force', action='store_true',
+        help='Force re-seed existing documents (deletes and recreates)'
+    )
+    return parser.parse_args()
+
+
+def validate_document(doc_data: dict) -> None:
+    """Validate document structure before ingestion."""
+    required_fields = ['title', 'category', 'content']
+    for field in required_fields:
+        if field not in doc_data:
+            raise ValueError(f"Missing required field: {field}")
+
+    if not isinstance(doc_data['content'], str) or len(doc_data['content']) < 50:
+        raise ValueError(f"Content too short for: {doc_data['title']}")
+
+    if not isinstance(doc_data['category'], KnowledgeCategory):
+        raise ValueError(f"Invalid category for: {doc_data['title']}")
 
 # =============================================================================
 # Knowledge Documents
@@ -1221,54 +1267,139 @@ Formula: ((Total Minutes - Downtime) / Total Minutes) × 100
 # Main Script
 # =============================================================================
 
-async def seed_knowledge_base():
+async def check_existing_document(db: AsyncSession, title: str, category: KnowledgeCategory):
+    """Check if a document already exists."""
+    result = await db.execute(
+        select(HQKnowledgeDocument).where(
+            HQKnowledgeDocument.title == title,
+            HQKnowledgeDocument.category == category
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def seed_knowledge_base(args):
     """Seed the knowledge base with domain documents."""
-    print("=" * 60)
-    print("HQ Knowledge Base Seeder")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("HQ Knowledge Base Seeder")
+    logger.info("=" * 60)
 
-    # Create database session
-    engine = create_async_engine(settings.database_url.replace("postgresql://", "postgresql+asyncpg://"))
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    if args.dry_run:
+        logger.info("DRY RUN MODE - No changes will be made")
 
-    async with async_session() as db:
-        total_docs = len(KNOWLEDGE_DOCUMENTS)
-        total_chunks = 0
+    # Filter by categories if specified
+    docs_to_seed = KNOWLEDGE_DOCUMENTS
+    if args.categories:
+        category_set = set(args.categories)
+        docs_to_seed = [
+            d for d in KNOWLEDGE_DOCUMENTS
+            if d['category'].value in category_set
+        ]
+        logger.info(f"Filtering to categories: {args.categories}")
 
-        for i, doc_data in enumerate(KNOWLEDGE_DOCUMENTS, 1):
-            print(f"\n[{i}/{total_docs}] Ingesting: {doc_data['title'][:50]}...")
-            print(f"    Category: {doc_data['category'].value}")
+    if not docs_to_seed:
+        logger.warning("No documents to seed!")
+        return
 
-            doc = await ingest_document(
-                db=db,
-                title=doc_data["title"],
-                content=doc_data["content"],
-                category=doc_data["category"],
-                source=doc_data.get("source"),
-            )
+    try:
+        # Create database session
+        db_url = settings.database_url
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
 
-            if doc:
-                # Count chunks created
-                from sqlalchemy import select, func
-                from app.models.hq_knowledge_base import HQKnowledgeChunk
+        engine = create_async_engine(db_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-                result = await db.execute(
-                    select(func.count()).select_from(HQKnowledgeChunk).where(
-                        HQKnowledgeChunk.document_id == doc.id
+        async with async_session() as db:
+            total_docs = len(docs_to_seed)
+            total_chunks = 0
+            success_count = 0
+            skipped_count = 0
+            failed_docs = []
+
+            for i, doc_data in enumerate(docs_to_seed, 1):
+                try:
+                    # Validate document
+                    validate_document(doc_data)
+
+                    logger.info(f"[{i}/{total_docs}] Processing: {doc_data['title'][:50]}...")
+                    logger.info(f"    Category: {doc_data['category'].value}")
+
+                    # Check if document exists
+                    existing = await check_existing_document(
+                        db, doc_data['title'], doc_data['category']
                     )
-                )
-                chunks = result.scalar() or 0
-                total_chunks += chunks
-                print(f"    ✓ Created {chunks} chunks")
-            else:
-                print(f"    ✗ Failed to ingest document")
 
-        print("\n" + "=" * 60)
-        print(f"COMPLETE: {total_docs} documents, {total_chunks} total chunks")
-        print("=" * 60)
+                    if existing:
+                        if args.force:
+                            logger.info(f"    ⚠ Document exists, deleting for re-seed...")
+                            if not args.dry_run:
+                                await delete_document(db, existing.id)
+                        else:
+                            logger.info(f"    ⚠ Document exists, skipping (use --force to re-seed)")
+                            skipped_count += 1
+                            continue
 
-    await engine.dispose()
+                    if args.dry_run:
+                        logger.info(f"    [DRY RUN] Would create document with ~{len(doc_data['content']) // 1000} chunks")
+                        success_count += 1
+                        continue
+
+                    doc = await ingest_document(
+                        db=db,
+                        title=doc_data["title"],
+                        content=doc_data["content"],
+                        category=doc_data["category"],
+                        source=doc_data.get("source"),
+                    )
+
+                    if doc:
+                        # Count chunks created
+                        from sqlalchemy import func
+                        from app.models.hq_knowledge_base import HQKnowledgeChunk
+
+                        result = await db.execute(
+                            select(func.count()).select_from(HQKnowledgeChunk).where(
+                                HQKnowledgeChunk.document_id == doc.id
+                            )
+                        )
+                        chunks = result.scalar() or 0
+                        total_chunks += chunks
+                        success_count += 1
+                        logger.info(f"    ✓ Created {chunks} chunks")
+                    else:
+                        failed_docs.append((doc_data['title'], "Ingestion returned None"))
+                        logger.error(f"    ✗ Failed to ingest document")
+
+                except Exception as e:
+                    failed_docs.append((doc_data['title'], str(e)))
+                    logger.error(f"    ✗ Error: {e}")
+
+            # Summary
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("SUMMARY")
+            logger.info("=" * 60)
+            logger.info(f"Total documents processed: {total_docs}")
+            logger.info(f"Successfully seeded: {success_count}")
+            logger.info(f"Skipped (already exist): {skipped_count}")
+            logger.info(f"Failed: {len(failed_docs)}")
+            if not args.dry_run:
+                logger.info(f"Total chunks created: {total_chunks}")
+
+            if failed_docs:
+                logger.error("")
+                logger.error(f"Failed documents ({len(failed_docs)}):")
+                for title, error in failed_docs:
+                    logger.error(f"  - {title}: {error}")
+
+        await engine.dispose()
+
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    asyncio.run(seed_knowledge_base())
+    args = parse_args()
+    asyncio.run(seed_knowledge_base(args))
